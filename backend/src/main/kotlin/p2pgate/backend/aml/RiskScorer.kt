@@ -4,7 +4,7 @@ import p2pgate.backend.util.Hex
 
 /**
  * AML pre-check hook, `specs/operator-backend.md` §6 — off-chain by design, the
- * one irreducible piece of off-chain reputation. Scored at QUOTED on the user's
+ * one irreducible piece of off-chain reputation. Scored at QUOTED on the buyer's
  * declared USDT **receive** address; a re-check fires when the address seen at
  * funding differs from the declared one (address-swap defense).
  *
@@ -25,7 +25,7 @@ interface RiskScorer {
     val scorerId: String
 
     /**
-     * Scores [address] (the raw source-chain address payload of the user's
+     * Scores [address] (the raw source-chain address payload of the buyer's
      * declared USDT receive address) on chain [chainId] (the deal-terms wire
      * id). Throws [RiskScorerException] when the scorer cannot answer.
      */

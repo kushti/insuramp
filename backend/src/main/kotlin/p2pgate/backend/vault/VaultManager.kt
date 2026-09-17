@@ -161,7 +161,6 @@ class VaultManager(
     private val infra: InfraMonitor,
     private val oracle: OracleClient,
     private val riskScorer: p2pgate.backend.aml.RiskScorer,
-    private val feeBps: Int = 0,
     private val reclaimTimeoutBlocks: Int = ContractParams.RECLAIM_TIMEOUT_BLOCKS,
     private val builder: OperatorTxBuilder = OperatorTxBuilder(trees, treasuryTree),
 ) {
@@ -198,7 +197,6 @@ class VaultManager(
             recipientAddr = Hex.decode(deal.recipientAddrHex),
             collateralTokenId = Hex.decode(deal.collateralTokenIdHex),
             timeoutHeight = currentHeight + reclaimTimeoutBlocks,
-            feeBps = feeBps,
             fundingInputs = fundingInputs,
             currentHeight = currentHeight,
             changeAddress = signer.changeAddress,

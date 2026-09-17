@@ -27,7 +27,7 @@ import java.math.BigInteger
  * ([ErgoContracts.compileFast]):
  *
  *  1. preflight (explorer reachable) → exit 2 with manual instructions if not;
- *  2. per-run keypairs (operator/seller, user, courier, oracle, treasury);
+ *  2. per-run keypairs (operator/seller, buyer, oracle, treasury);
  *  3. funding of the operator: manual by default (the gate prints the address
  *     + needed nanoERG and polls the balance; exit 2 with instructions when
  *     the `E2E_FUNDING_TIMEOUT_MS` deadline passes), or via the testnet faucet
@@ -35,13 +35,13 @@ import java.math.BigInteger
  *  4. setup txs: mint the dev oracle NFT (an output under the compiled
  *     `oracle.es` tree carrying the fresh token — the token id IS the mint
  *     tx's first input box id), mint the collateral ("USE") token, fund the
- *     user address for claim fees;
- *  5. Flow A (release): fund → courier-signed 84-byte P2PH handoff record →
+ *     buyer address for claim fees;
+ *  5. Flow A (release): fund → seller-signed 52-byte P2PH handoff record →
  *     oracle attestation → release (the oracle.es box as the full oracle
  *     input, recreated per its `OUTPUTS.exists` condition) → assert seller
  *     paid minus fee and the NFT preserved;
  *  6. Flow B (dispute): fund → record → claim-open → wait maturation (3
- *     blocks, fast) → claim-payout → assert user payout minus fee;
+ *     blocks, fast) → claim-payout → assert buyer payout minus fee;
  *  7. Flow C (reclaim): fund → wait the short timeout (6 blocks) → reclaim →
  *     assert seller refund.
  *
@@ -70,10 +70,10 @@ class E2eFlow(
     private val networkPrefix: Byte =
         if (networkType == NetworkType.MAINNET) ContractParams.NETWORK_PREFIX_MAINNET else ContractParams.NETWORK_PREFIX_TESTNET
 
-    // Deal parameters: fee 25 bps, small collateral per deal (the contract
+    // Deal parameters: the protocol fee is a compile-time contract constant
+    // (ContractParams.PROTOCOL_FEE_BPS); small collateral per deal (the contract
     // only requires A token with the pinned id — the gate mints a dev token;
     // there is no real USE on either network).
-    private val feeBps = 25
     private val dealAmount = 100_000_000L
     private val collateralTotal = 10 * dealAmount
 
@@ -101,8 +101,7 @@ class E2eFlow(
 
     private class RunKeys(
         val operator: Keys,
-        val user: Keys,
-        val courier: Keys,
+        val buyer: Keys,
         val oracle: Keys,
         val treasury: Keys,
     )
@@ -123,7 +122,7 @@ class E2eFlow(
         simHeight = height0
 
         // ------------------------------------------------ 2. keys (per run, no secrets stored)
-        keys = RunKeys(Keys.random(), Keys.random(), Keys.random(), Keys.random(), Keys.random())
+        keys = RunKeys(Keys.random(), Keys.random(), Keys.random(), Keys.random())
         recipient = ByteArray(21) { (it * 31 + 5).toByte() }
         val operatorAddress = p2pkAddress(keys.operator)
         log("operator (seller): $operatorAddress")
@@ -144,7 +143,7 @@ class E2eFlow(
         // Covers the release's miner fee + treasury fee box + change dust.
         val oracleFeeBoxValue = 5_000_000L
         val collateralBoxValue = 2_000_000L
-        val userBoxValue = 5_000_000L
+        val buyerBoxValue = 5_000_000L
         log(
             "compiled fast trees: funded=${probeTrees.fundedTree.bytes().size}B " +
                 "proven=${probeTrees.provenTree.bytes().size}B oracle=${probeOracle.tree.bytes().size}B; " +
@@ -152,10 +151,10 @@ class E2eFlow(
         )
 
         // ------------------------------------------------ 4. funding
-        val neededErg = 3 * fundedValue + oracleBoxValue + oracleFeeBoxValue + collateralBoxValue + userBoxValue +
+        val neededErg = 3 * fundedValue + oracleBoxValue + oracleFeeBoxValue + collateralBoxValue + buyerBoxValue +
             10 * config.minerFeeNanoErg + 10_000_000L
         summary["operatorAddress"] = operatorAddress
-        summary["userAddress"] = p2pkAddress(keys.user)
+        summary["buyerAddress"] = p2pkAddress(keys.buyer)
         summary["oracleAddress"] = p2pkAddress(keys.oracle)
         summary["neededErgNano"] = neededErg
         if (!config.dryRun) {
@@ -165,7 +164,7 @@ class E2eFlow(
         }
 
         // ------------------------------------------------ 5. setup txs
-        val setup = setup(oracleBoxValue, oracleFeeBoxValue, collateralBoxValue, userBoxValue)
+        val setup = setup(oracleBoxValue, oracleFeeBoxValue, collateralBoxValue, buyerBoxValue)
         // Recompile against the REAL NFT id (the mint tx's first input box id).
         nftIdHex = setup.nftIdHex
         collateralTokenIdHex = setup.collateralTokenIdHex
@@ -226,7 +225,7 @@ class E2eFlow(
         oracleBoxValue: Long,
         oracleFeeBoxValue: Long,
         collateralBoxValue: Long,
-        userBoxValue: Long,
+        buyerBoxValue: Long,
     ): Setup {
         val height = buildHeight()
         val txIds = LinkedHashMap<String, String>()
@@ -270,13 +269,13 @@ class E2eFlow(
         val mint2TxId = broadcastAndConfirm("setup.mintCollateral", mint2, txIds)
         val collateralBox = txOutputs(mint2TxId).first { it.tokenAmount(collId) > 0 }
 
-        // Fund the user address (claim txs are user-signed; their fee inputs must be user-key boxes).
-        val userTree = Wire.p2pkTree(keys.user.pubKeyCompressed)
-        val payNeed = userBoxValue + config.minerFeeNanoErg + 1_000_000L
+        // Fund the buyer address (claim txs are buyer-signed; their fee inputs must be buyer-key boxes).
+        val buyerTree = Wire.p2pkTree(keys.buyer.pubKeyCompressed)
+        val payNeed = buyerBoxValue + config.minerFeeNanoErg + 1_000_000L
         val payInputs = if (config.dryRun) listOf(syntheticBox(operatorTree, payNeed, emptyList(), "payin"))
         else selectInputs(operatorAddress, payNeed)
-        val pay = assemble(payInputs, listOf(RawTx.candidate(userBoxValue, userTree, emptyList(), height)), height)
-        broadcastAndConfirm("setup.fundUser", pay, txIds)
+        val pay = assemble(payInputs, listOf(RawTx.candidate(buyerBoxValue, buyerTree, emptyList(), height)), height)
+        broadcastAndConfirm("setup.fundBuyer", pay, txIds)
 
         return Setup(nftId, collId, oracleBox, oracleFeeBox, collateralBox, txIds)
     }
@@ -298,7 +297,6 @@ class E2eFlow(
             recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = height + config.reclaimTimeoutBlocks,
-            feeBps = feeBps,
             fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.feeBoxValueNanoErg + config.minerFeeNanoErg + 1_000_000L),
             currentHeight = height,
             changeAddress = p2pkAddress(keys.operator),
@@ -307,9 +305,9 @@ class E2eFlow(
         val fundTxId = broadcastAndConfirm("flowA.fund", fundTx)
         val fundedBox = txOutputs(fundTxId)[0]
 
-        // The courier signs the 84-byte P2PH handoff record (t/3407).
+        // The seller signs the 52-byte P2PH handoff record at the meeting (t/3407).
         val record = handoffRecord(terms)
-        val sig = Schnorr.sign(keys.courier.secret, record.encode(), keys.courier.pubKeyCompressed)
+        val sig = Schnorr.sign(keys.operator.secret, record.encode(), keys.operator.pubKeyCompressed)
 
         // Dev attestation: the phase-1 oracle is trusted by design; a fabricated srcTxId is fine.
         val attestation = PaymentAttestation.build(
@@ -333,7 +331,7 @@ class E2eFlow(
         val sellerOut = requirePayout(outs, collateralTokenIdHex, netAmount(terms), Wire.p2pkTree(keys.operator.pubKeyCompressed), "seller")
         val nftOut = outs.firstOrNull { out -> out.tokens.any { it.tokenId == nftIdHex && it.amount == 1L } }
             ?: fail("flowA: oracle NFT not preserved in the release outputs")
-        log("flowA ok: seller paid ${netAmount(terms)} (net of $feeBps bps fee), oracle NFT preserved in box ${nftOut.boxId}")
+        log("flowA ok: seller paid ${netAmount(terms)} (net of ${ContractParams.PROTOCOL_FEE_BPS} bps fee), oracle NFT preserved in box ${nftOut.boxId}")
 
         summary["flowA"] = mapOf(
             "fundTxId" to fundTxId, "releaseTxId" to releaseTxId, "spendTxId" to spendTxId,
@@ -366,7 +364,6 @@ class E2eFlow(
             recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = height + config.reclaimTimeoutBlocks,
-            feeBps = feeBps,
             fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.feeBoxValueNanoErg + config.minerFeeNanoErg + 1_000_000L),
             currentHeight = height,
             changeAddress = p2pkAddress(keys.operator),
@@ -376,43 +373,43 @@ class E2eFlow(
         val fundedBox = txOutputs(fundTxId)[0]
 
         val record = handoffRecord(terms)
-        val sig = Schnorr.sign(keys.courier.secret, record.encode(), keys.courier.pubKeyCompressed)
+        val sig = Schnorr.sign(keys.operator.secret, record.encode(), keys.operator.pubKeyCompressed)
         val openTx = claimBuilder.buildClaimOpen(
             fundedBox = fundedBox,
-            feeInputs = feeInputsFor(keys.user),
+            feeInputs = feeInputsFor(keys.buyer),
             record = record,
             a = sig.a,
             z = sig.z,
             currentHeight = buildHeight(),
             txTimestampMs = record.timestamp * 1000L,
-            changeAddress = p2pkAddress(keys.user),
-            signer = proverSigner(keys.user.secret),
+            changeAddress = p2pkAddress(keys.buyer),
+            signer = proverSigner(keys.buyer.secret),
         )
         val openTxId = broadcastAndConfirm("flowB.claimOpen", openTx)
         val provenBox = txOutputs(openTxId)[0]
         log("claim opened: proven box ${provenBox.boxId}; waiting ${ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS} blocks maturation")
 
-        val proofHeight = (provenBox.registerLong(7)!! ushr 32).toInt()
+        val proofHeight = provenBox.registerLong(7)!!.toInt()
         advanceSimHeight(proofHeight + ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS + 1)
 
         val payoutTx = claimBuilder.buildClaimPayout(
             provenBox = provenBox,
-            feeInputs = feeInputsFor(keys.user),
+            feeInputs = feeInputsFor(keys.buyer),
             currentHeight = buildHeight(),
-            userPayoutAddress = p2pkAddress(keys.user),
-            changeAddress = p2pkAddress(keys.user),
-            signer = proverSigner(keys.user.secret),
+            buyerPayoutAddress = p2pkAddress(keys.buyer),
+            changeAddress = p2pkAddress(keys.buyer),
+            signer = proverSigner(keys.buyer.secret),
         )
         val payoutTxId = broadcastAndConfirm("flowB.claimPayout", payoutTx)
 
         val spendTxId = if (config.dryRun) payoutTxId else pollSpent(provenBox.boxId, "flowB: proven box spend")
         val outs = txOutputs(spendTxId)
-        val userOut = requirePayout(outs, collateralTokenIdHex, netAmount(terms), Wire.p2pkTree(keys.user.pubKeyCompressed), "user")
-        log("flowB ok: user paid ${netAmount(terms)} (net of $feeBps bps fee) after dispute")
+        val buyerOut = requirePayout(outs, collateralTokenIdHex, netAmount(terms), Wire.p2pkTree(keys.buyer.pubKeyCompressed), "buyer")
+        log("flowB ok: buyer paid ${netAmount(terms)} (net of ${ContractParams.PROTOCOL_FEE_BPS} bps fee) after dispute")
 
         summary["flowB"] = mapOf(
             "fundTxId" to fundTxId, "claimOpenTxId" to openTxId, "claimPayoutTxId" to payoutTxId,
-            "spendTxId" to spendTxId, "provenBoxId" to provenBox.boxId, "userPayoutBoxId" to userOut.boxId,
+            "spendTxId" to spendTxId, "provenBoxId" to provenBox.boxId, "buyerPayoutBoxId" to buyerOut.boxId,
         )
         return txOutputs(fundTxId).first { it.tokenAmount(collateralTokenIdHex) > 0 && it.boxId != fundedBox.boxId }
     }
@@ -434,7 +431,6 @@ class E2eFlow(
             recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = timeoutHeight,
-            feeBps = feeBps,
             fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.feeBoxValueNanoErg + config.minerFeeNanoErg + 1_000_000L),
             currentHeight = height,
             changeAddress = p2pkAddress(keys.operator),
@@ -457,7 +453,7 @@ class E2eFlow(
         val spendTxId = if (config.dryRun) reclaimTxId else pollSpent(fundedBox.boxId, "flowC: vault spend")
         val outs = txOutputs(spendTxId)
         val sellerOut = requirePayout(outs, collateralTokenIdHex, netAmount(terms), Wire.p2pkTree(keys.operator.pubKeyCompressed), "seller")
-        log("flowC ok: seller refunded ${netAmount(terms)} (net of $feeBps bps fee) after timeout")
+        log("flowC ok: seller refunded ${netAmount(terms)} (net of ${ContractParams.PROTOCOL_FEE_BPS} bps fee) after timeout")
 
         summary["flowC"] = mapOf(
             "fundTxId" to fundTxId, "reclaimTxId" to reclaimTxId, "spendTxId" to spendTxId,
@@ -532,7 +528,7 @@ class E2eFlow(
     private var fundedValueForFund: Long = 0L
 
     private fun netAmount(terms: DealTerms): Long {
-        val fee = terms.amount * feeBps / ContractParams.FEE_DENOMINATOR
+        val fee = terms.amount * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
         return terms.amount - fee
     }
 
@@ -543,9 +539,8 @@ class E2eFlow(
         amount = dealAmount,
         fiatAmount = 250_000L,
         fiatCurrency = "EGP".encodeToByteArray(),
-        userPubKey = keys.user.pubKeyCompressed,
+        buyerPubKey = keys.buyer.pubKeyCompressed,
         sellerPubKey = keys.operator.pubKeyCompressed,
-        courierPubKey = keys.courier.pubKeyCompressed,
         quoteExpiry = nowSec() + 3600,
     )
 
@@ -554,7 +549,6 @@ class E2eFlow(
         amount = terms.fiatAmount,
         fiatCurrency = terms.fiatCurrency,
         timestamp = nowSec(),
-        courierIdHash = HandoffRecord.courierIdHash("e2e-courier".encodeToByteArray()),
     )
 
     private fun nowSec(): Long = nowMillis() / 1000L

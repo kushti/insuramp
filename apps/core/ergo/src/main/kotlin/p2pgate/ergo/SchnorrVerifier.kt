@@ -25,7 +25,7 @@ object SchnorrVerifier {
     private val params = ECDomainParameters(spec.curve, spec.g, spec.n, spec.h)
 
     /**
-     * Verifies the courier half over [msg] (the 84-byte P2PH record).
+     * Verifies the record signature over [msg] (the 52-byte P2PH record).
      * Returns `false` (never throws) on malformed points, wrong sizes, or a
      * failing equation — mirroring the contract, where a `decodePoint` throw
      * rejects the spend.

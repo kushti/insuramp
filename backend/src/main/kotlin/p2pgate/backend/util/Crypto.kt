@@ -46,7 +46,7 @@ object Crypto {
         return out
     }
 
-    /** Random 32-byte token, hex-encoded (deal / courier / operator bearer tokens). */
+    /** Random 32-byte token, hex-encoded (deal / operator bearer tokens). */
     fun secureToken(): String {
         val raw = ByteArray(32)
         random.nextBytes(raw)

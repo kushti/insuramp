@@ -23,9 +23,8 @@ object ErgoTestFixtures {
     val networkType: NetworkType = NetworkType.MAINNET
 
     val sellerKeys = TestKeys.of(0x1111)
-    val userKeys = TestKeys.of(0x2222)
-    val courierKeys = TestKeys.of(0x3333)
-    val dealKeys = TestKeys.of(0x4444)   // the user's deal key (fee inputs, change)
+    val buyerKeys = TestKeys.of(0x2222)
+    val dealKeys = TestKeys.of(0x4444)   // the buyer's deal key (fee inputs, change)
     val treasuryKeys = TestKeys.of(0x5555)
     val oracleKeys = TestKeys.of(0x9999) // the phase-1 dev oracle key (M3)
 
@@ -57,7 +56,6 @@ object ErgoTestFixtures {
         fiatAmount: Long = 250_000L,
         currency: String = "EGP",
         amount: Long = DEAL_AMOUNT,
-        courierPubKey: ByteArray = courierKeys.pubKeyCompressed,
     ): DealTerms = DealTerms(
         dealNonce = ByteArray(16) { it.toByte() },
         asset = 1,
@@ -65,9 +63,8 @@ object ErgoTestFixtures {
         amount = amount,
         fiatAmount = fiatAmount,
         fiatCurrency = currency.toByteArray(),
-        userPubKey = userKeys.pubKeyCompressed,
+        buyerPubKey = buyerKeys.pubKeyCompressed,
         sellerPubKey = sellerKeys.pubKeyCompressed,
-        courierPubKey = courierPubKey,
         quoteExpiry = 1_700_100_000L,
     )
 
@@ -76,12 +73,11 @@ object ErgoTestFixtures {
         amount = terms.fiatAmount,
         fiatCurrency = terms.fiatCurrency,
         timestamp = tsSec,
-        courierIdHash = HandoffRecord.courierIdHash("courier-7".encodeToByteArray()),
     )
 
-    /** The courier Schnorr half over the record, as obtained at the meeting. */
-    fun courierSign(record: HandoffRecord): RefSchnorr.Signature =
-        RefSchnorr.sign(courierKeys.secret, record.encode(), courierKeys.pubKeyCompressed)
+    /** The seller's Schnorr signature over the record, as obtained at the meeting. */
+    fun sellerSign(record: HandoffRecord): RefSchnorr.Signature =
+        RefSchnorr.sign(sellerKeys.secret, record.encode(), sellerKeys.pubKeyCompressed)
 
     // ---------------------------------------------------------------- chain boxes
 
@@ -91,7 +87,6 @@ object ErgoTestFixtures {
 
     fun fundedChainBox(
         terms: DealTerms,
-        feeBps: Int = 0,
         timeoutHeight: Int = CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS,
         tokens: List<ChainToken> = listOf(ChainToken(useTokenIdHex, DEAL_AMOUNT)),
         value: Long = BOX_VALUE_NANO_ERG,
@@ -110,9 +105,9 @@ object ErgoTestFixtures {
         registers = listOf(
             ChainRegister.CollBytes(terms.dealId),
             ChainRegister.CollBytes(sellerKeys.pubKeyCompressed),
-            ChainRegister.CollBytes(userKeys.pubKeyCompressed),
-            ChainRegister.CollBytes(trees.oracleNftId + courierKeys.pubKeyCompressed),
-            ChainRegister.Int64(packInts(timeoutHeight, feeBps)),
+            ChainRegister.CollBytes(buyerKeys.pubKeyCompressed),
+            ChainRegister.CollBytes(trees.oracleNftId),
+            ChainRegister.Int64(timeoutHeight.toLong()),
             ChainRegister.CollBytes(fundingBinding()),
         ),
         spentTransactionId = spentTxId,
@@ -120,7 +115,6 @@ object ErgoTestFixtures {
 
     fun provenChainBox(
         terms: DealTerms,
-        feeBps: Int = 0,
         proofHeight: Int = 1500,
         recordId: ByteArray = ByteArray(32) { 7 },
         tokens: List<ChainToken> = listOf(ChainToken(useTokenIdHex, DEAL_AMOUNT)),
@@ -139,8 +133,8 @@ object ErgoTestFixtures {
         registers = listOf(
             ChainRegister.CollBytes(terms.dealId),
             ChainRegister.CollBytes(sellerKeys.pubKeyCompressed),
-            ChainRegister.CollBytes(userKeys.pubKeyCompressed),
-            ChainRegister.Int64(packInts(proofHeight, feeBps)),
+            ChainRegister.CollBytes(buyerKeys.pubKeyCompressed),
+            ChainRegister.Int64(proofHeight.toLong()),
             ChainRegister.CollBytes(recordId),
             ChainRegister.CollBytes(fundingBinding()),
         ),
@@ -232,9 +226,6 @@ object ErgoTestFixtures {
     }
 
     // ---------------------------------------------------------------- byte helpers
-
-    /** sigma 6 packs the two ints arithmetically: (hi << 32) | lo. */
-    fun packInts(hi: Int, lo: Int): Long = hi.toLong() * 4294967296L + lo
 
     fun Long.toBe(n: Int): ByteArray = ByteArray(n) { i -> (this shr (8 * (n - 1 - i))).toByte() }
 }

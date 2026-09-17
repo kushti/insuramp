@@ -21,7 +21,7 @@ class TestPreHeader(
     override fun votes(): Coll<Any> = SigmaBridge.collFrom(byteArrayOf(1, 1, 1))
 }
 
-/** Proving interpreter holding an explicit secret list (seller/user/oracle keys). */
+/** Proving interpreter holding an explicit secret list (seller/buyer/oracle keys). */
 class TestProver(
     secrets: List<SigmaProtocolPrivateInput<*>>,
 ) : ErgoLikeTestProvingInterpreter() {

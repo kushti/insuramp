@@ -18,32 +18,27 @@ private fun Long.toBe(n: Int): ByteArray = ByteArray(n) { i -> (this shr (8 * (n
  * Per-deal test fixture: keys, token/deal ids, the three compiled vault contracts
  * (plus a stand-in treasury script whose hash feeds TREASURY_SCRIPT_HASH), the
  * FUNDED/PAYMENT_PROVEN/oracle boxes, wire-format builders and the prove/verify
- * driver. One fixture instance per (deal, feeBps) combination under test.
+ * driver. One fixture instance per deal under test.
  */
 class VaultFixture(
-    val feeBps: Int = 0,
-    /** R7 packing defects for the adversarial tests: substitute a wrong courier key, a
-     *  wrong oracle NFT id, or replace R7 wholesale (e.g. a 32-byte R7 with the courier
-     *  key omitted). Only the FUNDED box's R7 is affected. */
-    r7CourierPk: ByteArray? = null,
+    /** R7 substitution for the adversarial tests: a wrong oracle NFT id, or replace R7
+     *  wholesale with arbitrary bytes. Only the FUNDED box's R7 is affected. */
     r7OracleNftId: ByteArray? = null,
     r7Bytes: ByteArray? = null,
 ) {
 
     // --- deal-scoped keys (compressed secp256k1 points go into registers) ---
     val sellerKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
-    val userKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
-    val courierKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
+    val buyerKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
     val oracleKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
     val treasuryKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
 
     val sellerPk: ByteArray = SigmaBridge.ecpEncoded(SigmaBridge.ecp(sellerKey), true)
-    val userPk: ByteArray = SigmaBridge.ecpEncoded(SigmaBridge.ecp(userKey), true)
-    val courierPk: ByteArray = SigmaBridge.ecpEncoded(SigmaBridge.ecp(courierKey), true)
+    val buyerPk: ByteArray = SigmaBridge.ecpEncoded(SigmaBridge.ecp(buyerKey), true)
     val oraclePk: ByteArray = SigmaBridge.ecpEncoded(SigmaBridge.ecp(oracleKey), true)
 
     val sellerTree: ErgoTree = SigmaBridge.p2pkTree(sellerKey.publicImage())
-    val userTree: ErgoTree = SigmaBridge.p2pkTree(userKey.publicImage())
+    val buyerTree: ErgoTree = SigmaBridge.p2pkTree(buyerKey.publicImage())
 
     // --- token / deal identifiers (deterministic, distinct per field) ---
     val useTokenId: ByteArray = ByteArray(32) { (it * 7 + 3).toByte() }
@@ -51,15 +46,17 @@ class VaultFixture(
     val wrongNftId: ByteArray = ByteArray(32) { (it * 11 + 2).toByte() }
     val dealId: ByteArray = ByteArray(32) { (it * 13 + 4).toByte() }
     val srcTxId: ByteArray = ByteArray(32) { (it * 17 + 5).toByte() }
-    val recipientAddr: ByteArray = ByteArray(21) { (it * 19 + 6).toByte() } // the USER's USDT address (the seller pays the user)
+    val recipientAddr: ByteArray = ByteArray(21) { (it * 19 + 6).toByte() } // the buyer's USDT address (the seller pays the buyer)
     val chainId: Byte = 1 // Tron — registry in specs/deal-protocol.md §3.1
     val tokenId: Byte = 1 // USDT
 
-    /** R7 of the FUNDED box: 65 B packed oracleNftId(32) | courierPubKey(33) — no R10 exists. */
-    val packedR7: ByteArray = r7Bytes ?: ((r7OracleNftId ?: oracleNftId) + (r7CourierPk ?: courierPk))
+    /** R7 of the FUNDED box: the 32-byte oracleNftId (release paths only; path B
+     *  no longer reads R7 — the record signature verifies under R5's seller key). */
+    val fundedR7: ByteArray = r7Bytes ?: (r7OracleNftId ?: oracleNftId)
 
     val dealAmount: Long = 500_000_000L // 500 USDT, 6 decimals
-    val fee: Long = dealAmount * feeBps / ContractParams.FEE_DENOMINATOR
+    /** The always-on protocol fee (25 bps, compile-time contract constant). */
+    val fee: Long = dealAmount * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
     val boxValue: Long = 1_000_000L // nanoERG
 
     // --- heights ---
@@ -80,6 +77,7 @@ class VaultFixture(
             "ORACLE_NFT_ID" to ConstValue.Bytes(oracleNftId),
             "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${ContractParams.HANDOFF_RECORD_MAX_AGE_MS}L"),
             "CLAIM_MATURATION_BLOCKS" to ConstValue.IntNum(ContractParams.CLAIM_MATURATION_BLOCKS),
+            "FEE_BPS" to ConstValue.IntNum(ContractParams.PROTOCOL_FEE_BPS),
         ),
     )
 
@@ -89,6 +87,7 @@ class VaultFixture(
             "TREASURY_SCRIPT_HASH" to ConstValue.Bytes(treasuryHash),
             "PAYMENT_PROVEN_SCRIPT" to ConstValue.Bytes(provenTree.bytes()),
             "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${ContractParams.HANDOFF_RECORD_MAX_AGE_MS}L"),
+            "FEE_BPS" to ConstValue.IntNum(ContractParams.PROTOCOL_FEE_BPS),
         ),
     )
 
@@ -102,7 +101,8 @@ class VaultFixture(
 
     // --- wire formats (specs/deal-protocol.md §3.3 / specs/oracle-integration.md §2.2) ---
 
-    /** 84-byte handoff record ("P2PH", signed by the courier key): magic, version, dealId, fiatAmount, currency, timestamp, courierIdHash. */
+    /** 52-byte handoff record ("P2PH", signed by the seller key at the meeting):
+     *  magic, version, dealId, fiatAmount, currency, timestamp. */
     fun handoffRecord(
         tsSec: Long = NOW_MS / 1000,
         dealId: ByteArray = this.dealId,
@@ -111,12 +111,12 @@ class VaultFixture(
     ): ByteArray {
         require(currency.length == 3)
         return "P2PH".toByteArray() + byteArrayOf(1) + dealId + fiatAmount.toBe(8) +
-            currency.toByteArray() + tsSec.toBe(4) + ByteArray(32) { (it + 60).toByte() }
+            currency.toByteArray() + tsSec.toBe(4)
     }
 
-    /** Handoff-record id written to the PAYMENT_PROVEN box's R8: blake2b256(a_courier | z_courier | record). */
-    fun recordId(record: ByteArray, courierSig: Schnorr.Signature): ByteArray =
-        SigmaBridge.blake2b256(courierSig.a + courierSig.z + record)
+    /** Handoff-record id written to the PAYMENT_PROVEN box's R8: blake2b256(a | z | record). */
+    fun recordId(record: ByteArray, sig: Schnorr.Signature): ByteArray =
+        SigmaBridge.blake2b256(sig.a + sig.z + record)
 
     /** 112-byte payment-proof payload: version, dealId, chain/token, recipient, amount, srcTxId, block. */
     fun paymentPayload(
@@ -134,29 +134,28 @@ class VaultFixture(
 
     private fun bytesC(b: ByteArray): EvaluatedValue<out SType> = SigmaBridge.bytesConst(b)
 
-    /** sigma 6 stores tuple registers as Coll, so the contracts pack two ints as (hi << 32) | lo. */
-    fun packInts(hi: Int, lo: Int): Long = hi.toLong() * 4294967296L + lo
-
     /** The R9 funding binding shared by the FUNDED box and the PAYMENT_PROVEN copy. */
     val fundingBinding: ByteArray = byteArrayOf(chainId, tokenId) + recipientAddr + dealAmount.toBe(8)
 
+    /** The FUNDED box's registers: R8 is the plain `Long` timeoutHeight (§3.1). */
     val fundedRegs = SigmaBridge.regs(
         listOf(
             t(SigmaBridge.regId(4), bytesC(dealId)),
             t(SigmaBridge.regId(5), bytesC(sellerPk)),
-            t(SigmaBridge.regId(6), bytesC(userPk)),
-            t(SigmaBridge.regId(7), bytesC(packedR7)),
-            t(SigmaBridge.regId(8), SigmaBridge.longVal(packInts(timeoutHeight, feeBps)) as EvaluatedValue<out SType>),
+            t(SigmaBridge.regId(6), bytesC(buyerPk)),
+            t(SigmaBridge.regId(7), bytesC(fundedR7)),
+            t(SigmaBridge.regId(8), SigmaBridge.longVal(timeoutHeight.toLong()) as EvaluatedValue<out SType>),
             t(SigmaBridge.regId(9), bytesC(fundingBinding)),
         ),
     )
 
+    /** The PAYMENT_PROVEN registers: R7 is the plain `Long` proofHeight (§4.1). */
     fun provenRegs(proofHeight: Int, recordId: ByteArray) = SigmaBridge.regs(
         listOf(
             t(SigmaBridge.regId(4), bytesC(dealId)),
             t(SigmaBridge.regId(5), bytesC(sellerPk)),
-            t(SigmaBridge.regId(6), bytesC(userPk)),
-            t(SigmaBridge.regId(7), SigmaBridge.longVal(packInts(proofHeight, feeBps)) as EvaluatedValue<out SType>),
+            t(SigmaBridge.regId(6), bytesC(buyerPk)),
+            t(SigmaBridge.regId(7), SigmaBridge.longVal(proofHeight.toLong()) as EvaluatedValue<out SType>),
             t(SigmaBridge.regId(8), bytesC(recordId)),
             t(SigmaBridge.regId(9), bytesC(fundingBinding)),
         ),
@@ -202,8 +201,8 @@ class VaultFixture(
     fun sellerOut(amount: Long = dealAmount - fee): ErgoBoxCandidate =
         SigmaBridge.candidate(boxValue, sellerTree, creationHeight, tokens(tok(useTokenId, amount)), SigmaBridge.emptyRegs())
 
-    fun userOut(amount: Long = dealAmount - fee): ErgoBoxCandidate =
-        SigmaBridge.candidate(boxValue, userTree, creationHeight, tokens(tok(useTokenId, amount)), SigmaBridge.emptyRegs())
+    fun buyerOut(amount: Long = dealAmount - fee): ErgoBoxCandidate =
+        SigmaBridge.candidate(boxValue, buyerTree, creationHeight, tokens(tok(useTokenId, amount)), SigmaBridge.emptyRegs())
 
     fun treasuryOut(amount: Long = fee): ErgoBoxCandidate =
         SigmaBridge.candidate(100_000L, treasuryTree, creationHeight, tokens(tok(useTokenId, amount)), SigmaBridge.emptyRegs())
@@ -233,10 +232,10 @@ class VaultFixture(
 
     /**
      * Copies of an otherwise-honest message / response with one defect injected:
-     * [flippedByte] flips one bit at [index] (default sits in the courier-hash region,
+     * [flippedByte] flips one bit at [index] (default sits in the fiat-amount region,
      * outside the dealId/timestamp fields the other checks bind to).
      */
-    fun flippedByte(msg: ByteArray, index: Int = 60): ByteArray =
+    fun flippedByte(msg: ByteArray, index: Int = 40): ByteArray =
         msg.copyOf().also { it[index] = (it[index].toInt() xor 0x01).toByte() }
 
     /**
@@ -247,28 +246,28 @@ class VaultFixture(
         mapOf(0 to bytesC(payload))
 
     /**
-     * Handoff-record context vars for path B (vars 0..3): the 84-byte record at 0,
-     * the courier's Schnorr half at 1..2, the record timestamp in millis at 3.
-     * Pass [courierSig] (e.g. from a SignedRecord) to keep the carried (a, z) pair
-     * identical to the one an id was computed from; by default the half is signed
-     * here with [courierSigner]. [aOverride]/[zOverride] let a test pair honest
+     * Handoff-record context vars for path B (vars 0..3): the 52-byte record at 0,
+     * the seller's Schnorr signature at 1..2, the record timestamp in millis at 3.
+     * Pass [sig] (e.g. from a SignedRecord) to keep the carried (a, z) pair
+     * identical to the one an id was computed from; by default the signature is
+     * produced here under [signer]. [aOverride]/[zOverride] let a test pair honest
      * signature material with tampered context-var bytes; [tsMsOverride] decouples
      * the Long var from the timestamp embedded in [record] to probe the slice binding.
      */
     fun handoffVars(
         record: ByteArray,
-        courierSigner: DLogProtocol.DLogProverInput = courierKey,
-        courierPub: ByteArray = courierPk,
-        courierSig: Schnorr.Signature? = null,
+        signer: DLogProtocol.DLogProverInput = sellerKey,
+        pub: ByteArray = sellerPk,
+        sig: Schnorr.Signature? = null,
         aOverride: ByteArray? = null,
         zOverride: ByteArray? = null,
         tsMsOverride: Long? = null,
     ): Map<Int, EvaluatedValue<out SType>> {
-        val cs = courierSig ?: Schnorr.sign(courierSigner.w(), record, courierPub)
+        val s = sig ?: Schnorr.sign(signer.w(), record, pub)
         return mapOf(
             0 to bytesC(record),
-            1 to bytesC(aOverride ?: cs.a),
-            2 to bytesC(zOverride ?: cs.z),
+            1 to bytesC(aOverride ?: s.a),
+            2 to bytesC(zOverride ?: s.z),
             3 to SigmaBridge.longVal(tsMsOverride ?: msgTsMillis(record)) as EvaluatedValue<out SType>,
         )
     }

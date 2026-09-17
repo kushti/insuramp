@@ -75,15 +75,6 @@ class DealStoreSpec {
     }
 
     @Test
-    fun `courier flags`() {
-        val store = InMemoryDealStore()
-        assertTrue(!store.isCourierFlagged("c1"))
-        store.flagCourier("c1")
-        assertTrue(store.isCourierFlagged("c1"))
-        assertEquals(setOf("c1"), store.flaggedCouriers())
-    }
-
-    @Test
     fun `concurrent updates are thread-safe`() {
         val store = InMemoryDealStore()
         val deal = TestEnv().quotedDeal()

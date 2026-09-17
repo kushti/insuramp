@@ -11,9 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * Bearer-token issuance and verification, `specs/operator-backend.md` §9:
  *
  *  - **deal-scoped tokens** — minted at deal creation (returned as
- *    `dealToken`), authorize the user-facing deal endpoints, expire at close;
- *  - **courier tokens** — per-deal, minted at dispatch, so a stolen phone can
- *    fake nothing (`onramp-ux.md` §3); expire at deal close;
+ *    `dealToken`), authorize the buyer-facing deal endpoints, expire at close;
  *  - **operator key** — long-lived, dashboard-only; vault-signing keys never
  *    leave the vault manager.
  *
@@ -24,7 +22,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 class TokenService {
     sealed interface Scope {
         data class DealToken(val dealId: String) : Scope
-        data class CourierToken(val dealId: String, val courierId: String) : Scope
         data object OperatorToken : Scope
     }
 
@@ -42,23 +39,12 @@ class TokenService {
 
     fun verifyDeal(raw: String?, dealId: String): Boolean = matches(raw) { it is Scope.DealToken && it.dealId == dealId }
 
-    fun verifyCourier(raw: String?, dealId: String, courierId: String): Boolean = matches(raw) {
-        it is Scope.CourierToken && it.dealId == dealId && it.courierId == courierId
-    }
-
     fun verifyOperator(raw: String?): Boolean = matches(raw) { it is Scope.OperatorToken }
 
-    /** Kills all tokens scoped to a closed deal (user + courier tokens). */
+    /** Kills all tokens scoped to a closed deal. */
     fun revokeDeal(dealId: String) {
         entries.removeIf {
-            (it.scope as? Scope.DealToken)?.dealId == dealId ||
-                (it.scope as? Scope.CourierToken)?.dealId == dealId
-        }
-    }
-
-    fun revokeCourier(dealId: String, courierId: String) {
-        entries.removeIf {
-            (it.scope as? Scope.CourierToken)?.let { s -> s.dealId == dealId && s.courierId == courierId } == true
+            (it.scope as? Scope.DealToken)?.dealId == dealId
         }
     }
 

@@ -7,7 +7,7 @@ import p2pgate.dealprotocol.SourceChainId
  * The 112-byte payment-proof payload attested by the phase-1 oracle
  * (`specs/oracle-integration.md` §2.2 — the permanent digest format, unchanged
  * by the phase-2 guard-threshold upgrade). On-ramp semantics: the payload
- * describes the SELLER's USDT transfer to the user's receive address, and the
+ * describes the SELLER's USDT transfer to the buyer's receive address, and the
  * vault contract checks `dealId`/`srcChainId`/`tokenId`/`recipient`/`amount`
  * against its R4/R9 registers in the release spend (paths C/C′); `srcTxId`,
  * `srcBlockHeight`, `srcBlockTime` ride along for audit and are bound only by
@@ -38,7 +38,7 @@ class PaymentAttestation(
     val srcChainId: Int,
     /** Token wire id on that chain (mirrors [DealTerms.asset]). */
     val tokenId: Int,
-    /** 21-byte left-padded source-chain address payload — the USER's USDT address. */
+    /** 21-byte left-padded source-chain address payload — the buyer's USDT address. */
     val recipient: ByteArray,
     /** uint64 in USDT base units; exact-amount deals only. */
     val amount: Long,
@@ -88,7 +88,7 @@ class PaymentAttestation(
     /**
      * Field-vs-deal-terms cross-check (`specs/oracle-integration.md` §2.2,
      * "set at funding" column): the funding-set fields must equal what the deal
-     * terms hash binds, with [recipientAddr] the user's raw source-chain address
+     * terms hash binds, with [recipientAddr] the buyer's raw source-chain address
      * payload (padded per chain, [padRecipient]).
      */
     fun matches(dealTerms: DealTerms, recipientAddr: ByteArray): Boolean =
@@ -166,7 +166,7 @@ class PaymentAttestation(
         /**
          * Builds an attestation for a deal from its terms and the observed
          * source-chain event (the attestation-time fields). The funding-set
-         * fields are derived from [dealTerms]; [recipientAddr] is the user's
+         * fields are derived from [dealTerms]; [recipientAddr] is the buyer's
          * raw USDT address payload.
          */
         fun build(

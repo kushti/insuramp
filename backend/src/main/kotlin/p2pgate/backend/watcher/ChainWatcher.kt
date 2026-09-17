@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
  * on-chain fact is not re-dispatched (and cannot spam the violation log).
  *
  * What comes from where, per the spec parenthetical: `CashCollected` comes
- * from the courier API and `PaymentConfirmed` from the oracle client — not
+ * from the handoff-record upload and `PaymentConfirmed` from the oracle client — not
  * from here. This watcher covers the on-chain facts: `VaultFunded`,
  * `ClaimOpened`, `ReleaseObserved`, `ReclaimTimeoutElapsed`, `ClaimPaid`, plus
  * the off-chain-but-scheduled `ClaimMatured` countdown derived from the

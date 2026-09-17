@@ -20,11 +20,11 @@ data class DisputeRow(
     val state: DealState,
     /** When the claim landed (the path-B observation instant). */
     val openedAt: Instant,
-    /** `openedAt + CLAIM_MATURATION` — when path D becomes spendable by the user. */
+    /** `openedAt + CLAIM_MATURATION` — when path D becomes spendable by the buyer. */
     val maturesAt: Instant,
     /** A PaymentConfirmed landed while the claim was open — the claim is without cause. */
     val contested: Boolean,
-    /** Courier-signed "P2PH" record reference (hex), if the courier API has it on file. */
+    /** Seller-signed "P2PH" record reference (hex), if the handoff upload has it on file. */
     val handoffRecordRef: String?,
     /** GPS / override record reference from the meeting. */
     val geoRef: String?,
@@ -69,9 +69,9 @@ class WebhookEscalation(
  * Dispute inbox, `specs/operator-backend.md` §7. Exactly three actions —
  * contest, accept, investigate — and nothing else. Contest is mechanical
  * whenever the oracle digest exists (path C′); accept concedes and records
- * the loss; investigate flags the courier credential and routes internally,
- * changing nothing on-chain. The inbox is fail-loud: any claim approaching
- * maturation unactioned escalates through [escalation].
+ * the loss; investigate routes the deal to internal review of the handoff
+ * evidence, changing nothing on-chain. The inbox is fail-loud: any claim
+ * approaching maturation unactioned escalates through [escalation].
  */
 class DisputeInbox(
     private val store: DealStore,
@@ -132,7 +132,7 @@ class DisputeInbox(
 
     /**
      * Accept: concede the claim, take no on-chain action; the claim matures
-     * and path D pays the user. The loss is recorded against the deal.
+     * and path D pays the buyer. The loss is recorded against the deal.
      */
     fun accept(dealId: String): ActionOutcome {
         val deal = store.getDeal(dealId) ?: return ActionOutcome.Rejected("unknown deal $dealId")
@@ -144,18 +144,16 @@ class DisputeInbox(
     }
 
     /**
-     * Investigate: courier-side fraud case (a verifying record but the
-     * operator's evidence says the cash was never collected). Flags the
-     * courier credential and routes the deal to internal investigation —
-     * nothing changes on-chain.
+     * Investigate: the record verifies but the operator's evidence says the
+     * cash was never collected (or the signature is disputed). Routes the
+     * deal to internal review of the handoff evidence — nothing changes
+     * on-chain.
      */
     fun investigate(dealId: String): ActionOutcome {
         val deal = store.getDeal(dealId) ?: return ActionOutcome.Rejected("unknown deal $dealId")
         if (deal.state != DealState.CLAIM_OPENED && deal.state != DealState.CLAIMABLE) {
             return ActionOutcome.Rejected("deal is ${deal.state} — no open claim")
         }
-        store.flagCourier(deal.courierId)
-        bus.publish(BackendEvent.CourierCredentialFlagged(deal.courierId, Instant.now()))
         return mark(dealId, "investigate")
     }
 

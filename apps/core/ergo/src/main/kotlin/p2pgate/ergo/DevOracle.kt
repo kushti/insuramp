@@ -26,7 +26,7 @@ import java.math.BigInteger
  */
 interface OracleSigner : DealTxSigner {
 
-    /** The phase-1 oracle NFT id the vaults pin (FUNDED R7 bytes 0..32). */
+    /** The phase-1 oracle NFT id the vaults pin (FUNDED R7). */
     val oracleNftId: ByteArray
 
     /**
@@ -154,7 +154,7 @@ class DevOracle(
 
     /**
      * Dev-mode attestation (`specs/oracle-integration.md` §2.2): the caller
-     * asserts the seller's USDT transfer to the user's address happened on the
+     * asserts the seller's USDT transfer to the buyer's address happened on the
      * source chain; the funding-set fields are derived from the deal terms.
      */
     fun attest(

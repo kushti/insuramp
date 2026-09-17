@@ -56,7 +56,7 @@ class ChainWatcherSpec {
     }
 
     @Test
-    fun `proven box spent paying the user classifies as claim paid`() {
+    fun `proven box spent paying the buyer classifies as claim paid`() {
         val env = TestEnv()
         val deal = env.quotedDeal()
         env.forceFund(deal)
@@ -66,7 +66,7 @@ class ChainWatcherSpec {
         val provenId = "bb".repeat(32)
         env.store.updateDeal(deal.dealId) { it.copy(provenBoxId = provenId) }
         env.chain.boxes[provenId] = Fx.provenBox(deal, boxId = provenId)
-        val payout = Fx.payoutBox(Fx.user.pubKeyCompressed, Fx.useTokenIdHex, deal.amount, "c1".repeat(32))
+        val payout = Fx.payoutBox(Fx.buyer.pubKeyCompressed, Fx.useTokenIdHex, deal.amount, "c1".repeat(32))
         env.chain.spend(provenId, "b2".repeat(32), ChainSpend("b2".repeat(32), 1600, listOf(payout)))
         env.watcher.tick(claimAt.plus(Duration.ofHours(13)))
         assertEquals(DealState.CLAIMED, env.store.getDeal(deal.dealId)!!.state)

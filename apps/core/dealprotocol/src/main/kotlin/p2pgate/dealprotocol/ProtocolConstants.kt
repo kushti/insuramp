@@ -12,12 +12,12 @@ import java.time.Duration
  * expect/actuals (`specs/android-app.md` §8.8, amended).
  */
 object ProtocolConstants {
-    /** Deal window; also the quote expiry horizon on the user side. */
+    /** Deal window; also the quote expiry horizon on the buyer side. */
     val RECLAIM_TIMEOUT: Duration = Duration.ofHours(24)
 
     /**
      * Claim maturation: the seller gets half a day to counter an open claim
-     * with the oracle signal (path C′) before the user can take the collateral
+     * with the oracle signal (path C′) before the buyer can take the collateral
      * (path D). Owner decision (2026-09-13): shortened from 24h — the release
      * direction is fully oracle-trusted in v2, so a long contest window buys
      * nothing.
@@ -30,9 +30,9 @@ object ProtocolConstants {
     val HANDOFF_RECORD_MAX_AGE: Duration = Duration.ofHours(4)
 
     /**
-     * Pre-sign sanity bound on courier-device clock skew when the handoff
+     * Pre-sign sanity bound on the signer's device clock skew when the handoff
      * confirmation arrives ([spec] ±10 min, `specs/deal-protocol.md` §3.2). The
-     * user app rejects an "absurd" timestamp before showing the sign prompt.
+     * buyer app rejects an "absurd" timestamp before accepting the record.
      */
-    val COURIER_CLOCK_SKEW: Duration = Duration.ofMinutes(10)
+    val HANDOFF_CLOCK_SKEW: Duration = Duration.ofMinutes(10)
 }

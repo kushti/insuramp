@@ -5,6 +5,7 @@ import p2pgate.backend.bus.EventBus
 import p2pgate.backend.infra.InfraMonitor
 import p2pgate.backend.store.DealStore
 import p2pgate.backend.store.QuoteRecord
+import p2pgate.contracts.ContractParams
 import p2pgate.dealprotocol.ProtocolConstants
 import java.time.Duration
 import java.time.Instant
@@ -19,7 +20,7 @@ import java.util.concurrent.atomic.AtomicLong
  *    structurally, not by operator discipline: the insured badge is the vault,
  *    and a quote that outruns collateral ships a smaller badge than promised;
  *  - **no quotes while verification is degraded** — the infra monitor's
- *    auto-pause withdraws the feed (users see no quotes, not stale ones);
+ *    auto-pause withdraws the feed (buyers see no quotes, not stale ones);
  *  - **quotes are versioned and expire** — TTL is aligned with, and shorter
  *    than, `RECLAIM_TIMEOUT`, so a quote can never outlive the vault funded
  *    from it;
@@ -31,7 +32,9 @@ class QuotePublisher(
     private val infra: InfraMonitor,
     private val freeCollateral: () -> Long,
     private val bus: EventBus,
-    private val protocolFeeBps: Int = 25,
+    /** The protocol fee quoted against the spread — the canonical compile-time
+     *  contract fee (`ContractParams.PROTOCOL_FEE_BPS`); injectable for tests. */
+    private val protocolFeeBps: Int = ContractParams.PROTOCOL_FEE_BPS,
     private val costFloorBps: Int = 0,
     private val ttl: Duration = DEFAULT_TTL,
     private val clock: () -> Instant = Instant::now,
@@ -94,7 +97,7 @@ class QuotePublisher(
         bus.publish(BackendEvent.QuoteWithdrawn(cause, at))
     }
 
-    /** The quote served to users right now — `null` while paused or expired. */
+    /** The quote served to buyers right now — `null` while paused or expired. */
     fun active(at: Instant = clock()): QuoteRecord? =
         store.currentQuote()?.takeIf { infra.healthy() && at.isBefore(it.expiresAt) }
 

@@ -4,7 +4,7 @@ import java.time.Instant
 
 /**
  * External evidence fed into the deal state machine. The module never performs
- * I/O itself; callers map observed chain/oracle/courier facts to these events
+ * I/O itself; callers map observed chain/oracle/handoff facts to these events
  * (`specs/android-app.md` §2.1, `:core:dealprotocol`).
  *
  * Events that claim a timeout or freshness condition carry the observation
@@ -21,16 +21,16 @@ sealed interface DealEvent {
     data class VaultFunded(val at: Instant) : DealEvent
 
     /**
-     * The cash handover completed: the courier physically collected the cash and
-     * signed the handoff record (a single Schnorr under the deal-scoped courier
+     * The cash handover completed: the seller physically collected the cash and
+     * signed the handoff record (a single Schnorr under the deal's seller
      * key over the P2PH message, `specs/deal-protocol.md` §3.2). The buyer
      * obtained the signed record at the meeting as the dispute artifact.
      * FUNDED → PAYMENT_PENDING: the seller is now obligated to send the USDT.
      */
-    data class CashCollected(val courierTimestamp: Instant, val confirmedAt: Instant) : DealEvent
+    data class CashCollected(val recordTimestamp: Instant, val confirmedAt: Instant) : DealEvent
 
     /**
-     * Oracle observed the seller's USDT transfer to the user's address (off-chain
+     * Oracle observed the seller's USDT transfer to the buyer's address (off-chain
      * signal; the box stays FUNDED). PAYMENT_PENDING → PAYMENT_CONFIRMED. From
      * CLAIM_OPENED / CLAIMABLE the same signal is the seller's contest: the claim
      * is without cause and dead — the machine records it as contested and awaits
@@ -52,7 +52,7 @@ sealed interface DealEvent {
     data class ReclaimTimeoutElapsed(val at: Instant) : DealEvent
 
     /**
-     * Path B tx landed: the user opened a claim carrying the courier-signed
+     * Path B tx landed: the buyer opened a claim carrying the SELLER-signed
      * handoff record — the box is PAYMENT_PROVEN. Anchor: records
      * `proofTimestamp`, starting `CLAIM_MATURATION`.
      */
@@ -60,16 +60,16 @@ sealed interface DealEvent {
 
     /**
      * `CLAIM_MATURATION` elapsed since the claim landed; the box is now spendable by
-     * the user (path D). [at] must be ≥ `proofTimestamp` +
+     * the buyer (path D). [at] must be ≥ `proofTimestamp` +
      * [ProtocolConstants.CLAIM_MATURATION].
      */
     data class ClaimMatured(val at: Instant) : DealEvent
 
-    /** Path D spend observed: user took the collateral minus fee. */
+    /** Path D spend observed: buyer took the collateral minus fee. */
     data object ClaimPaid : DealEvent
 
     /**
-     * Quote expired or the user ghosted before funding. Valid only in QUOTED;
+     * Quote expired or the buyer ghosted before funding. Valid only in QUOTED;
      * the deal is abandoned with no on-chain footprint (`specs/deal-protocol.md`
      * §1 diagram), so the outcome is [TransitionOutcome.Aborted] rather than a
      * state — QUOTED, EXPIRED is not one of the canonical states.

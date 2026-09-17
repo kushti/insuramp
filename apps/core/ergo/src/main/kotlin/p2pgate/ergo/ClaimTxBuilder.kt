@@ -8,7 +8,7 @@ import p2pgate.dealprotocol.HandoffRecord
 import sigma.ast.ErgoTree
 
 /**
- * The signer seam for the two user-side transactions: the app supplies whatever
+ * The signer seam for the two buyer-side transactions: the app supplies whatever
  * holds the deal key (Android Keystore-backed prover in production, a test
  * prover in the suite) — the builder never sees private key material.
  */
@@ -17,16 +17,16 @@ fun interface DealTxSigner {
 }
 
 /**
- * Builds the only two transactions the user app ever constructs
+ * Builds the only two transactions the buyer app ever constructs
  * (`specs/android-app.md` §4.3), both spends of vault boxes:
  *
  *  - [buildClaimOpen] — vault path B: spends the FUNDED box carrying the
- *    courier-signed handoff record as context vars 0–3, output 0 the
- *    PAYMENT_PROVEN box (registers copied, R7 `(proofHeight << 32) | feeBps`,
+ *    SELLER-signed handoff record as context vars 0–3, output 0 the
+ *    PAYMENT_PROVEN box (registers copied, R7 the plain `Long` `proofHeight`,
  *    R8 = `blake2b256(a ‖ z ‖ record)`);
  *  - [buildClaimPayout] — vault path D: spends the PAYMENT_PROVEN box after
- *    maturation, paying `collateral − fee` to the user's payout address plus
- *    the §6 treasury fee output when `feeBps > 0`.
+ *    maturation, paying `collateral − fee` to the buyer's payout address plus
+ *    the §6 treasury fee output.
  *
  * Miner fees are funded from app-selected fee inputs (`ChainSource.getUnspentBoxes`);
  * change returns to the deal-key address. Transactions are built offline via
@@ -41,7 +41,7 @@ class ClaimTxBuilder(
     private val treasuryTree: ErgoTree,
     /** Miner fee, nanoERG (default 0.001 ERG — the protocol minimum). */
     private val minerFeeNanoErg: Long = 1_000_000L,
-    /** ERG value of the treasury fee output when feeBps > 0. */
+    /** ERG value of the treasury fee output. */
     private val feeBoxValueNanoErg: Long = 100_000L,
     /** Change below this is rejected (dust protection); exact-zero change is allowed. */
     private val minChangeNanoErg: Long = 1_000_000L,
@@ -60,19 +60,19 @@ class ClaimTxBuilder(
 ) {
     private val networkType: NetworkType = trees.networkType
 
-    /** §6 fee split for a payout: [fee] to the treasury, [userPayout] to the user. */
-    data class FeeBreakdown(val fee: Long, val userPayout: Long)
+    /** §6 fee split for a payout: [fee] to the treasury, [buyerPayout] to the buyer. */
+    data class FeeBreakdown(val fee: Long, val buyerPayout: Long)
 
     /**
      * The §6 fee math, exposed for display and tests:
-     * `fee = collateral * feeBps / 10000` (rounding down), the user's payout is
-     * the remainder.
+     * `fee = collateral * PROTOCOL_FEE_BPS / 10000` (rounding down, always
+     * charged — the fee is a compile-time contract constant), the buyer's
+     * payout is the remainder.
      */
-    fun feeBreakdown(collateral: Long, feeBps: Int): FeeBreakdown {
+    fun feeBreakdown(collateral: Long): FeeBreakdown {
         require(collateral > 0) { "collateral must be positive, got $collateral" }
-        require(feeBps in 0..10_000) { "feeBps must be in 0..10000, got $feeBps" }
-        val fee = collateral * feeBps / ContractParams.FEE_DENOMINATOR
-        return FeeBreakdown(fee = fee, userPayout = collateral - fee)
+        val fee = collateral * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
+        return FeeBreakdown(fee = fee, buyerPayout = collateral - fee)
     }
 
     init {
@@ -87,8 +87,8 @@ class ClaimTxBuilder(
     }
 
     /**
-     * Claim-open (path B). [record]/[a]/[z] are the verified courier-signed
-     * handoff record (see [CourierRecordVerifier]); [currentHeight] is the
+     * Claim-open (path B). [record]/[a]/[z] are the verified seller-signed
+     * handoff record (see [HandoffRecordVerifier]); [currentHeight] is the
      * chain height the tx is built against (becomes the PAYMENT_PROVEN
      * box's `proofHeight`); [txTimestampMs] the tx timestamp the freshness
      * check runs against.
@@ -108,16 +108,14 @@ class ClaimTxBuilder(
             "input box is not a FUNDED vault box of this contract"
         }
         require(feeInputs.isNotEmpty()) { "at least one fee input is required" }
-        require(a.size == 33 && z.size == 32) { "courier Schnorr half must be (33, 32) bytes" }
+        require(a.size == 33 && z.size == 32) { "handoff-record Schnorr signature must be (33, 32) bytes" }
 
         val recordBytes = record.encode()
         val dealId = fundedBox.registerBytes(4) ?: throw IllegalArgumentException("FUNDED box has no R4 dealId")
         require(record.dealId.contentEquals(dealId)) { "record dealId does not match the vault's R4" }
         val sellerPk = fundedBox.registerBytes(5) ?: throw IllegalArgumentException("FUNDED box has no R5 sellerPubKey")
-        val userPk = fundedBox.registerBytes(6) ?: throw IllegalArgumentException("FUNDED box has no R6 userPubKey")
-        fundedBox.registerBytes(7) ?: throw IllegalArgumentException("FUNDED box has no R7 oracleNftId||courierPubKey")
-        val packed8 = fundedBox.registerLong(8) ?: throw IllegalArgumentException("FUNDED box has no R8 timeoutHeight|feeBps")
-        val feeBps = (packed8 and 0xFFFF_FFFFL).toInt()
+        val buyerPk = fundedBox.registerBytes(6) ?: throw IllegalArgumentException("FUNDED box has no R6 buyerPubKey")
+        fundedBox.registerBytes(7) ?: throw IllegalArgumentException("FUNDED box has no R7 oracleNftId")
         val r9 = fundedBox.registerBytes(9) ?: throw IllegalArgumentException("FUNDED box has no R9 funding binding")
         require(fundedBox.tokens.isNotEmpty()) { "FUNDED box carries no collateral tokens" }
 
@@ -132,7 +130,7 @@ class ClaimTxBuilder(
         val recordId = SchnorrVerifier.blake2b256(a, z, recordBytes)
 
         // Output 0: the PAYMENT_PROVEN box carrying ALL tokens and ERG,
-        // registers copied with R7 = (proofHeight << 32) | feeBps and R8 = record id.
+        // registers copied with R7 = proofHeight (plain Long) and R8 = record id.
         val provenCandidate = TxAssembly.candidate(
             value = fundedBox.value,
             tree = trees.provenTree,
@@ -140,8 +138,8 @@ class ClaimTxBuilder(
             registers = listOf(
                 4 to ErgoValues.collBytesConstant(dealId),
                 5 to ErgoValues.collBytesConstant(sellerPk),
-                6 to ErgoValues.collBytesConstant(userPk),
-                7 to ErgoValues.longConstant(TxAssembly.packInts(currentHeight, feeBps)),
+                6 to ErgoValues.collBytesConstant(buyerPk),
+                7 to ErgoValues.longConstant(currentHeight.toLong()),
                 8 to ErgoValues.collBytesConstant(recordId),
                 9 to ErgoValues.collBytesConstant(r9),
             ),
@@ -174,14 +172,14 @@ class ClaimTxBuilder(
     /**
      * Claim payout (path D). Spends the PAYMENT_PROVEN box once
      * `HEIGHT > proofHeight + CLAIM_MATURATION`; output 0 pays
-     * `collateral − fee` to [userPayoutAddress], plus the treasury fee output
-     * per §6 when `feeBps > 0`.
+     * `collateral − fee` to [buyerPayoutAddress], plus the treasury fee output
+     * per §6.
      */
     fun buildClaimPayout(
         provenBox: ChainBox,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
-        userPayoutAddress: String,
+        buyerPayoutAddress: String,
         changeAddress: String,
         signer: DealTxSigner,
     ): SignedTransaction {
@@ -191,10 +189,9 @@ class ClaimTxBuilder(
         require(feeInputs.isNotEmpty()) { "at least one fee input is required" }
 
         val dealId = provenBox.registerBytes(4) ?: throw IllegalArgumentException("PAYMENT_PROVEN box has no R4 dealId")
-        val userPk = provenBox.registerBytes(6) ?: throw IllegalArgumentException("PAYMENT_PROVEN box has no R6 userPubKey")
-        val packed7 = provenBox.registerLong(7) ?: throw IllegalArgumentException("PAYMENT_PROVEN box has no R7 proofHeight|feeBps")
-        val proofHeight = (packed7 ushr 32).toInt()
-        val feeBps = (packed7 and 0xFFFF_FFFFL).toInt()
+        val buyerPk = provenBox.registerBytes(6) ?: throw IllegalArgumentException("PAYMENT_PROVEN box has no R6 buyerPubKey")
+        val proofHeight = provenBox.registerLong(7)?.toInt()
+            ?: throw IllegalArgumentException("PAYMENT_PROVEN box has no R7 proofHeight")
         require(provenBox.tokens.isNotEmpty()) { "PAYMENT_PROVEN box carries no collateral tokens" }
         require(currentHeight > proofHeight + claimMaturationBlocks) {
             "claim has not matured: height $currentHeight <= proofHeight $proofHeight + $claimMaturationBlocks"
@@ -202,19 +199,19 @@ class ClaimTxBuilder(
 
         val useToken = provenBox.tokens.first()
         val collateral = useToken.amount
-        val breakdown = feeBreakdown(collateral, feeBps)
-        require(breakdown.userPayout > 0) {
-            "feeBps $feeBps leaves no user payout (collateral $collateral, fee ${breakdown.fee}) — the payout tx would carry a zero-amount token"
+        val breakdown = feeBreakdown(collateral)
+        require(breakdown.buyerPayout > 0) {
+            "protocol fee leaves no buyer payout (collateral $collateral, fee ${breakdown.fee}) — the payout tx would carry a zero-amount token"
         }
         val fee = breakdown.fee
-        val userAmount = breakdown.userPayout
+        val buyerAmount = breakdown.buyerPayout
 
-        val userTree = payoutTree(userPayoutAddress)
+        val buyerTree = payoutTree(buyerPayoutAddress)
         val candidates = mutableListOf(
             TxAssembly.candidate(
                 value = provenBox.value,
-                tree = userTree,
-                tokens = listOf(ChainToken(useToken.tokenId, userAmount)),
+                tree = buyerTree,
+                tokens = listOf(ChainToken(useToken.tokenId, buyerAmount)),
                 registers = emptyList(),
                 creationHeight = currentHeight,
             ),

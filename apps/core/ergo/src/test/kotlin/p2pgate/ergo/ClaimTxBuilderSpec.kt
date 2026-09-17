@@ -16,10 +16,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The two user-side transactions (`specs/android-app.md` §4.3): claim-open
+ * The two buyer-side transactions (`specs/android-app.md` §4.3): claim-open
  * (path B) and claim payout (path D). Asserts context-var bytes exactly,
- * output-0 register-by-register contents, the R8 record id, fee math at
- * boundary feeBps values (0, 1, 25, 100, 10000), change correctness, and the
+ * output-0 register-by-register contents, the R8 record id, fee math at the
+ * always-on protocol fee (rounding down), change correctness, and the
  * rejection cases. Every successful build is also *signed* by the offline
  * prover, which runs the real contract scripts during reduction — so a
  * passing build proves the tx satisfies the vault contract, not just the
@@ -33,17 +33,16 @@ class ClaimTxBuilderSpec {
     // ---------------------------------------------------------------- helpers
 
     private fun openTx(
-        feeBps: Int = 0,
         feeInputValue: Long = 5_000_000L,
         currentHeight: Int = 1500,
         tsSec: Long = 1_700_000_000L,
     ): Triple<UnsignedTransaction, HandoffRecord, RefSchnorr.Signature> {
         val terms = f.dealTerms()
         val record = f.handoffRecord(terms, tsSec = tsSec)
-        val sig = f.courierSign(record)
+        val sig = f.sellerSign(record)
         val signer = ErgoTestFixtures.RecordingSigner(ErgoTestFixtures.ProverSigner(f.dealKeys.secret))
         builder.buildClaimOpen(
-            fundedBox = f.fundedChainBox(terms, feeBps = feeBps),
+            fundedBox = f.fundedChainBox(terms),
             feeInputs = listOf(f.feeChainBox(value = feeInputValue)),
             record = record,
             a = sig.a,
@@ -88,7 +87,7 @@ class ClaimTxBuilderSpec {
     @Test
     fun `claim-open output 0 is the PAYMENT_PROVEN box with register-exact contents`() {
         val terms = f.dealTerms()
-        val (tx, record, sig) = openTx(feeBps = 25)
+        val (tx, record, sig) = openTx()
         val out = tx.outputs[0] as OutBoxImpl
 
         assertEquals(f.trees.provenPropositionHex, ErgoValues.treeHex(out.ergoTree))
@@ -100,8 +99,8 @@ class ClaimTxBuilderSpec {
 
         assertTrue(outBytes(out, 4).contentEquals(terms.dealId))
         assertTrue(outBytes(out, 5).contentEquals(f.sellerKeys.pubKeyCompressed))
-        assertTrue(outBytes(out, 6).contentEquals(f.userKeys.pubKeyCompressed))
-        assertEquals(f.packInts(1500, 25), outLong(out, 7)) // (proofHeight << 32) | feeBps
+        assertTrue(outBytes(out, 6).contentEquals(f.buyerKeys.pubKeyCompressed))
+        assertEquals(1500L, outLong(out, 7)) // plain Long proofHeight
         assertTrue(outBytes(out, 8).contentEquals(SchnorrVerifier.blake2b256(sig.a, sig.z, record.encode())))
         assertTrue(outBytes(out, 9).contentEquals(f.fundingBinding()))
     }
@@ -137,7 +136,7 @@ class ClaimTxBuilderSpec {
         // full reduction (path B checks incl. in-script Schnorr) succeeded.
         val terms = f.dealTerms()
         val record = f.handoffRecord(terms)
-        val sig = f.courierSign(record)
+        val sig = f.sellerSign(record)
         val signed = builder.buildClaimOpen(
             fundedBox = f.fundedChainBox(terms),
             feeInputs = listOf(f.feeChainBox()),
@@ -159,7 +158,7 @@ class ClaimTxBuilderSpec {
     fun `claim-open rejects a non-FUNDED input box`() {
         val terms = f.dealTerms()
         val record = f.handoffRecord(terms)
-        val sig = f.courierSign(record)
+        val sig = f.sellerSign(record)
         assertFailsWith<IllegalArgumentException> {
             builder.buildClaimOpen(
                 fundedBox = f.provenChainBox(terms),
@@ -180,9 +179,8 @@ class ClaimTxBuilderSpec {
             amount = terms.fiatAmount,
             fiatCurrency = terms.fiatCurrency,
             timestamp = 1_700_000_000L,
-            courierIdHash = HandoffRecord.courierIdHash("x".encodeToByteArray()),
         )
-        val sig = f.courierSign(foreignRecord)
+        val sig = f.sellerSign(foreignRecord)
         assertFailsWith<IllegalArgumentException> {
             builder.buildClaimOpen(
                 fundedBox = f.fundedChainBox(terms),
@@ -199,7 +197,7 @@ class ClaimTxBuilderSpec {
     fun `claim-open rejects a stale record timestamp`() {
         val terms = f.dealTerms()
         val record = f.handoffRecord(terms, tsSec = 1_700_000_000L)
-        val sig = f.courierSign(record)
+        val sig = f.sellerSign(record)
         val txTs = (1_700_000_000L + ContractParams.HANDOFF_RECORD_MAX_AGE_MS / 1000 + 60) * 1000
         assertFailsWith<IllegalArgumentException> {
             builder.buildClaimOpen(
@@ -217,7 +215,7 @@ class ClaimTxBuilderSpec {
     fun `claim-open rejects a future record timestamp`() {
         val terms = f.dealTerms()
         val record = f.handoffRecord(terms, tsSec = 1_700_000_000L)
-        val sig = f.courierSign(record)
+        val sig = f.sellerSign(record)
         assertFailsWith<IllegalArgumentException> {
             builder.buildClaimOpen(
                 fundedBox = f.fundedChainBox(terms),
@@ -233,20 +231,19 @@ class ClaimTxBuilderSpec {
     // ---------------------------------------------------------------- claim payout (path D)
 
     private fun payoutTx(
-        feeBps: Int,
         proofHeight: Int = 1500,
         currentHeight: Int = 1500 + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
         feeInputValue: Long = 5_000_000L,
     ): UnsignedTransaction {
         val terms = f.dealTerms()
         val signer = ErgoTestFixtures.RecordingSigner(
-            ErgoTestFixtures.ProverSigner(f.userKeys.secret, f.dealKeys.secret),
+            ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret),
         )
         builder.buildClaimPayout(
-            provenBox = f.provenChainBox(terms, feeBps = feeBps, proofHeight = proofHeight),
+            provenBox = f.provenChainBox(terms, proofHeight = proofHeight),
             feeInputs = listOf(f.feeChainBox(value = feeInputValue)),
             currentHeight = currentHeight,
-            userPayoutAddress = f.p2pkAddress(f.userKeys.pubKeyCompressed),
+            buyerPayoutAddress = f.p2pkAddress(f.buyerKeys.pubKeyCompressed),
             changeAddress = f.dealKeysAddress,
             signer = signer,
         )
@@ -254,65 +251,43 @@ class ClaimTxBuilderSpec {
     }
 
     @Test
-    fun `claim payout pays the user collateral minus fee and fees the treasury`() {
-        val tx = payoutTx(feeBps = 25)
-        val userOut = tx.outputs[0] as OutBoxImpl
-        val fee = f.DEAL_AMOUNT * 25 / ContractParams.FEE_DENOMINATOR
-        assertEquals(f.DEAL_AMOUNT - fee, userOut.tokens[0].value)
-        assertEquals(f.useTokenIdHex, Base16.encode(userOut.tokens[0].id.getBytes()))
+    fun `claim payout pays the buyer collateral minus fee and fees the treasury`() {
+        val tx = payoutTx()
+        val buyerOut = tx.outputs[0] as OutBoxImpl
+        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
+        assertEquals(f.DEAL_AMOUNT - fee, buyerOut.tokens[0].value)
+        assertEquals(f.useTokenIdHex, Base16.encode(buyerOut.tokens[0].id.getBytes()))
         assertEquals(
-            ErgoValues.treeHex(ErgoValues.p2pkTree(f.userKeys.pubKeyCompressed)),
-            ErgoValues.treeHex(userOut.ergoTree),
+            ErgoValues.treeHex(ErgoValues.p2pkTree(f.buyerKeys.pubKeyCompressed)),
+            ErgoValues.treeHex(buyerOut.ergoTree),
         )
         val feeOut = tx.outputs[1] as OutBoxImpl
         assertEquals(fee, feeOut.tokens[0].value)
         assertEquals(f.treasuryTree.bytesHex(), feeOut.ergoTree.bytesHex())
-        assertEquals(f.BOX_VALUE_NANO_ERG, userOut.value)
+        assertEquals(f.BOX_VALUE_NANO_ERG, buyerOut.value)
     }
 
     @Test
-    fun `fee math at boundary feeBps values`() {
-        // The §6 formula at the boundaries.
-        assertEquals(ClaimTxBuilder.FeeBreakdown(0, f.DEAL_AMOUNT), builder.feeBreakdown(f.DEAL_AMOUNT, 0))
-        assertEquals(ClaimTxBuilder.FeeBreakdown(50_000, f.DEAL_AMOUNT - 50_000), builder.feeBreakdown(f.DEAL_AMOUNT, 1))
-        assertEquals(ClaimTxBuilder.FeeBreakdown(1_250_000, f.DEAL_AMOUNT - 1_250_000), builder.feeBreakdown(f.DEAL_AMOUNT, 25))
-        assertEquals(ClaimTxBuilder.FeeBreakdown(5_000_000, f.DEAL_AMOUNT - 5_000_000), builder.feeBreakdown(f.DEAL_AMOUNT, 100))
-        assertEquals(ClaimTxBuilder.FeeBreakdown(f.DEAL_AMOUNT, 0), builder.feeBreakdown(f.DEAL_AMOUNT, 10000))
-
-        // 0: no fee output, user takes everything.
-        val tx0 = payoutTx(feeBps = 0)
-        assertEquals(2, tx0.outputs.size) // user + change
-        assertEquals(f.DEAL_AMOUNT, tx0.outputs[0].tokens[0].value)
-
-        // 1 bp: fee = collateral / 10000 = 50_000, user gets the rest.
-        val tx1 = payoutTx(feeBps = 1)
-        assertEquals(3, tx1.outputs.size)
-        assertEquals(f.DEAL_AMOUNT - 50_000L, tx1.outputs[0].tokens[0].value)
-        assertEquals(50_000L, tx1.outputs[1].tokens[0].value)
-
-        // 100 bps: fee = 1% of collateral.
-        val tx100 = payoutTx(feeBps = 100)
-        assertEquals(f.DEAL_AMOUNT - 5_000_000L, tx100.outputs[0].tokens[0].value)
-        assertEquals(5_000_000L, tx100.outputs[1].tokens[0].value)
-
-        // 10000 bps consumes the whole collateral — no positive user token is
-        // possible, so the builder rejects the tx (formula above still applies).
-        val terms = f.dealTerms()
-        assertFailsWith<IllegalArgumentException> {
-            builder.buildClaimPayout(
-                provenBox = f.provenChainBox(terms, feeBps = 10000),
-                feeInputs = listOf(f.feeChainBox()),
-                currentHeight = 2000,
-                userPayoutAddress = f.p2pkAddress(f.userKeys.pubKeyCompressed),
-                changeAddress = f.dealKeysAddress,
-                signer = ErgoTestFixtures.ProverSigner(f.userKeys.secret, f.dealKeys.secret),
-            )
-        }
+    fun `fee math at the protocol fee rounds down`() {
+        // The §6 formula at the always-on 25 bps: exact division at the fixture
+        // amount, rounding down at odd collaterals, remainder to the buyer.
+        assertEquals(
+            ClaimTxBuilder.FeeBreakdown(1_250_000, f.DEAL_AMOUNT - 1_250_000),
+            builder.feeBreakdown(f.DEAL_AMOUNT),
+        )
+        assertEquals(
+            ClaimTxBuilder.FeeBreakdown(1_250_000, f.DEAL_AMOUNT + 1 - 1_250_000),
+            builder.feeBreakdown(f.DEAL_AMOUNT + 1),
+        )
+        assertEquals(
+            ClaimTxBuilder.FeeBreakdown(0, 1),
+            builder.feeBreakdown(1),
+        )
     }
 
     @Test
     fun `claim payout change and balance are exact`() {
-        val tx = payoutTx(feeBps = 25)
+        val tx = payoutTx()
         val change = tx.outputs.last() as OutBoxImpl
         val expectedChange = 5_000_000L - 1_000_000L /* miner fee */ - 100_000L /* fee box ERG */
         assertEquals(expectedChange, change.value)
@@ -324,13 +299,13 @@ class ClaimTxBuilderSpec {
     @Test
     fun `claim payout rejects an immature claim`() {
         val terms = f.dealTerms()
-        val signer = ErgoTestFixtures.ProverSigner(f.userKeys.secret, f.dealKeys.secret)
+        val signer = ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret)
         assertFailsWith<IllegalArgumentException> {
             builder.buildClaimPayout(
                 provenBox = f.provenChainBox(terms, proofHeight = 1500),
                 feeInputs = listOf(f.feeChainBox()),
                 currentHeight = 1500 + ContractParams.CLAIM_MATURATION_BLOCKS, // not strictly greater
-                userPayoutAddress = f.p2pkAddress(f.userKeys.pubKeyCompressed),
+                buyerPayoutAddress = f.p2pkAddress(f.buyerKeys.pubKeyCompressed),
                 changeAddress = f.dealKeysAddress,
                 signer = signer,
             )
@@ -340,13 +315,13 @@ class ClaimTxBuilderSpec {
     @Test
     fun `claim payout rejects a non-PAYMENT_PROVEN input box`() {
         val terms = f.dealTerms()
-        val signer = ErgoTestFixtures.ProverSigner(f.userKeys.secret, f.dealKeys.secret)
+        val signer = ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret)
         assertFailsWith<IllegalArgumentException> {
             builder.buildClaimPayout(
                 provenBox = f.fundedChainBox(terms),
                 feeInputs = listOf(f.feeChainBox()),
                 currentHeight = 2000,
-                userPayoutAddress = f.p2pkAddress(f.userKeys.pubKeyCompressed),
+                buyerPayoutAddress = f.p2pkAddress(f.buyerKeys.pubKeyCompressed),
                 changeAddress = f.dealKeysAddress,
                 signer = signer,
             )
@@ -356,13 +331,13 @@ class ClaimTxBuilderSpec {
     @Test
     fun `claim payout rejects insufficient fee ERG`() {
         val terms = f.dealTerms()
-        val signer = ErgoTestFixtures.ProverSigner(f.userKeys.secret, f.dealKeys.secret)
+        val signer = ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret)
         assertFailsWith<IllegalArgumentException> {
             builder.buildClaimPayout(
                 provenBox = f.provenChainBox(terms),
                 feeInputs = listOf(f.feeChainBox(value = 500_000L)), // below miner fee
                 currentHeight = 2000,
-                userPayoutAddress = f.p2pkAddress(f.userKeys.pubKeyCompressed),
+                buyerPayoutAddress = f.p2pkAddress(f.buyerKeys.pubKeyCompressed),
                 changeAddress = f.dealKeysAddress,
                 signer = signer,
             )

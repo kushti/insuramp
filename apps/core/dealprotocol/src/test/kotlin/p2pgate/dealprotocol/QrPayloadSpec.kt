@@ -15,9 +15,8 @@ import kotlin.test.assertTrue
 class QrPayloadSpec {
 
     private val dealId = ByteArray(32) { (it + 3).toByte() }
-    private val hash = Blake2b256.digest("courier-credential-9".encodeToByteArray())
 
-    private fun handoff() = HandoffRecord(dealId, 2_500_000L, "USD".encodeToByteArray(), 1_700_000_100L, hash)
+    private fun handoff() = HandoffRecord(dealId, 2_500_000L, "USD".encodeToByteArray(), 1_700_000_100L)
 
     @Test
     fun `handoff QR round-trips`() {
@@ -58,7 +57,7 @@ class QrPayloadSpec {
         // 6-bit groups are 62 63 63 62: "+//+" in standard base64, "-__-" in base64url
         val record = HandoffRecord(
             dealId = byteArrayOf(0x00, 0xfb.toByte(), 0xff.toByte(), 0xfe.toByte()) + ByteArray(28) { 0x01 },
-            amount = 1, fiatCurrency = "EGP".encodeToByteArray(), timestamp = 1, courierIdHash = hash,
+            amount = 1, fiatCurrency = "EGP".encodeToByteArray(), timestamp = 1,
         )
         val encoded = QrPayload.encodeHandoff(record).removePrefix("p2pgate://handoff?m=")
         assertTrue("-__-" in encoded, "expected base64url -__- in place of standard +//+: $encoded")

@@ -35,7 +35,7 @@ class LifecycleSpec {
         assertEquals(DealState.FUNDED, funded.state)
         env.chain.boxes[funded.vaultBoxId!!] = Fx.fundedBox(funded, funded.vaultBoxId!!)
 
-        // courier handoff (courier API fact)
+        // handoff record on file (buyer upload)
         env.collectCash(deal.dealId)
         assertEquals(DealState.PAYMENT_PENDING, env.store.getDeal(deal.dealId)!!.state)
 
@@ -59,7 +59,7 @@ class LifecycleSpec {
         env.forceFund(deal)
         env.collectCash(deal.dealId)
 
-        // The user opens the claim on-chain: the watcher sees path B land.
+        // The buyer opens the claim on-chain: the watcher sees path B land.
         val fundedId = env.store.getDeal(deal.dealId)!!.vaultBoxId!!
         val proven = Fx.provenBox(deal, boxId = "bb".repeat(32))
         env.chain.boxes[proven.boxId] = proven
@@ -82,9 +82,9 @@ class LifecycleSpec {
         assertEquals("contest", final.claimAction)
     }
 
-    /** fund → handoff → claim → maturation → user path-D payout → CLAIMED */
+    /** fund → handoff → claim → maturation → buyer path-D payout → CLAIMED */
     @Test
-    fun `an unactioned claim matures and pays out to the user`() {
+    fun `an unactioned claim matures and pays out to the buyer`() {
         val env = env()
         val deal = env.quotedDeal()
         env.forceFund(deal)
@@ -103,14 +103,14 @@ class LifecycleSpec {
         env.watcher.tick(claimAt.plus(Duration.ofHours(12)))
         assertEquals(DealState.CLAIMABLE, env.store.getDeal(deal.dealId)!!.state)
 
-        // The user's path-D spend lands: collateral minus fee pays the user.
+        // The buyer's path-D spend lands: collateral minus fee pays the buyer.
         val provenId = env.store.getDeal(deal.dealId)!!.provenBoxId!!
-        val payout = Fx.payoutBox(Fx.user.pubKeyCompressed, Fx.useTokenIdHex, deal.amount, "c1".repeat(32))
+        val payout = Fx.payoutBox(Fx.buyer.pubKeyCompressed, Fx.useTokenIdHex, deal.amount, "c1".repeat(32))
         env.chain.spend(provenId, "b2".repeat(32), ChainSpend("b2".repeat(32), 1600, listOf(payout)))
         env.watcher.tick(claimAt.plus(Duration.ofHours(12)).plusSeconds(60))
         val final = env.store.getDeal(deal.dealId)!!
         assertEquals(DealState.CLAIMED, final.state)
-        assertTrue(env.submitter.submitted.isEmpty()) // every tx here was user-side
+        assertTrue(env.submitter.submitted.isEmpty()) // every tx here was buyer-side
     }
 
     @Test
@@ -139,6 +139,6 @@ class LifecycleSpec {
         quoteId = "quote-1",
         amount = Fx.AMOUNT,
         receiveAddress = p2pgate.backend.util.Hex.encode(Fx.recipientRaw),
-        userPubKey = p2pgate.backend.util.Hex.encode(Fx.user.pubKeyCompressed),
+        buyerPubKey = p2pgate.backend.util.Hex.encode(Fx.buyer.pubKeyCompressed),
     )
 }

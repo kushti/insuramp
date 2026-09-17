@@ -26,10 +26,10 @@ import java.time.Instant
  *    spend's height is within the reclaim window, reclaim (path A) once
  *    `height > timeoutHeight` (both pay the seller's P2PK; the height of the
  *    spend is the on-chain discriminator);
- *  - box spent paying the user → [DealEvent.ClaimPaid] (path D).
+ *  - box spent paying the buyer → [DealEvent.ClaimPaid] (path D).
  *
  * Payouts are recognized by their P2PK proposition (from the box's R5/R6) —
- * the contracts force `OUTPUTS(0)` to exactly `proveDlog(sellerKey/userKey)`,
+ * the contracts force `OUTPUTS(0)` to exactly `proveDlog(sellerKey/buyerKey)`,
  * so tree comparison is exact.
  */
 class VaultBoxTracker(
@@ -91,7 +91,7 @@ class VaultBoxTracker(
     private fun classifySpent(box: ChainBox, tx: ChainSpend, now: Instant): List<DealEvent> {
         val dealId = box.registerBytes(4) ?: return emptyList()
         val sellerTreeHex = sellerTreeHex(box) ?: return emptyList()
-        val userTreeHex = userTreeHex(box) ?: return emptyList()
+        val buyerTreeHex = buyerTreeHex(box) ?: return emptyList()
 
         // Path B: a PAYMENT_PROVEN successor of THIS deal exists among the outputs.
         tx.outputs.firstOrNull {
@@ -99,8 +99,8 @@ class VaultBoxTracker(
                 it.registerBytes(4)?.contentEquals(dealId) == true
         }?.let { return listOf(DealEvent.ClaimOpened(now)) }
 
-        // Path D: the user was paid (from the PAYMENT_PROVEN box).
-        if (tx.outputs.any { it.ergoTreeHex.equals(userTreeHex, ignoreCase = true) && it.tokens.isNotEmpty() }) {
+        // Path D: the buyer was paid (from the PAYMENT_PROVEN box).
+        if (tx.outputs.any { it.ergoTreeHex.equals(buyerTreeHex, ignoreCase = true) && it.tokens.isNotEmpty() }) {
             return listOf(DealEvent.ClaimPaid)
         }
 
@@ -123,10 +123,10 @@ class VaultBoxTracker(
         return emptyList()
     }
 
-    /** `timeoutHeight` (high word of the FUNDED box's packed R8), or `null` for non-FUNDED boxes. */
+    /** `timeoutHeight` (the FUNDED box's plain-Long R8), or `null` for non-FUNDED boxes. */
     private fun timeoutHeight(box: ChainBox): Int? =
         if (box.ergoTreeHex.equals(trees.fundedPropositionHex, ignoreCase = true)) {
-            box.registerLong(8)?.let { (it ushr 32).toInt() }
+            box.registerLong(8)?.toInt()
         } else {
             null
         }
@@ -134,6 +134,6 @@ class VaultBoxTracker(
     private fun sellerTreeHex(box: ChainBox): String? =
         box.registerBytes(5)?.let { ErgoValues.treeHex(ErgoValues.p2pkTree(it)) }
 
-    private fun userTreeHex(box: ChainBox): String? =
+    private fun buyerTreeHex(box: ChainBox): String? =
         box.registerBytes(6)?.let { ErgoValues.treeHex(ErgoValues.p2pkTree(it)) }
 }

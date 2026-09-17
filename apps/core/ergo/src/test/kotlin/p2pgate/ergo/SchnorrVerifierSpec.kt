@@ -24,23 +24,23 @@ class SchnorrVerifierSpec {
         Vector(
             "a11ce",
             "02a64db41e2968c849c2a5615ba0d6e816734a6d3e6ea6ecd6f3acb7d59daa9102",
-            "5032504801b174dd2f351fce3e7b1243167ec0390e3df14fd31cc53f4076501ec4d1fa18c3000000000003d0904547506553f10045f98e4f7666f222afa84d3681d33130d49588b0c4ca2ddf50bdc859f6ae1cb0",
-            "02426254c6e45d80e49dc3ee9d5a7e5908d772cfa7eb49b57e81b26bf4bb3e72b9",
-            "0dff9ec963da430859424120c2cfa01414a5be3b6f4e24df383a6171916cf5a3",
+            "5032504801b174dd2f351fce3e7b1243167ec0390e3df14fd31cc53f4076501ec4d1fa18c3000000000003d0904547506553f100",
+            "037e893c1f91dfce6946167fc86b50fe4f9ac8eec68b224a356ef68791840cad34",
+            "1d4cedaa8721711617cd25ad0cacbb21fc24ad0f50caac49453c07606b6a310f",
         ),
         Vector(
             "b0b",
             "035d45cb81aa765d69ca52e3869491ecf0e8fdf6a63d64e65b5213647ee4973ae5",
-            "50325048011129961d054b0bd933513b4ffea8a6bdca7d9cfe099af90ff12123d6c44009b300000000000f3e584547506553f5d245f98e4f7666f222afa84d3681d33130d49588b0c4ca2ddf50bdc859f6ae1cb0",
-            "02eecb3520e680d02410277472b34401c991ade5b91628421a1e20e347f4a60889",
-            "3c2b5c060dc431b72fe4ef0316dbc6693cb16d367c3020d67911b038742d0337",
+            "50325048011129961d054b0bd933513b4ffea8a6bdca7d9cfe099af90ff12123d6c44009b300000000000f3e584547506553f5d2",
+            "0245604c3929004b392481277bfb7025fbc22a667b7b45cecde6b94950fa36e491",
+            "27d00e7a44af83b3ad8910f3a60a914dd00fd4ff58f2637d7dff7b151ee35ff8",
         ),
         Vector(
             "c0ffee",
             "032a5bbcb0eede528e6abe5f2ec50ad7887eb5677af383a460b05ee23bf892dfe5",
-            "5032504801a8fdf2b20b05d73a2cbb88771a9ec72da86b0ca8ce3442be158af24bcfdcb94b000000000003d0905553446553f9ae45f98e4f7666f222afa84d3681d33130d49588b0c4ca2ddf50bdc859f6ae1cb0",
-            "03612383972b32ffd9d69bd8abde300a8e559d1225663e027845b9b76e6708fe8d",
-            "1d993c5b27081762323cfd84887dac5997a2f77c97afcd7ace3903b7209c98a3",
+            "5032504801a8fdf2b20b05d73a2cbb88771a9ec72da86b0ca8ce3442be158af24bcfdcb94b000000000003d0905553446553f9ae",
+            "02149bab37e4dafc65e98d3fa6040ea5d21b94346efb41c492bd8b1d1cbca02ef4",
+            "349f2256d0196f623781ce7bfddc43dce09400302f9523e3f5de26963623ee58",
         ),
     )
 
@@ -99,8 +99,8 @@ class SchnorrVerifierSpec {
     fun `tampered record byte in every field region fails`() {
         val v = vectors[0]
         // Region boundaries per specs/deal-protocol.md §3.2: magic 0..3, version 4,
-        // dealId 5..36, amount 37..44, currency 45..47, timestamp 48..51, courierIdHash 52..83.
-        val regions = listOf(0, 4, 10, 37, 45, 48, 60, 83)
+        // dealId 5..36, amount 37..44, currency 45..47, timestamp 48..51.
+        val regions = listOf(0, 4, 10, 37, 45, 48, 51)
         for (idx in regions) {
             val tampered = vmsg(v).copyOf().also { it[idx] = (it[idx].toInt() xor 0x01).toByte() }
             assertFalse(

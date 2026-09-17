@@ -33,7 +33,7 @@ data class PauseRecord(val cause: String, val startedAt: Instant, val endedAt: I
  * Infrastructure monitor + auto-pause (`specs/operator-backend.md` §8). Verbatim
  * rule: *"never sell insurance you can't currently verify."* Any degraded
  * signal pauses the operator: the quote publisher withdraws all quotes (the
- * user feed shows none, not stale ones) and no new vaults are funded.
+ * buyer feed shows none, not stale ones) and no new vaults are funded.
  * In-flight deals are unaffected — confirmations and releases queue and apply
  * on recovery. Every pause episode is recorded with cause and duration.
  */

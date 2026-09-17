@@ -21,17 +21,6 @@ class AuthSpec {
     }
 
     @Test
-    fun `courier tokens are per deal and do not satisfy the deal scope`() {
-        val tokens = service()
-        val courier = tokens.mint(TokenService.Scope.CourierToken("deal-a", "courier-7"))
-        assertTrue(tokens.verifyCourier(courier, "deal-a", "courier-7"))
-        assertFalse(tokens.verifyCourier(courier, "deal-a", "courier-8"))
-        assertFalse(tokens.verifyCourier(courier, "deal-b", "courier-7"))
-        // Scope isolation: a courier token is not a user token.
-        assertFalse(tokens.verifyDeal(courier, "deal-a"))
-    }
-
-    @Test
     fun `operator scope is separate`() {
         val tokens = service()
         val op = tokens.mint(TokenService.Scope.OperatorToken)
@@ -45,7 +34,6 @@ class AuthSpec {
         val env = TestEnv()
         val deal = env.quotedDeal()
         val token = env.tokens.mint(TokenService.Scope.DealToken(deal.dealId))
-        val courierToken = env.tokens.mint(TokenService.Scope.CourierToken(deal.dealId, deal.courierId))
         assertTrue(env.tokens.verifyDeal(token, deal.dealId))
         // Drive the deal to a terminal state through the engine (timeout reclaim).
         env.forceFund(deal)
@@ -56,7 +44,6 @@ class AuthSpec {
         )
         assertEquals(p2pgate.dealprotocol.DealState.RECLAIMED, env.store.getDeal(deal.dealId)!!.state)
         assertFalse(env.tokens.verifyDeal(token, deal.dealId))
-        assertFalse(env.tokens.verifyCourier(courierToken, deal.dealId, deal.courierId))
     }
 
     @Test

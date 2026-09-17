@@ -32,7 +32,7 @@ import java.time.Duration
 /**
  * The `/v1` HTTP surface (`specs/operator-backend.md` §9) against a test
  * application over fakes. Auth scopes, canonical state names and the
- * user-facing flows are exercised end-to-end over JSON.
+ * buyer-facing flows are exercised end-to-end over JSON.
  */
 class ApiSpec {
 
@@ -48,12 +48,16 @@ class ApiSpec {
         env: TestEnv,
         maxAmount: Long = 1_000_000_000L,
     ): String {
-        env.quotes.publish(50, 60, maxAmount, T0)
+        // Real clock, not T0: these quotes are read back through the HTTP
+        // routes, which evaluate `active()` against wall-clock now — a quote
+        // published at T0 is already TTL-expired by the time the suite runs
+        // in the afternoon.
+        env.quotes.publish(50, 60, maxAmount, java.time.Instant.now())
         return env.store.currentQuote()!!.id
     }
 
     private fun dealJson(env: TestEnv, quoteId: String) = """
-        {"quoteId":"$quoteId","amount":${Fx.AMOUNT},"receiveAddress":"${Hex.encode(Fx.recipientRaw)}","userPubKey":"${Hex.encode(Fx.user.pubKeyCompressed)}"}
+        {"quoteId":"$quoteId","amount":${Fx.AMOUNT},"receiveAddress":"${Hex.encode(Fx.recipientRaw)}","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}"}
     """.trimIndent()
 
     // ---------------------------------------------------------------- quotes
@@ -189,88 +193,63 @@ class ApiSpec {
         assertTrue(body["digest"]!!.jsonPrimitive.content.isNotEmpty())
     }
 
-    // --------------------------------------------------------------- courier
     @Test
-    fun `courier job flow - jobs, key, template, handoff, sync`() = testApplication {
+    fun `handoff upload by the buyer records the meeting and is idempotent`() = testApplication {
         val env = env()
         setup(env)
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.user.pubKeyCompressed)),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
-        val courierToken = outcome.courierToken
+        val dealToken = outcome.dealToken
         env.forceFund(outcome.deal)
 
-        val jobs = client.get("/v1/courier/jobs") { header(HttpHeaders.Authorization, "Bearer $courierToken") }
-        assertEquals(HttpStatusCode.OK, jobs.status)
-        assertTrue(jobs.bodyAsText().contains(dealId))
-
-        val key = client.get("/v1/courier/jobs/$dealId/key") { header(HttpHeaders.Authorization, "Bearer $courierToken") }
-        assertEquals(Hex.encode(Fx.courier.pubKeyCompressed), json.parseToJsonElement(key.bodyAsText()).jsonObject["courierPubKey"]!!.jsonPrimitive.content)
-
-        val template = client.get("/v1/courier/jobs/$dealId/handoff") { header(HttpHeaders.Authorization, "Bearer $courierToken") }
-        assertEquals("P2PH", json.parseToJsonElement(template.bodyAsText()).jsonObject["magic"]!!.jsonPrimitive.content)
-
-        // Submit the signed record: the deal moves to PAYMENT_PENDING.
-        val record = env.handoffRecordFor(outcome.deal, java.time.Instant.now())
-        val submit = client.post("/v1/courier/jobs/$dealId/handoff") {
-            header(HttpHeaders.Authorization, "Bearer $courierToken")
+        // No auth: rejected.
+        val noAuth = client.post("/v1/deals/$dealId/handoff") {
             contentType(ContentType.Application.Json)
-            setBody("""{"recordHex":"${Hex.encode(record.encode())}"}""")
+            setBody("""{"recordHex":"00"}""")
+        }
+        assertEquals(HttpStatusCode.Unauthorized, noAuth.status)
+
+        // The buyer uploads the seller-signed record from the meeting.
+        val record = env.handoffRecordFor(outcome.deal, java.time.Instant.now())
+        val submit = client.post("/v1/deals/$dealId/handoff") {
+            header(HttpHeaders.Authorization, "Bearer $dealToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"recordHex":"${Hex.encode(record.encode())}","gps":"30.04,31.24"}""")
         }
         assertEquals(HttpStatusCode.OK, submit.status)
         assertEquals(DealStateName.PAYMENT_PENDING, env.store.getDeal(dealId)!!.state.name)
-
-        // Offline sync of the same record is idempotent.
-        val sync = client.post("/v1/courier/sync") {
-            header(HttpHeaders.Authorization, "Bearer $courierToken")
-            contentType(ContentType.Application.Json)
-            setBody("""{"items":[{"dealId":"$dealId","recordHex":"${Hex.encode(record.encode())}"}]}""")
-        }
-        val syncBody = json.parseToJsonElement(sync.bodyAsText()).jsonObject
-        assertEquals("0", syncBody["accepted"]!!.jsonPrimitive.content)
-        assertEquals("1", syncBody["duplicates"]!!.jsonPrimitive.content)
-
-        val geo = client.post("/v1/courier/jobs/$dealId/geo-confirm") {
-            header(HttpHeaders.Authorization, "Bearer $courierToken")
-            contentType(ContentType.Application.Json)
-            setBody("""{"lat":30.04,"lon":31.24}""")
-        }
-        assertEquals(HttpStatusCode.OK, geo.status)
         assertTrue(env.store.getDeal(dealId)!!.handoffGpsRef != null)
 
-        val panic = client.post("/v1/courier/jobs/$dealId/panic") {
-            header(HttpHeaders.Authorization, "Bearer $courierToken")
+        // A duplicate upload is recognized.
+        val again = client.post("/v1/deals/$dealId/handoff") {
+            header(HttpHeaders.Authorization, "Bearer $dealToken")
             contentType(ContentType.Application.Json)
-            setBody("""{"reason":"unsafe meeting spot"}""")
+            setBody("""{"recordHex":"${Hex.encode(record.encode())}"}""")
         }
-        assertEquals(HttpStatusCode.OK, panic.status)
-        assertTrue(env.store.getDeal(dealId)!!.panicFlag)
+        assertEquals(HttpStatusCode.OK, again.status)
+
+        // A record that does not decode is rejected.
+        val bad = client.post("/v1/deals/$dealId/handoff") {
+            header(HttpHeaders.Authorization, "Bearer $dealToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"recordHex":"deadbeef"}""")
+        }
+        assertEquals(HttpStatusCode.UnprocessableEntity, bad.status)
     }
 
     @Test
-    fun `courier token from another deal is rejected`() = testApplication {
-        val env = env()
-        setup(env)
-        val client = createClient { }
-        val id = publishQuote(env)
-        val a = env.app.createDeal(p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.user.pubKeyCompressed)), T0) as CreateDealOutcome.Created
-        val b = env.app.createDeal(p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.user.pubKeyCompressed)), T0) as CreateDealOutcome.Created
-        val r = client.get("/v1/courier/jobs/${a.deal.dealId}/key") { header(HttpHeaders.Authorization, "Bearer ${b.courierToken}") }
-        assertEquals(HttpStatusCode.Forbidden, r.status)
-    }
-
-    @Test
-    fun `claim guide hands the user everything for the on-chain claim tx`() = testApplication {
+    fun `claim guide hands the buyer everything for the on-chain claim tx`() = testApplication {
         val env = env()
         setup(env)
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.user.pubKeyCompressed)),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
@@ -295,7 +274,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.user.pubKeyCompressed)),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
             T0,
         ) as CreateDealOutcome.Created
         env.forceFund(outcome.deal)
@@ -316,7 +295,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.user.pubKeyCompressed)),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
             T0,
         ) as CreateDealOutcome.Created
         env.forceFund(outcome.deal)
@@ -342,13 +321,13 @@ class ApiSpec {
     }
 
     @Test
-    fun `dispute endpoints and courier revocation`() = testApplication {
+    fun `dispute endpoints accept and investigate`() = testApplication {
         val env = env()
         setup(env)
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.user.pubKeyCompressed)),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
@@ -363,9 +342,9 @@ class ApiSpec {
         assertEquals(HttpStatusCode.OK, accept.status)
         assertTrue(env.store.getDeal(dealId)!!.lossRecorded)
 
-        val revoke = client.post("/v1/couriers/courier-7/revoke") { header(HttpHeaders.Authorization, "Bearer op-secret") }
-        assertEquals(HttpStatusCode.OK, revoke.status)
-        assertTrue(env.store.isCourierFlagged("courier-7"))
+        val investigate = client.post("/v1/disputes/$dealId/investigate") { header(HttpHeaders.Authorization, "Bearer op-secret") }
+        assertEquals(HttpStatusCode.OK, investigate.status)
+        assertEquals("investigate", env.store.getDeal(dealId)!!.claimAction)
 
         val infra = client.get("/v1/infra") { header(HttpHeaders.Authorization, "Bearer op-secret") }
         assertEquals("false", json.parseToJsonElement(infra.bodyAsText()).jsonObject["paused"]!!.jsonPrimitive.content)
@@ -395,13 +374,13 @@ class ApiSpec {
     }
 
     @Test
-    fun `deal stream pushes state changes to the user`() = testApplication {
+    fun `deal stream pushes state changes to the buyer`() = testApplication {
         val env = env()
         setup(env)
         val client = createClient { install(WebSockets) }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.user.pubKeyCompressed)),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
             T0,
         ) as CreateDealOutcome.Created
         client.webSocket("/v1/deals/${outcome.deal.dealId}/stream?token=${outcome.dealToken}") {

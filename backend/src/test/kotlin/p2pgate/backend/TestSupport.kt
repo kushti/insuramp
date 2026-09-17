@@ -62,8 +62,7 @@ object Fx {
     fun keys(d: Long): Keys = BigInteger.valueOf(d).let { Keys(it, Secp256k1.publicKeyCompressed(it)) }
 
     val seller = keys(0x1111)
-    val user = keys(0x2222)
-    val courier = keys(0x3333)
+    val buyer = keys(0x2222)
     val treasury = keys(0x5555)
     val oracle = keys(0x9999)
 
@@ -79,8 +78,6 @@ object Fx {
     val recipientRaw: ByteArray = ByteArray(21) { (it * 19 + 6).toByte() }
     const val AMOUNT: Long = 500_000_000L       // 500 USDT, 6 decimals
     const val FUNDING_HEIGHT: Int = 1000
-
-    fun packInts(hi: Int, lo: Int): Long = hi.toLong() * 4294967296L + lo
 
     fun p2pkAddress(pk: ByteArray): String = SigmaTrees.p2pkAddress(pk, networkType)
 
@@ -119,7 +116,6 @@ object Fx {
         deal: DealRecord,
         boxId: String,
         timeoutHeight: Int = FUNDING_HEIGHT + p2pgate.contracts.ContractParams.RECLAIM_TIMEOUT_BLOCKS,
-        feeBps: Int = 0,
         spentTxId: String? = null,
     ): ChainBox {
         val terms = deal.terms()
@@ -135,9 +131,9 @@ object Fx {
             registers = listOf(
                 ChainRegister.CollBytes(terms.dealId),
                 ChainRegister.CollBytes(seller.pubKeyCompressed),
-                ChainRegister.CollBytes(user.pubKeyCompressed),
-                ChainRegister.CollBytes(trees.oracleNftId + Hex.decode(deal.courierPubKeyHex)),
-                ChainRegister.Int64(packInts(timeoutHeight, feeBps)),
+                ChainRegister.CollBytes(buyer.pubKeyCompressed),
+                ChainRegister.CollBytes(trees.oracleNftId),
+                ChainRegister.Int64(timeoutHeight.toLong()),
                 ChainRegister.CollBytes(
                     PaymentAttestation.fundingBinding(
                         deal.srcChainId, deal.asset,
@@ -155,7 +151,6 @@ object Fx {
         deal: DealRecord,
         boxId: String,
         proofHeight: Int = 1500,
-        feeBps: Int = 0,
         recordId: ByteArray = ByteArray(32) { 7 },
         spentTxId: String? = null,
     ): ChainBox {
@@ -172,8 +167,8 @@ object Fx {
             registers = listOf(
                 ChainRegister.CollBytes(terms.dealId),
                 ChainRegister.CollBytes(seller.pubKeyCompressed),
-                ChainRegister.CollBytes(user.pubKeyCompressed),
-                ChainRegister.Int64(packInts(proofHeight, feeBps)),
+                ChainRegister.CollBytes(buyer.pubKeyCompressed),
+                ChainRegister.Int64(proofHeight.toLong()),
                 ChainRegister.CollBytes(recordId),
                 ChainRegister.CollBytes(
                     PaymentAttestation.fundingBinding(
@@ -187,7 +182,7 @@ object Fx {
         )
     }
 
-    /** A user/seller payout box (plain P2PK carrying the collateral token). */
+    /** A buyer/seller payout box (plain P2PK carrying the collateral token). */
     fun payoutBox(pk: ByteArray, tokenId: String, amount: Long, boxId: String): ChainBox =
         p2pkBox(pk, 1_000_000L, listOf(ChainToken(tokenId, amount)), boxId)
 
@@ -259,7 +254,6 @@ class TestEnv(
     val riskScorer: RiskScorer = ConfigRiskScorer(scorerId = "test-scorer"),
     mixReady: Long = 10_000_000_000L,
     val operatorKey: String? = "op-secret",
-    feeBps: Int = 0,
     vaultSigner: VaultSigner = Fx.EmptySigner,
     webhook: ((url: String, body: String) -> Unit)? = null,
 ) {
@@ -284,7 +278,6 @@ class TestEnv(
         infra = infra,
         oracle = oracle,
         riskScorer = riskScorer,
-        feeBps = feeBps,
     )
     val watcher = ChainWatcher(chain, Fx.trees, engine, store)
     val quotes = QuotePublisher(store, infra, { pool.free(store) }, bus)
@@ -294,10 +287,7 @@ class TestEnv(
     val config = BackendConfig(
         operatorKey = operatorKey,
         mixReadyCollateral = mixReady,
-        feeBps = feeBps,
         collateralTokenIdHex = Fx.useTokenIdHex,
-        courierId = "courier-7",
-        courierPubKeyHex = Hex.encode(Fx.courier.pubKeyCompressed),
     )
     val app = BackendApp(
         store, bus, engine, watcher, vaultManager, quotes, oracle, riskScorer,
@@ -326,9 +316,8 @@ class TestEnv(
             amount = amount,
             fiatAmount = 250_000L,
             fiatCurrency = "USD".toByteArray(),
-            userPubKey = Fx.user.pubKeyCompressed,
+            buyerPubKey = Fx.buyer.pubKeyCompressed,
             sellerPubKey = Fx.seller.pubKeyCompressed,
-            courierPubKey = Fx.courier.pubKeyCompressed,
             quoteExpiry = createdAt.plusSeconds(3600).epochSecond,
         )
         val record = DealRecord(
@@ -341,12 +330,10 @@ class TestEnv(
             amount = terms.amount,
             fiatAmount = terms.fiatAmount,
             fiatCurrency = "USD",
-            userPubKeyHex = Hex.encode(Fx.user.pubKeyCompressed),
+            buyerPubKeyHex = Hex.encode(Fx.buyer.pubKeyCompressed),
             sellerPubKeyHex = Hex.encode(Fx.seller.pubKeyCompressed),
-            courierPubKeyHex = Hex.encode(Fx.courier.pubKeyCompressed),
             recipientAddrHex = Hex.encode(recipient),
             collateralTokenIdHex = Fx.useTokenIdHex,
-            courierId = "courier-7",
             createdAt = createdAt,
             amlRecords = listOf(AmlRecord(aml, riskScorer.scorerId, Hex.encode(recipient), createdAt)),
         )
@@ -362,14 +349,13 @@ class TestEnv(
         return store.getDeal(record.dealId)!!
     }
 
-    /** The courier-signed-equivalent handoff flow at component level. */
+    /** The seller-signed handoff flow at component level (record as obtained at the meeting). */
     fun collectCash(dealId: String, at: Instant = T0) {
         val record = HandoffRecord(
             dealId = store.getDeal(dealId)!!.terms().dealId,
             amount = 250_000L,
             fiatCurrency = "USD".toByteArray(),
             timestamp = at.epochSecond,
-            courierIdHash = HandoffRecord.courierIdHash("courier-7".encodeToByteArray()),
         )
         store.updateDeal(dealId) { it.copy(handoffRecordHex = Hex.encode(record.encode())) }
         engine.apply(dealId, DealEvent.CashCollected(at, at), at)
@@ -380,7 +366,6 @@ class TestEnv(
         amount = deal.fiatAmount,
         fiatCurrency = deal.fiatCurrency.toByteArray(Charsets.US_ASCII),
         timestamp = at.epochSecond,
-        courierIdHash = HandoffRecord.courierIdHash(deal.courierId.encodeToByteArray()),
     )
 
     /** Mints a seller-payment attestation and registers it with the dev oracle client. */

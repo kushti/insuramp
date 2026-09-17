@@ -58,12 +58,10 @@ data class DealRecord(
     val amount: Long,
     val fiatAmount: Long,
     val fiatCurrency: String,
-    val userPubKeyHex: String,
+    val buyerPubKeyHex: String,
     val sellerPubKeyHex: String,
-    val courierPubKeyHex: String,
     val recipientAddrHex: String,
     val collateralTokenIdHex: String,
-    val courierId: String,
     val createdAt: Instant,
     val state: DealState = DealState.QUOTED,
     val fundedAt: Instant? = null,
@@ -73,7 +71,6 @@ data class DealRecord(
     val provenBoxId: String? = null,
     val handoffRecordHex: String? = null,
     val handoffGpsRef: String? = null,
-    val panicFlag: Boolean = false,
     val abandoned: Boolean = false,
     val lossRecorded: Boolean = false,
     val claimAction: String? = null,
@@ -90,9 +87,8 @@ data class DealRecord(
         amount = amount,
         fiatAmount = fiatAmount,
         fiatCurrency = fiatCurrency.toByteArray(Charsets.US_ASCII),
-        userPubKey = Hex.decode(userPubKeyHex),
+        buyerPubKey = Hex.decode(buyerPubKeyHex),
         sellerPubKey = Hex.decode(sellerPubKeyHex),
-        courierPubKey = Hex.decode(courierPubKeyHex),
         quoteExpiry = quoteExpiry,
     )
 
@@ -107,8 +103,7 @@ data class DealRecord(
  * M3 ships the interface plus a thread-safe in-memory implementation —
  * a restart loses state (documented deviation; the spec names PostgreSQL).
  * The interface is shaped so a JDBC implementation drops in behind it:
- * single-row atomic updates, an append-only event log, one current-quote row,
- * and a courier-credential flag set.
+ * single-row atomic updates, an append-only event log, and one current-quote row.
  */
 interface DealStore {
     fun createDeal(record: DealRecord)
@@ -133,11 +128,6 @@ interface DealStore {
     fun saveQuote(quote: QuoteRecord)
     fun clearQuote()
     fun currentQuote(): QuoteRecord?
-
-    /** Courier credential flags (rogue-courier case, §7 investigate action). */
-    fun flagCourier(courierId: String)
-    fun isCourierFlagged(courierId: String): Boolean
-    fun flaggedCouriers(): Set<String>
 }
 
 /** Thread-safe in-memory [DealStore] (M3 default; see the interface doc). */
@@ -146,7 +136,6 @@ class InMemoryDealStore : DealStore {
     private val deals = LinkedHashMap<String, DealRecord>()
     private val eventLog = mutableListOf<StoredEvent>()
     private var quote: QuoteRecord? = null
-    private val flagged = mutableSetOf<String>()
 
     override fun createDeal(record: DealRecord) = locked {
         require(!deals.containsKey(record.dealId)) { "deal ${record.dealId} already exists" }
@@ -177,12 +166,6 @@ class InMemoryDealStore : DealStore {
     override fun clearQuote() = locked { quote = null }
 
     override fun currentQuote(): QuoteRecord? = locked { quote }
-
-    override fun flagCourier(courierId: String) = locked { flagged += courierId }
-
-    override fun isCourierFlagged(courierId: String): Boolean = locked { courierId in flagged }
-
-    override fun flaggedCouriers(): Set<String> = locked { flagged.toSet() }
 
     private fun <T> locked(block: () -> T): T {
         lock.lock()

@@ -24,7 +24,7 @@ import java.math.BigInteger
 /**
  * Offline transaction assembly for the harness's own setup/payment
  * transactions (mint the dev oracle NFT, mint the collateral token, fund the
- * user address) — a port of `:apps:core:ergo`'s internal `TxAssembly` tail
+ * buyer address) — a port of `:apps:core:ergo`'s internal `TxAssembly` tail
  * (not visible across the module boundary), over the public `ErgoBridge`
  * interop surface. The vault txs themselves never pass through here: they are
  * built by `OperatorTxBuilder`/`ClaimTxBuilder` exactly as in production.

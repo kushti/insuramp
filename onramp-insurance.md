@@ -1,7 +1,8 @@
 # Vault-Insured Cash→USDT On-ramp with Ergo Contracts
 
-*Design note — USDT, BTC, and XMR legs. Direction: **cash→USDT on-ramp only** — the user hands cash
-to the courier and receives USDT; the seller sends the USDT after collecting cash, so
+*Design note — USDT, BTC, and XMR legs. Direction: **cash→USDT on-ramp only** — the buyer hands cash
+to the seller at an in-person meeting and receives USDT; the seller collects the cash and
+sends the USDT afterwards, so
 it acts last and locks the vault collateral. BTC and XMR legs remain extension notes (§3.2/§3.3;
 `specs/vault-contract.md` §8.1/§8.2). Synthesizes kushti's forum post "Insuring Bitcoin on-ramp with
 Ergo contracts" (ergoforum.org/t/5121, March 2025), the r/ergonauts "DarkPaper Recipe #1" (June
@@ -10,8 +11,8 @@ Ergo contracts" (ergoforum.org/t/5121, March 2025), the r/ergonauts "DarkPaper R
 ## 1. Problem
 
 Cash→crypto OTC deals have a sequencing problem: one side must act first, and the first mover is
-exposed. In the on-ramp this product implements, the **cash side acts first**: the user hands cash
-to the seller's courier and then waits for the seller's crypto transfer — minutes on
+exposed. In the on-ramp this product implements, the **cash side acts first**: the buyer hands cash
+to the seller (they meet in person) and then waits for the seller's crypto transfer — minutes on
 Tron/Ethereum for USDT, but 10–60+ minutes for Bitcoin, where an unconfirmed mempool transaction
 can be replaced via RBF, so without insurance the buyer cannot safely leave. (The reverse
 direction — crypto side acting first, the off-ramp — is out of scope and not designed here.)
@@ -31,13 +32,13 @@ collateral in a vault box governed by a script with multiple spending paths:
 
 | Path | Condition | Effect |
 |---|---|---|
-| Timeout | `RECLAIM_TIMEOUT` (24h) passes with no claim | Seller reclaims collateral (user no-show) |
-| Cash-collection proof | The **courier-signed handoff record**: a Schnorr signature from the deal-scoped `courierPubKey` over the cash-collection message | User can claim the collateral (after `CLAIM_MATURATION`, 12h) |
-| Payment proof | Oracle digest of the **seller's** USDT transfer to the user (recipient pinned at funding) — the attestation alone | Collateral released to the seller immediately |
+| Timeout | `RECLAIM_TIMEOUT` (24h) passes with no claim | Seller reclaims collateral (buyer no-show) |
+| Cash-collection proof | The **seller-signed handoff record**: a Schnorr signature from `sellerPubKey` (the same R5 key that reclaims the collateral) over the cash-received message | Buyer can claim the collateral (after `CLAIM_MATURATION`, 12h) |
+| Payment proof | Oracle digest of the **seller's** USDT transfer to the buyer (recipient pinned at funding) — the attestation alone | Collateral released to the seller immediately |
 
 The proof roles flip cleanly with the direction. The on-ramp has no payment for an oracle to attest
 at claim time (cash has no oracle — never claim a trustless cash proof), so the **claim** is gated
-on the courier-signed handoff record collected physically at the meeting, while the **release** is
+on the seller-signed handoff record collected physically at the meeting, while the **release** is
 gated on the oracle digest of the seller's USDT transfer — and on nothing else: the attestation
 alone moves the collateral. The seller's own signature never releases the vault (self-attestation
 protects nobody), but the phase-1 oracle's attestation does — that trust is stated plainly in §3.1
@@ -46,21 +47,26 @@ and §5, not dressed up.
 One fixed, non-transaction Schnorr message carries the one off-chain event (Schnorr signatures are
 verifiable in ErgoScript — ergoforum.org/t/verifying-schnorr-signatures-in-ergoscript/3407):
 
-- The **handoff record**, signed by the courier's deal-scoped key at the meeting, proves *cash
-  collection*. The sequencing matters: the courier signs **only after physically counting the
-  cash** — signing before collection would hand the buyer a false artifact. So the buyer hands
-  over the cash, watches the courier count and sign, and **must not leave the meeting until their
-  app shows the verified courier-signed record**; the record is the buyer's only dispute artifact.
-  It gates the user's claim. A courier who pockets the cash and refuses to sign is the same
-  robbery as a refusal-to-co-sign scheme in any design — the mitigation is operational (GPS,
-  dual-control, courier vetting/bonding), not cryptographic.
-- The release needs **no user message at all**: the oracle's attestation of the seller's USDT
+- The **handoff record**, signed by the seller at the meeting, proves *cash
+  collection*. The sequencing matters: the seller signs **only after physically counting the
+  cash** — signing before collection would hand the buyer a false artifact (which would
+  only ever unlock a payout of the seller's own collateral to the buyer). So the buyer hands
+  over the cash, watches the seller count and sign, and **must not leave the meeting until
+  their app shows the verified seller-signed record**; the record is the buyer's only
+  dispute artifact. It gates the buyer's claim. Stated plainly, because the artifact is
+  seller-signed under the same key that reclaims the collateral: (a) the claim pays the
+  *buyer*, so a seller faking or coercing a record is self-defeating — no new attack; and
+  (b) the real residual is a seller who pockets the cash and refuses to sign, leaving the
+  buyer with no on-chain artifact at all — the mitigation is procedural (don't hand over
+  cash before the verified record is persisted in the app), the same exposure as any
+  face-to-face cash trade, not a cryptographic one.
+- The release needs **no buyer message at all**: the oracle's attestation of the seller's USDT
   transfer is solely sufficient on the release paths. There is no receipt signature anywhere in
   the protocol.
 
 Privacy: the seller funds and reclaims vaults through mixer output / stealth addresses, so in
-routine deals (where the user has no incentive to dispute) the reclaim path leaves no link between
-the seller's vaults — the user stays pseudonymous, and the seller's vaults sit in a ring of all
+routine deals (where the buyer has no incentive to dispute) the reclaim path leaves no link between
+the seller's vaults — the buyer stays pseudonymous, and the seller's vaults sit in a ring of all
 sellers' vaults.
 
 **Which asset is collateral depends on the deal leg:**
@@ -77,33 +83,33 @@ The contested event differs per leg, and that — not the vault — is where the
 
 ### 3.1 USDT (Tron / Ethereum) — oracle-verified
 
-On-ramp shape (user hands cash, seller sends USDT afterwards):
+On-ramp shape (buyer hands cash, seller sends USDT afterwards):
 
-1. User and seller agree terms (quote). No reputation vetting. The user shares a USDT receive
-   address, pinned in the vault at funding (R9 `recipientAddr` — the seller pays the user), and
-   the deal terms pin the three deal-scoped keys: `userPubKey`, `sellerPubKey`, and the new
-   `courierPubKey` (`specs/deal-protocol.md` §3.1).
+1. Buyer and seller agree terms (quote). No reputation vetting. The buyer shares a USDT receive
+   address, pinned in the vault at funding (R9 `recipientAddr` — the seller pays the buyer), and
+   the deal terms pin the two deal keys: `buyerPubKey` and `sellerPubKey`
+   (`specs/deal-protocol.md` §3.1).
 2. Seller does its standard AML check — off-chain, seller-side, regardless of everything else;
    no contract can fix it. *(This step is off-chain reputation by design.)*
 3. Seller locks USE equal to the USDT amount in the vault (it acts last, so it locks the
    collateral).
-4. At the meeting, the user hands over the cash and watches the courier count it; the courier
-   signs the handoff record only after the count; the user does not leave until their app shows
-   the verified courier-signed record, checked against the deal terms.
-5. Seller sends the USDT to the user's pinned address; the phase-1 oracle observes the transfer
+4. At the meeting, the buyer hands over the cash and watches the seller count it; the seller
+   signs the handoff record only after the count; the buyer does not leave until their app shows
+   the verified seller-signed record, checked against the deal terms.
+5. Seller sends the USDT to the buyer's pinned address; the phase-1 oracle observes the transfer
    and **screens it as non-tainted before attesting** (Tether blacklist/freeze exposure on Tron,
    sanctions screening on Ethereum — a heuristic: Tether can freeze after attestation, so
    screening at attestation time is not a guarantee; `specs/oracle-integration.md` §4).
 6. Resolution:
    - **Routine:** the oracle attests the transfer and the seller releases the vault with the
-     oracle digest alone — immediate payout (path C). No user action is required at any point
+     oracle digest alone — immediate payout (path C). No buyer action is required at any point
      after the meeting; the release follows the attestation.
-   - **Seller collected the cash but never paid:** the user opens the claim with the
-     courier-signed handoff record (path B); after `CLAIM_MATURATION` (12h) the user claims the
+   - **Seller collected the cash but never paid:** the buyer opens the claim with the
+     seller-signed handoff record (path B); after `CLAIM_MATURATION` (12h) the buyer claims the
      USE (path D). There is no payment for an oracle to attest at claim time, so the claim is
      gated on the handoff record, not the oracle.
-   - **User ghosts after the USDT arrives:** nothing depends on the user anymore — the release
-     follows the oracle's attestation without any user action, so there is nothing to withhold.
+   - **Buyer ghosts after the USDT arrives:** nothing depends on the buyer anymore — the release
+     follows the oracle's attestation without any buyer action, so there is nothing to withhold.
      (If the oracle never attests a transfer the seller claims to have sent, that is an
      operational incident — seller fault, dispute evidence — not a protocol path.)
 
@@ -116,19 +122,22 @@ happened and take the collateral — there is no on-chain defense, and that is a
 What remains is operational: oracle operator ≠ marketplace operator, publicly auditable
 attestations (a false attestation is ex-post provable against public source-chain data, and each
 one is bounded by the per-deal size cap while the oracle is centralized), and the phase-2
-threshold upgrade. The claim path, by contrast, involves no oracle at all: it leans on the
-operational courier leg — the courier key is seller-issued and deal-scoped, but a colluding
-seller+courier gains nothing (the claim a fake record unlocks pays the *user* the seller's own
-collateral), and a rogue courier signing records for cash never collected is operational security
-(GPS, dual-control, vetting), the same trust the cash leg already carries. Note the oracle only
+threshold upgrade. The claim path, by contrast, involves no oracle at all — and its artifact
+is now seller-signed under the same R5 key that reclaims the collateral. Consequences,
+stated plainly: a seller opening a claim on its own vault is self-defeating (the claim pays
+the *buyer* the seller's own collateral), so no collusion pair is needed for that analysis;
+and the real residual is a seller who takes the cash and refuses to sign, which leaves the
+buyer with no on-chain dispute artifact — the buyer's protection is procedural (don't hand
+over cash without the in-app verified record), the same exposure as any face-to-face cash
+trade. Note the oracle only
 needs to *confirm an event on a transparent chain*. Also verified against rosen-bridge
 code: the live watcher/guard set cannot attest deal-scoped events, and Rosen has no Tron support —
 §3.2 of that spec.
 
 **Implementation status (2026-09-17):** the `.es` contracts in `contracts/` implement the
-v2 design (2026-09-13): R7 packs
-`oracleNftId || courierPubKey` (65 B — no R10 exists, unchanged), claim path B is gated on the
-courier-signed handoff record with no oracle input, and the release paths C/C′ take the oracle box
+v2 design (2026-09-13): R7 holds the bare 32-byte
+`oracleNftId` (the old two-key packing is gone), claim path B is gated on the
+seller-signed handoff record with no oracle input, and the release paths C/C′ take the oracle box
 as a full input — the digest alone, no receipt signature anywhere. The tested suite is the on-ramp
 matrix in `specs/vault-contract.md` §7 (49 tests + 8 oracle-box tests, green);
 `specs/deal-protocol.md` is canonical for roles and wire formats (its state machine and wire
@@ -225,14 +234,17 @@ not a roadmap item.
 |---|---|---|---|
 | Payment verification (gates release) | Oracle attestation — **solely sufficient** (phase 1: centralized NFT oracle, trusted; phase 2: Rosen-derived guard set) — confirms the seller's USDT transfer | Trustless Bitcoin relay (inclusion proof) | Monero tx-key reveal, verified by oracle |
 | Trusted parties for crypto leg | Phase-1 centralized oracle (solely trusted on release) → Rosen-style guard multisig | None (relay assumptions only) | Oracle multisig, same as USDT |
-| Cash collection proof (gates claim) | Courier-signed handoff record (deal-scoped courier key) | User's Schnorr signature at handoff (the seller's signed message carries the promised txid) | Courier-signed handoff record (same skeleton as USDT) |
+| Cash collection proof (gates claim) | Seller-signed handoff record (the R5 seller key — the same key that reclaims the collateral) | Buyer's Schnorr signature at handoff (the seller's signed message carries the promised txid) | Seller-signed handoff record (same skeleton as USDT) |
 | Collateral asset | USE | rsBTC (exists) | rsXMR (does not exist yet) |
 | Chain latency risk | Low (Tron/Ethereum confirmations) | High (RBF, 10-min blocks) → `BTC_DEADLINE` ~6h | Low (2-min blocks, no RBF) |
 | Privacy of crypto leg | None (public chain) | Pseudonymous (transparent amounts) | Strong (revealed per-tx only) |
 
-Residual trust in **all** legs: the AML/vetting step is off-chain; the courier is a physical-world
-actor whose signature on the handoff record is trusted as proof of cash collection (a
-seller-issued, deal-scoped key — operational security, the same trust the cash leg carries); and
+Residual trust in **all** legs: the AML/vetting step is off-chain; the cash leg is a
+face-to-face handover whose dispute artifact is the seller's own signature on the handoff
+record (the same key that reclaims the collateral — a cheating seller gains nothing from a
+fake record, since the claim it unlocks pays the buyer, and a seller who refuses to sign
+after taking cash leaves the buyer with the same exposure as any face-to-face cash trade);
+and
 vault collateral is only as good as the collateral asset's liquidity (rsBTC/rsXMR/USE depth on
 Ergo DEXs). For the oracle-verified legs add the phase-1 oracle itself, trusted outright on the
 release path (§3.1).
@@ -259,7 +271,7 @@ release path (§3.1).
 - **Scales with deal size only via over-collateralization.** A seller must lock 1 USE per 1 USDT
   at risk (100% ratio), so capital efficiency is poor by design — that's the price of "no
   reputation."
-- **Regulatory exposure.** The cash courier leg is the legally sensitive part in most
+- **Regulatory exposure.** The in-person cash-collection leg is the legally sensitive part in most
   jurisdictions; the contracts make the crypto side trust-minimized, they do not launder the fiat
   leg.
 

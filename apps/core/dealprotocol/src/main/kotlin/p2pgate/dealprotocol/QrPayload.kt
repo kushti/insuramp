@@ -7,10 +7,10 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  * QR payload codecs, `specs/deal-protocol.md` §3.3 — `p2pgate://` URIs carrying
  * base64url message bytes, plus the lenient address share.
  *
- * - `p2pgate://handoff?m=<base64url(handoff record)>` — courier → user at the
- *   meeting (the unsigned record; the courier signs once the user has validated
+ * - `p2pgate://handoff?m=<base64url(handoff record)>` — seller → buyer at the
+ *   meeting (the unsigned record; the seller signs once the buyer has validated
  *   it against the deal terms).
- * - Address share: `<address>` or `<address>?amount=<decimal>` — the user's
+ * - Address share: `<address>` or `<address>?amount=<decimal>` — the buyer's
  *   USDT payout address, shared at QUOTED so R9's `recipientAddr` pins it.
  *
  * Base64 is the stdlib URL-safe variant **without padding** (no `+`/`/`/`=`
@@ -26,13 +26,13 @@ object QrPayload {
     /** URL-safe base64, padding absent both ways (`kotlin.io.encoding.Base64`). */
     private val base64url: Base64 = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
 
-    // ---------- handoff (courier → user) ----------
+    // ---------- handoff (seller → buyer) ----------
 
     fun encodeHandoff(record: HandoffRecord): String = HANDOFF_PREFIX + base64url.encode(record.encode())
 
     fun decodeHandoff(payload: String): HandoffRecord = HandoffRecord.decode(extractM(payload, HANDOFF_PREFIX, "handoff"))
 
-    // ---------- address share (user → seller, at QUOTED) ----------
+    // ---------- address share (buyer → seller, at QUOTED) ----------
 
     /** Formats exactly: `address`, or `address?amount=<decimal>` when [amount] is present. */
     fun formatAddress(address: String, amount: Long? = null): String {

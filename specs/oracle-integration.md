@@ -15,16 +15,16 @@ Rosen bridge's GuardSign/Lock contract pattern (§3.2). The **payment-proof dige
 the vault contract, not the register layout, deal protocol, wire formats, or apps.
 
 Timing constants used throughout are owned by `specs/vault-contract.md`: `RECLAIM_TIMEOUT`,
-`CLAIM_MATURATION`, `BTC_DEADLINE` (extension note only), `feeBps`.
+`CLAIM_MATURATION`, `BTC_DEADLINE` (extension note only), `PROTOCOL_FEE_BPS` (compile-time).
 
 Deal state machine (canonical names, owned by `specs/deal-protocol.md` §1): QUOTED → FUNDED →
 PAYMENT_PENDING → PAYMENT_CONFIRMED → RELEASED; quote expiry (`QuoteExpired`) closes a deal
-that never funded, with no on-chain footprint; the timeout branch FUNDED → RECLAIMED (user
+that never funded, with no on-chain footprint; the timeout branch FUNDED → RECLAIMED (buyer
 no-show); the dispute branch PAYMENT_PENDING →
 CLAIM_OPENED → CLAIMABLE → CLAIMED (claim opens once cash is collected and the seller has not
 paid; claims without cause from PAYMENT_CONFIRMED are possible and are countered with the
 oracle digest alone). PAYMENT_CONFIRMED means the oracle confirmed the seller's USDT transfer;
-the release follows without any user action.
+the release follows without any buyer action.
 On-chain vault box states: FUNDED box → spent (routine release via path C or reclaim via
 path A), or FUNDED box → PAYMENT_PROVEN box → spent (dispute: contest via path C′ or
 payout via path D).
@@ -32,14 +32,14 @@ payout via path D).
 ## 1. Role of the oracle
 
 The contested event in a cash→USDT on-ramp deal is: **the seller transferred exactly the
-agreed amount of USDT to the user's receive address on the source chain.** That event is
+agreed amount of USDT to the buyer's receive address on the source chain.** That event is
 publicly visible on a transparent chain; no party to the deal should get to assert it
 unilaterally — least of all the seller, whose own collateral release depends on it.
 
 The oracle's job is narrow:
 
 1. Observe the source chain for a USDT `Transfer` matching (deal's `recipientAddr` in R9 —
-   the user's USDT address, exact amount).
+   the buyer's USDT address, exact amount).
 2. Wait for the source-chain confirmation rule (§4.2) to be satisfied.
 3. **Screen the transfer as non-tainted (§4.3)** — Tether blacklist/freeze exposure on
    Tron, sanctions screening on Ethereum. This is an attestation precondition.
@@ -54,7 +54,7 @@ the oracle is a single trusted entity for the payment leg, and its attestation i
 sufficient** on the release paths (§5.3 says this without euphemism).
 
 The clean flip versus the off-ramp reading: the off-ramp gated the *claim* on the oracle
-(proof the user paid); the on-ramp gates the *claim* on the **courier-signed handoff record**
+(proof the buyer paid); the on-ramp gates the *claim* on the **seller-signed handoff record**
 (proof cash was collected — there is no payment for an oracle to attest at claim time) and
 gates *release* on the oracle digest alone (proof the seller's USDT arrived,
 `specs/deal-protocol.md` §1). Path B therefore involves the oracle **not at all**.
@@ -62,14 +62,14 @@ gates *release* on the oracle digest alone (proof the seller's USDT arrived,
 The attestation is consumed two ways:
 
 1. **Off-chain:** the oracle's confirmation signal advances the deal from
-   PAYMENT_PENDING to PAYMENT_CONFIRMED — the user's "USDT confirmed" indicator. The
+   PAYMENT_PENDING to PAYMENT_CONFIRMED — the buyer's "USDT confirmed" indicator. The
    FUNDED box is untouched.
 2. **On-chain:** the oracle co-signs the release (path C: oracle digest alone, routine
    close; path C′: the same digest from the PAYMENT_PROVEN box, contesting a claim). The
    digest is supplied in the release transaction itself — the PAYMENT_PROVEN box carries
    the handoff record, not the digest. **The attestation alone is sufficient on both
    paths: there is no receipt signature anywhere in the protocol.** The release follows
-   the attestation without any user action — which is exactly why the phase-1 oracle is
+   the attestation without any buyer action — which is exactly why the phase-1 oracle is
    trusted, period (§5.3).
 
 ## 2. Payment-proof digest format (permanent — both phases)
@@ -101,7 +101,7 @@ concatenation:
 | 1 | `dealId` | 32 B | funding | `blake2b256(deal terms)` per `specs/deal-protocol.md` §3.1; binds the proof to one deal |
 | 33 | `srcChainId` | 1 B | funding | registry shared with the deal terms: `0x01` = Tron, `0x02` = Ethereum |
 | 34 | `tokenId` | 1 B | funding | `0x01` = USDT on the given chain (mirrors the deal-terms `asset` byte); guards against a same-address different-token attestation |
-| 35 | `recipient` | 21 B | funding | source-chain address payload, left-padded with zeros: 21 B Tron (base58check payload), 20 B Ethereum (right-aligned). **On-ramp: the user's USDT receive address** (R9 `recipientAddr` — the seller pays the user) |
+| 35 | `recipient` | 21 B | funding | source-chain address payload, left-padded with zeros: 21 B Tron (base58check payload), 20 B Ethereum (right-aligned). **On-ramp: the buyer's USDT receive address** (R9 `recipientAddr` — the seller pays the buyer) |
 | 56 | `amount` | 8 B | funding | uint64 in USDT base units (6 decimals on both chains); exact-amount deals only — no partial-payment semantics |
 | 64 | `srcTxId` | 32 B | attestation | source-chain tx hash as opaque bytes (Tron/ETH hashes are both 32 B; no hashing of it required in-script) |
 | 96 | `srcBlockHeight` | 8 B | attestation | uint64 |
@@ -133,7 +133,7 @@ by `tokenId`.
   then requires the oracle key's signature on the whole transaction — which covers the
   attestation fields (`srcTxId`, `srcBlockHeight`, `srcBlockTime`) as they are validated
   against R4/R9 in the release spend. The claim path (B) takes no oracle input: it is
-  gated on the courier-signed handoff record.
+  gated on the seller-signed handoff record.
 - The oracle co-signs **only after** its daemon has confirmed the seller's USDT
   transfer to the R9 recipient per §4.2 **and** the transfer has passed the §4.3 taint
   screen. Refusing to sign is the oracle's only *honest* power; it cannot redirect funds
@@ -249,7 +249,7 @@ not an observation of Tron/Ethereum.
   events (the phase-2 fork may swap in `rosen-bridge/scanner`'s EVM machinery; the Tron
   observer remains ours until — and unless — Rosen catches up). The watch set is fed at
   deal funding: when a deal enters FUNDED, the operator backend registers `(dealId,
-  srcChainId, recipient = the user's USDT address, amount, expiresAt = fundedAt +
+  srcChainId, recipient = the buyer's USDT address, amount, expiresAt = fundedAt +
   RECLAIM_TIMEOUT)` over an internal RPC (mTLS, never exposed to deal parties). The
   observer matches on exact `(recipient, amount)` in a single transaction — never
   partial or multi-tx sums.
@@ -271,7 +271,7 @@ not an observation of Tron/Ethereum.
     once the event is confirmed and screened, or `202` with confirmation progress
     (`{ srcTxId, height, confirmations, required }`) while pending. The operator backend
     polls this to advance the deal to PAYMENT_CONFIRMED and to submit the release; the
-    user app reads confirmation status through the backend's attestation proxy
+    buyer app reads confirmation status through the backend's attestation proxy
     (`specs/operator-backend.md` §2), never from the oracle directly.
   - `GET /v1/health` → per-chain observer lag (blocks behind tip), last signed
     attestation age. Feeds the dashboard infrastructure status and the auto-pause rule
@@ -309,7 +309,7 @@ precondition**: no screen, no signature.
 
 **The heuristic limit, stated plainly:** screening is a point-in-time check at
 attestation. Tether can freeze an address *after* the attestation lands — a transfer
-that screened clean can still leave the user holding frozen USDT later, and nothing in
+that screened clean can still leave the buyer holding frozen USDT later, and nothing in
 the protocol prevents or compensates that. Screening at attestation time reduces
 exposure; it is **not a guarantee** of the received funds' future usability. In phase 2
 each guard re-runs the same screens independently before co-signing (the watcher/guard
@@ -330,8 +330,8 @@ never sell insurance you can't currently verify. Mechanically: the operator back
 `GET /v1/health` and refuses to publish quotes (and hides the insured badge) whenever any
 active source chain's lag exceeds its threshold or the signing oracle is unreachable.
 Deals already FUNDED are unaffected — their USDT confirmations and release co-signatures
-land when the oracle recovers, and the user's claim path never depends on oracle liveness
-(it is gated on the courier-signed handoff record, not the oracle). Only *new* insurance
+land when the oracle recovers, and the buyer's claim path never depends on oracle liveness
+(it is gated on the seller-signed handoff record, not the oracle). Only *new* insurance
 sales stop.
 
 ### 5.3 Trust model — stated honestly
@@ -341,7 +341,7 @@ release path it is trusted *completely*.** On-ramp, the oracle gates *release*, 
 attestation is **solely sufficient**: a malicious or compromised oracle can attest a
 payment that never happened — a seller-run oracle could co-sign a fake digest of its own
 "payment" — and the collateral moves, with **no on-chain defense of any kind**. There is
-no user signature on the release paths to withhold, and none to save a cheated user.
+no buyer signature on the release paths to withhold, and none to save a cheated buyer.
 This is a deliberate launch trade-off, not a discovery, and it is accepted for phase 1.
 It is exactly why:
 
@@ -364,9 +364,9 @@ Mitigations beyond those two structural points — all operational, none cryptog
 - **Blast radius cap:** max deal size = vault capacity is already enforced
   operator-side; protocol-level deal-size caps while the oracle is centralized keep a
   single false attestation small.
-- **Liveness, not safety, for honest users:** oracle downtime delays release
+- **Liveness, not safety, for honest buyers:** oracle downtime delays release
   confirmation, but cannot steal collateral by silence and cannot block the
-  user's claim — the claim path only starts once the courier-signed handoff record
+  buyer's claim — the claim path only starts once the seller-signed handoff record
   exists on-chain, and it takes no oracle input. `RECLAIM_TIMEOUT` interacting with a
   paid-but-unconfirmed transfer is an operational incident (seller fault, dispute
   evidence), not a protocol failure mode. (Dishonesty is the safety case above; silence

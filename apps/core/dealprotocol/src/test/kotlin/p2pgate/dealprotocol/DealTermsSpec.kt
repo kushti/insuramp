@@ -8,7 +8,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
 /**
- * Deal terms wire format, `specs/deal-protocol.md` §3.1: canonical 141-byte
+ * Deal terms wire format, `specs/deal-protocol.md` §3.1: canonical 108-byte
  * big-endian layout, `dealId = blake2b256(encode())` binding every field,
  * strict decode validation. One tamper test per field asserts the dealId
  * changes on any single-field change (the vault relies on this for
@@ -26,18 +26,17 @@ class DealTermsSpec {
         amount: Long = 500_000_000L,
         fiatAmount: Long = 1_560_000L,
         fiatCurrency: ByteArray = "EGP".encodeToByteArray(),
-        userPubKey: ByteArray = key(0x02, 0x11),
+        buyerPubKey: ByteArray = key(0x02, 0x11),
         sellerPubKey: ByteArray = key(0x03, 0x22),
-        courierPubKey: ByteArray = key(0x02, 0x33),
         quoteExpiry: Long = 1_800_000_000L,
     ) = DealTerms(
         dealNonce, asset, srcChainId, amount, fiatAmount, fiatCurrency,
-        userPubKey, sellerPubKey, courierPubKey, quoteExpiry,
+        buyerPubKey, sellerPubKey, quoteExpiry,
     )
 
     @Test
-    fun `encode produces exactly 141 bytes`() {
-        assertEquals(141, sample().encode().size)
+    fun `encode produces exactly 108 bytes`() {
+        assertEquals(108, sample().encode().size)
         assertEquals(DealTerms.ENCODED_SIZE, sample().encode().size)
     }
 
@@ -52,9 +51,8 @@ class DealTermsSpec {
         assertEquals(terms.amount, decoded.amount)
         assertEquals(terms.fiatAmount, decoded.fiatAmount)
         assertContentEquals(terms.fiatCurrency, decoded.fiatCurrency)
-        assertContentEquals(terms.userPubKey, decoded.userPubKey)
+        assertContentEquals(terms.buyerPubKey, decoded.buyerPubKey)
         assertContentEquals(terms.sellerPubKey, decoded.sellerPubKey)
-        assertContentEquals(terms.courierPubKey, decoded.courierPubKey)
         assertEquals(terms.quoteExpiry, decoded.quoteExpiry)
         assertEquals(DealTerms.VERSION, decoded.version)
     }
@@ -77,10 +75,9 @@ class DealTermsSpec {
         assertContentEquals("0102030405060708".hexToBytes(), encoded.copyOfRange(19, 27))         // amount BE
         assertContentEquals("1112131415161718".hexToBytes(), encoded.copyOfRange(27, 35))         // fiatAmount BE
         assertContentEquals("USD".encodeToByteArray(), encoded.copyOfRange(35, 38))               // fiatCurrency
-        assertEquals(0x02, encoded[38].toInt())                      // userPubKey prefix
+        assertEquals(0x02, encoded[38].toInt())                      // buyerPubKey prefix
         assertEquals(0x03, encoded[71].toInt())                      // sellerPubKey prefix
-        assertEquals(0x02, encoded[104].toInt())                     // courierPubKey prefix
-        assertContentEquals("7f112233".hexToBytes(), encoded.copyOfRange(137, 141))               // quoteExpiry BE
+        assertContentEquals("7f112233".hexToBytes(), encoded.copyOfRange(104, 108))               // quoteExpiry BE
     }
 
     @Test
@@ -98,13 +95,12 @@ class DealTermsSpec {
         amount: Long = t.amount,
         fiatAmount: Long = t.fiatAmount,
         fiatCurrency: ByteArray = t.fiatCurrency,
-        userPubKey: ByteArray = t.userPubKey,
+        buyerPubKey: ByteArray = t.buyerPubKey,
         sellerPubKey: ByteArray = t.sellerPubKey,
-        courierPubKey: ByteArray = t.courierPubKey,
         quoteExpiry: Long = t.quoteExpiry,
     ) = DealTerms(
         dealNonce, asset, srcChainId, amount, fiatAmount, fiatCurrency,
-        userPubKey, sellerPubKey, courierPubKey, quoteExpiry,
+        buyerPubKey, sellerPubKey, quoteExpiry,
     )
 
     @Test
@@ -126,13 +122,10 @@ class DealTermsSpec {
     fun `tampering fiatCurrency changes dealId`() = tamper { rebuild(it, fiatCurrency = "USD".encodeToByteArray()) }
 
     @Test
-    fun `tampering userPubKey changes dealId`() = tamper { rebuild(it, userPubKey = key(0x02, 0x44)) }
+    fun `tampering buyerPubKey changes dealId`() = tamper { rebuild(it, buyerPubKey = key(0x02, 0x44)) }
 
     @Test
     fun `tampering sellerPubKey changes dealId`() = tamper { rebuild(it, sellerPubKey = key(0x03, 0x55)) }
-
-    @Test
-    fun `tampering courierPubKey changes dealId`() = tamper { rebuild(it, courierPubKey = key(0x02, 0x66)) }
 
     @Test
     fun `tampering quoteExpiry changes dealId`() = tamper { rebuild(it, quoteExpiry = 1_800_000_001L) }
@@ -145,7 +138,7 @@ class DealTermsSpec {
 
     @Test
     fun `decode rejects wrong length`() {
-        assertFailsWith<IllegalArgumentException> { DealTerms.decode(sample().encode().copyOfRange(0, 140)) }
+        assertFailsWith<IllegalArgumentException> { DealTerms.decode(sample().encode().copyOfRange(0, 107)) }
         assertFailsWith<IllegalArgumentException> { DealTerms.decode(sample().encode() + 0x00) }
     }
 
@@ -204,8 +197,8 @@ class DealTermsSpec {
 
     @Test
     fun `rejects uncompressed key prefixes`() {
-        assertFailsWith<IllegalArgumentException> { sample(userPubKey = key(0x04, 0x11)).encode() }
-        assertFailsWith<IllegalArgumentException> { sample(courierPubKey = ByteArray(33)).encode() }
+        assertFailsWith<IllegalArgumentException> { sample(buyerPubKey = key(0x04, 0x11)).encode() }
+        assertFailsWith<IllegalArgumentException> { sample(sellerPubKey = ByteArray(33)).encode() }
         assertFailsWith<IllegalArgumentException> { sample(sellerPubKey = ByteArray(32) { 0x02 }).encode() }
     }
 }

@@ -41,13 +41,13 @@ sealed interface ChainRegister {
     /** The sigma-serialized constant bytes (exactly what explorers serve as hex). */
     val serialized: ByteArray
 
-    /** `Coll[Byte]` register (e.g. dealId, pubkeys, packed R7, record id, R9 binding). */
+    /** `Coll[Byte]` register (e.g. dealId, pubkeys, oracleNftId, record id, R9 binding). */
     class CollBytes(
         val value: ByteArray,
         override val serialized: ByteArray = ErgoValues.serializedBytes(value),
     ) : ChainRegister
 
-    /** `Long` register (FUNDED R8 / PAYMENT_PROVEN R7 packed `(hi << 32) | lo`). */
+    /** `Long` register (FUNDED R8 timeoutHeight / PAYMENT_PROVEN R7 proofHeight). */
     class Int64(
         val value: Long,
         override val serialized: ByteArray = ErgoValues.serializedBytes(value),

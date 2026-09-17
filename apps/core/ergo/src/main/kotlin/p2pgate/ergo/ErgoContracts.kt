@@ -15,7 +15,7 @@ import sigma.ast.ErgoTree
  *
  * Constants mirror `VaultFixture` (the §7 matrix fixture): the PAYMENT_PROVEN
  * tree is compiled first (the FUNDED tree embeds its proposition bytes for the
- * path-B output check), `CLAIM_MATURATION_BLOCKS` comes from
+ * path-B output check), `CLAIM_MATURATION_BLOCKS` and `FEE_BPS` come from
  * [ContractParams], and `HANDOFF_RECORD_MAX_AGE_MS` is injected as a raw Long
  * literal. `TREASURY_SCRIPT_HASH` / `ORACLE_NFT_ID` are deployment parameters:
  * the defaults are the fixed dummies the fixture uses (see [DUMMY_ORACLE_NFT_ID]),
@@ -87,6 +87,7 @@ object ErgoContracts {
                 "ORACLE_NFT_ID" to ConstValue.Bytes(oracleNftId),
                 "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${handoffRecordMaxAgeMs}L"),
                 "CLAIM_MATURATION_BLOCKS" to ConstValue.IntNum(claimMaturationBlocks),
+                "FEE_BPS" to ConstValue.IntNum(ContractParams.PROTOCOL_FEE_BPS),
             ),
             networkPrefix = networkPrefix,
         )
@@ -96,6 +97,7 @@ object ErgoContracts {
                 "TREASURY_SCRIPT_HASH" to ConstValue.Bytes(treasuryScriptHash),
                 "PAYMENT_PROVEN_SCRIPT" to ConstValue.Bytes(provenTree.bytes()),
                 "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${handoffRecordMaxAgeMs}L"),
+                "FEE_BPS" to ConstValue.IntNum(ContractParams.PROTOCOL_FEE_BPS),
             ),
             networkPrefix = networkPrefix,
         )

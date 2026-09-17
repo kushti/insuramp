@@ -28,7 +28,7 @@ class VaultBoxTrackerSpec {
     private val now = fundedAt.plusSeconds(300)
 
     private val sellerTreeHex = ErgoValues.treeHex(ErgoValues.p2pkTree(f.sellerKeys.pubKeyCompressed))
-    private val userTreeHex = ErgoValues.treeHex(ErgoValues.p2pkTree(f.userKeys.pubKeyCompressed))
+    private val buyerTreeHex = ErgoValues.treeHex(ErgoValues.p2pkTree(f.buyerKeys.pubKeyCompressed))
     private val oracleNftHex = Base16.encode(f.trees.oracleNftId)
     private val timeoutHeight = ErgoTestFixtures.CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS
 
@@ -75,8 +75,8 @@ class VaultBoxTrackerSpec {
         registers = listOf(
             ChainRegister.CollBytes(terms.dealId),
             ChainRegister.CollBytes(f.sellerKeys.pubKeyCompressed),
-            ChainRegister.CollBytes(f.userKeys.pubKeyCompressed),
-            ChainRegister.Int64(f.packInts(1500, 0)),
+            ChainRegister.CollBytes(f.buyerKeys.pubKeyCompressed),
+            ChainRegister.Int64(1500L),
             ChainRegister.CollBytes(ByteArray(32) { 7 }),
             ChainRegister.CollBytes(f.fundingBinding()),
         ),
@@ -164,9 +164,9 @@ class VaultBoxTrackerSpec {
     }
 
     @Test
-    fun `spend paying the user yields ClaimPaid`() {
+    fun `spend paying the buyer yields ClaimPaid`() {
         val proven = f.provenChainBox(terms)
-        val (txId, spend) = spendOf(proven, 2000, listOf(payoutBox(userTreeHex, "c5".repeat(32))))
+        val (txId, spend) = spendOf(proven, 2000, listOf(payoutBox(buyerTreeHex, "c5".repeat(32))))
         val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(proven.copySpent(txId), spend), now)
         assertEquals(listOf(DealEvent.ClaimPaid), events)
     }
@@ -223,7 +223,7 @@ class VaultBoxTrackerSpec {
     }
 
     @Test
-    fun `dispute lifecycle pays the user end to end`() {
+    fun `dispute lifecycle pays the buyer end to end`() {
         val chain = FakeChain()
         val t = tracker(chain)
         chain.boxes[fundedBoxId] = fundedBox()
@@ -233,7 +233,7 @@ class VaultBoxTrackerSpec {
         machine = advanced(machine, DealEvent.CashCollected(fundedAt.plusSeconds(60), fundedAt.plusSeconds(60)))
         assertEquals(DealState.PAYMENT_PENDING, machine.state)
 
-        // User opens the claim: FUNDED box is spent into the PAYMENT_PROVEN box.
+        // Buyer opens the claim: FUNDED box is spent into the PAYMENT_PROVEN box.
         val (openTxId, openSpend) = spendOf(fundedBox(), 1500, listOf(provenSuccessorBox()))
         chain.boxes[fundedBoxId] = fundedBox(openTxId)
         chain.spends[openTxId] = openSpend
@@ -248,11 +248,11 @@ class VaultBoxTrackerSpec {
         )
         assertEquals(DealState.CLAIMABLE, machine.state)
 
-        // Path D spend pays the user.
+        // Path D spend pays the buyer.
         val proven = f.provenChainBox(terms, boxId = "dd".repeat(32), spentTxId = "b9".repeat(32))
         chain.boxes["dd".repeat(32)] = proven
         chain.spends["b9".repeat(32)] = ChainSpend(
-            "b9".repeat(32), 2000, listOf(payoutBox(userTreeHex, "c7".repeat(32))),
+            "b9".repeat(32), 2000, listOf(payoutBox(buyerTreeHex, "c7".repeat(32))),
         )
         val events = t.pollOnce("dd".repeat(32), now)
         machine = advanced(machine, events.single())

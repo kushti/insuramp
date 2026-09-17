@@ -32,7 +32,7 @@ data class CreateDealRequest(
     val quoteId: String,
     val amount: Long,
     val receiveAddress: String,
-    val userPubKey: String,
+    val buyerPubKey: String,
 )
 
 @Serializable
@@ -85,9 +85,10 @@ data class ChainBoxDto(
 )
 
 /**
- * Claim guide (POST /v1/deals/{id}/claim): everything the user app needs to
+ * Claim guide (POST /v1/deals/{id}/claim): everything the buyer app needs to
  * build and broadcast the on-chain path-B tx itself (`specs/android-app.md`
- * §4.3 — the backend never broadcasts the user's claim).
+ * §4.3 — the backend never broadcasts the buyer's claim). The record's signer
+ * is identified by the seller key already pinned in the vault (R5).
  */
 @Serializable
 data class ClaimGuideDto(
@@ -95,56 +96,20 @@ data class ClaimGuideDto(
     val state: String,
     val handoffRecordHex: String,
     val fundedBox: ChainBoxDto,
-    val courierPubKey: String,
-    val userPubKey: String,
+    val buyerPubKey: String,
     val instructions: List<String>,
 )
 
-@Serializable
-data class CourierJobDto(
-    val dealId: String,
-    val state: String,
-    val amount: Long,
-    val fiatAmount: Long,
-    val fiatCurrency: String,
-    val neighborhood: String,
-)
-
-@Serializable
-data class CourierKeyDto(val dealId: String, val courierId: String, val courierPubKey: String)
-
-@Serializable
-data class HandoffTemplateDto(
-    val dealId: String,
-    val magic: String,
-    val amount: Long,
-    val fiatCurrency: String,
-    val timestamp: Long,
-    val courierIdHash: String,
-    val qrPayloadPreview: String,
-)
-
+/**
+ * Handoff-record upload (POST /v1/deals/{id}/handoff): the buyer submits the
+ * seller-signed P2PH record obtained at the meeting; the signer is identified
+ * by the seller key pinned in the vault, so no extra credential is needed.
+ */
 @Serializable
 data class HandoffSubmitRequest(
     val recordHex: String,
     val gps: String? = null,
-    val overrideReason: String? = null,
 )
-
-@Serializable
-data class PanicRequest(val reason: String)
-
-@Serializable
-data class GeoConfirmRequest(val lat: Double, val lon: Double, val overrideReason: String? = null)
-
-@Serializable
-data class SyncItemDto(val dealId: String, val recordHex: String, val gps: String? = null)
-
-@Serializable
-data class CourierSyncRequest(val items: List<SyncItemDto>)
-
-@Serializable
-data class SyncResponse(val accepted: Int, val duplicates: Int, val rejected: Int)
 
 @Serializable
 data class LaneCardDto(

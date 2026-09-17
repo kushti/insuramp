@@ -60,9 +60,9 @@ class FastContractsSpec {
             provenBox = proven,
             feeInputs = listOf(f.feeChainBox()),
             currentHeight = proofHeight + ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS + 1, // 104
-            userPayoutAddress = f.p2pkAddress(f.userKeys.pubKeyCompressed),
+            buyerPayoutAddress = f.p2pkAddress(f.buyerKeys.pubKeyCompressed),
             changeAddress = f.dealKeysAddress,
-            signer = ErgoTestFixtures.ProverSigner(f.userKeys.secret, f.dealKeys.secret),
+            signer = ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret),
         )
         // The offline prover ran the fast compiled script: 104 > 100 + 3.
         assertTrue(signed.id.isNotBlank())
@@ -77,9 +77,9 @@ class FastContractsSpec {
                 provenBox = f.provenChainBox(terms, proofHeight = 100),
                 feeInputs = listOf(f.feeChainBox()),
                 currentHeight = 104, // canonical: needs > 100 + 360
-                userPayoutAddress = f.p2pkAddress(f.userKeys.pubKeyCompressed),
+                buyerPayoutAddress = f.p2pkAddress(f.buyerKeys.pubKeyCompressed),
                 changeAddress = f.dealKeysAddress,
-                signer = ErgoTestFixtures.ProverSigner(f.userKeys.secret, f.dealKeys.secret),
+                signer = ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret),
             )
         }
     }

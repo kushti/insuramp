@@ -93,7 +93,7 @@ class AmlSpec {
         quoteId = envQuoteId(),
         amount = Fx.AMOUNT,
         receiveAddress = Hex.encode(Fx.recipientRaw),
-        userPubKey = Hex.encode(Fx.user.pubKeyCompressed),
+        buyerPubKey = Hex.encode(Fx.buyer.pubKeyCompressed),
     )
 
     private fun envQuoteId() = "quote-1"

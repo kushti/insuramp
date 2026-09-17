@@ -37,9 +37,12 @@ data class BackendConfig(
     val webhookUrl: String? = null,
     /** Pre-mixed reserve balance (USDT base units) — the capacity base (§4). */
     val mixReadyCollateral: Long = 0,
-    /** Protocol fee in bps (25–100 in production; 0 in bootstrap). */
-    val feeBps: Int = 0,
-    val protocolFeeBps: Int = 25,
+    /**
+     * Protocol fee in bps quoted against the spread — the on-chain fee itself is
+     * a compile-time contract constant (`ContractParams.PROTOCOL_FEE_BPS`), not a
+     * runtime setting.
+     */
+    val protocolFeeBps: Int = p2pgate.contracts.ContractParams.PROTOCOL_FEE_BPS,
     val costFloorBps: Int = 0,
     val quoteTtl: Duration = QuotePublisher.DEFAULT_TTL,
     val quoteDefaultEtaMinutes: Int = 60,
@@ -50,25 +53,16 @@ data class BackendConfig(
     val pollDelayMs: Long = 30_000,
     /** The USE collateral token id (32-byte hex) for funded deals. */
     val collateralTokenIdHex: String = "",
-    /** M3 single-courier dispatch: the courier credential and its deal key. */
-    val courierId: String = "courier-dev-1",
-    val courierPubKeyHex: String = "",
 ) {
     init {
-        require(feeBps in 0..10_000) { "feeBps must be 0..10000, got $feeBps" }
         if (collateralTokenIdHex.isNotEmpty()) {
             require(Hex.decode(collateralTokenIdHex).size == 32) { "collateralTokenIdHex must be 32 bytes" }
-        }
-        if (courierPubKeyHex.isNotEmpty()) {
-            require(Hex.decode(courierPubKeyHex).size == DealTerms.PUBKEY_SIZE) {
-                "courierPubKeyHex must be a 33-byte compressed key"
-            }
         }
     }
 }
 
 sealed interface CreateDealOutcome {
-    data class Created(val deal: DealRecord, val dealToken: String, val courierToken: String) : CreateDealOutcome
+    data class Created(val deal: DealRecord, val dealToken: String) : CreateDealOutcome
     data class Rejected(val reason: String) : CreateDealOutcome
 }
 
@@ -98,7 +92,7 @@ class BackendApp(
     init {
         tokens.subscribeToClosures(bus)
         // §8 auto-pause: the moment verification degrades, the quote feed is
-        // withdrawn — users see no quotes, not stale ones.
+        // withdrawn — buyers see no quotes, not stale ones.
         bus.subscribe { e ->
             if (e is p2pgate.backend.bus.BackendEvent.PauseChanged && e.paused) {
                 quotes.withdraw("auto-pause: ${e.cause}", e.at)
@@ -122,7 +116,7 @@ class BackendApp(
      * Oracle polling: for deals with an attestation on file, applies
      * `PaymentConfirmed` (PAYMENT_PENDING → PAYMENT_CONFIRMED, or the
      * contested flag during a claim — never rejected) and follows
-     * confirmation with the automatic release (path C) without user action.
+     * confirmation with the automatic release (path C) without buyer action.
      * An unreachable oracle degrades the ORACLE_LAG signal and pauses new
      * business; in-flight deals are unaffected (§8).
      */
@@ -157,8 +151,7 @@ class BackendApp(
      * Deal creation at QUOTED (POST /v1/deals): validates the live quote and
      * amount, runs the AML pre-check on the declared receive address
      * (fail-closed: an unreachable scorer rejects the deal), builds the
-     * canonical terms, and mints the deal token + the dispatch-time courier
-     * token. A REJECT means no deal.
+     * canonical terms, and mints the deal token. A REJECT means no deal.
      */
     fun createDeal(request: CreateDealRequest, now: Instant = Instant.now()): CreateDealOutcome {
         val quote = quotes.active(now) ?: return CreateDealOutcome.Rejected("no active quote")
@@ -171,13 +164,13 @@ class BackendApp(
             return CreateDealOutcome.Rejected("receiveAddress is not valid hex")
         }
         if (recipient.isEmpty()) return CreateDealOutcome.Rejected("receiveAddress is empty")
-        val userPubKey = try {
-            Hex.decode(request.userPubKey)
+        val buyerPubKey = try {
+            Hex.decode(request.buyerPubKey)
         } catch (e: IllegalArgumentException) {
-            return CreateDealOutcome.Rejected("userPubKey is not valid hex")
+            return CreateDealOutcome.Rejected("buyerPubKey is not valid hex")
         }
-        if (userPubKey.size != DealTerms.PUBKEY_SIZE) {
-            return CreateDealOutcome.Rejected("userPubKey must be ${DealTerms.PUBKEY_SIZE} bytes")
+        if (buyerPubKey.size != DealTerms.PUBKEY_SIZE) {
+            return CreateDealOutcome.Rejected("buyerPubKey must be ${DealTerms.PUBKEY_SIZE} bytes")
         }
 
         val decision = try {
@@ -198,9 +191,8 @@ class BackendApp(
             amount = request.amount,
             fiatAmount = 0,         // fiat leg settles off-chain in M3
             fiatCurrency = "USD".toByteArray(),
-            userPubKey = userPubKey,
+            buyerPubKey = buyerPubKey,
             sellerPubKey = sellerPubKey,
-            courierPubKey = Hex.decode(config.courierPubKeyHex),
             quoteExpiry = now.plus(ProtocolConstants.RECLAIM_TIMEOUT).epochSecond.coerceIn(0, 0xFFFF_FFFFL),
         )
         val record = DealRecord(
@@ -213,20 +205,17 @@ class BackendApp(
             amount = terms.amount,
             fiatAmount = terms.fiatAmount,
             fiatCurrency = "USD",
-            userPubKeyHex = Hex.encode(userPubKey),
+            buyerPubKeyHex = Hex.encode(buyerPubKey),
             sellerPubKeyHex = Hex.encode(sellerPubKey),
-            courierPubKeyHex = config.courierPubKeyHex,
             recipientAddrHex = Hex.encode(recipient),
             collateralTokenIdHex = config.collateralTokenIdHex,
-            courierId = config.courierId,
             createdAt = now,
             amlRecords = listOf(AmlRecord(decision, riskScorer.scorerId, Hex.encode(recipient), now)),
         )
         return when (val r = engine.createDeal(record, now)) {
             is DealEngine.Result.Advanced -> {
                 val dealToken = tokens.mint(TokenService.Scope.DealToken(record.dealId))
-                val courierToken = tokens.mint(TokenService.Scope.CourierToken(record.dealId, config.courierId))
-                CreateDealOutcome.Created(record, dealToken, courierToken)
+                CreateDealOutcome.Created(record, dealToken)
             }
             is DealEngine.Result.Violation -> CreateDealOutcome.Rejected(r.reason)
             DealEngine.Result.Aborted -> CreateDealOutcome.Rejected("deal aborted")
@@ -256,11 +245,11 @@ class BackendApp(
             DealState.FUNDED ->
                 if (deal.handoffRecordHex != null) "none — handoff record on file, do not show timeout reclaim"
                 else "timeout reclaim (auto-job)"
-            DealState.PAYMENT_PENDING -> "none — reclaim from here is a theft path; the user's answer is the claim"
+            DealState.PAYMENT_PENDING -> "none — reclaim from here is a theft path; the buyer's answer is the claim"
             DealState.PAYMENT_CONFIRMED -> "automatic release via oracle digest; timeout reclaim as fallback"
             DealState.RELEASED -> "terminal — collateral returns to pool"
             DealState.RECLAIMED -> "terminal"
-            DealState.CLAIM_OPENED -> "contest (path C′), accept (loss), investigate (courier fraud)"
+            DealState.CLAIM_OPENED -> "contest (path C′), accept (loss), investigate (evidence review)"
             DealState.CLAIMABLE -> "last-chance contest only"
             DealState.CLAIMED -> "terminal — loss recorded"
         }

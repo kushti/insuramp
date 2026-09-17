@@ -20,7 +20,7 @@ sealed interface BackendEvent {
     data class DealTransitioned(val dealId: String, val from: DealState, val to: DealState, val at: Instant) :
         BackendEvent
 
-    /** QUOTED deal abandoned (quote expired / user ghosted) — no canonical state. */
+    /** QUOTED deal abandoned (quote expired / buyer ghosted) — no canonical state. */
     data class DealAbandoned(val dealId: String, val at: Instant) : BackendEvent
 
     /** An event the state machine rejected — logged as an invariant violation. */
@@ -38,12 +38,8 @@ sealed interface BackendEvent {
     /** A vault tx was built and handed to the [p2pgate.backend.vault.TxSubmitter]. */
     data class TxSubmitted(val kind: TxKind, val dealId: String, val txId: String, val at: Instant) : BackendEvent
 
-    /** Fail-loud escalation (§7) or courier panic button. */
+    /** Fail-loud escalation (§7). */
     data class Escalated(val dealId: String, val reason: String, val at: Instant) : BackendEvent
-    data class CourierPanicked(val dealId: String, val reason: String, val at: Instant) : BackendEvent
-
-    /** A courier credential was flagged (investigate action / manual revoke). */
-    data class CourierCredentialFlagged(val courierId: String, val at: Instant) : BackendEvent
 }
 
 /** Synchronous in-process pub/sub. Listeners are invoked in subscription order. */

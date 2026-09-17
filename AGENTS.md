@@ -13,7 +13,7 @@ The `contracts/` Gradle module is live: ErgoScript `.es` sources under
 state machine (`specs/deal-protocol.md` §1) with its transition-matrix test suite.
 `apps/core/ergo/` is live since 2026-09-16 (milestone M2, extended M3-A): the chain-interaction layer
 (`specs/android-app.md` §4) — `ChainSource` + explorer client, `VaultBoxTracker`
-(chain facts → `DealEvent`s), `ClaimTxBuilder` (the two user-side txs), `OperatorTxBuilder`
+(chain facts → `DealEvent`s), `ClaimTxBuilder` (the two buyer-side txs), `OperatorTxBuilder`
 (fund/reclaim/release/contest), `PaymentAttestation` (112-byte oracle payload), `DevOracle`
 + `OracleSigner` seam, `ErgoContracts` incl. `compileFast` variants. Every built tx is
 prover-verified against the compiled vault scripts. Pure Kotlin/JVM on ergo-appkit 6.0.1;
@@ -21,9 +21,10 @@ Android-injectable via interfaces.
 `backend/` is live since 2026-09-17 (milestone M3-B): the Ktor operator backend
 (`specs/operator-backend.md`) — deal engine (sole transition authority), chain watcher,
 vault manager (state-aware reclaim: FUNDED/PAYMENT_CONFIRMED only), quote publisher,
-courier/user/dashboard `/v1` APIs + WebSockets, dispute inbox, AML `RiskScorer` hook,
+buyer/dashboard `/v1` APIs + WebSockets, dispute inbox, AML `RiskScorer` hook,
 infra monitor + auto-pause. In-memory `DealStore` behind a JDBC-shaped interface
 (PostgreSQL impl is the documented follow-up); `TxSubmitter` seam for broadcast.
+The buyer-authed `POST /v1/deals/{id}/handoff` uploads the seller-signed handoff record.
 `e2e/` is live since 2026-09-17 (milestone M3-C): the end-to-end gate
 (`./gradlew :e2e:run`, `--dry-run` for a no-broadcast build against live chain) —
 funded operator (manual funding by default; testnet faucet via `E2E_FAUCET_URL`),
@@ -38,7 +39,7 @@ there is no `rosen/` directory: the docs cross-reference `rosen/deck.html` (a Ro
 pitch deck), but it lives outside this repo.
 
 **Implementation decisions (confirmed by the project owner, 2026-09):**
-- **Kotlin everywhere** — native Android apps (user + courier), Ktor operator backend,
+- **Kotlin everywhere** — native Android buyer app, Ktor operator backend,
   ErgoScript contracts compiled/tested via JVM tooling (ergo-appkit + sigmastate).
 - **Mainnet-first network defaults** — since 2026-09-17 every runnable module targets
   Ergo mainnet by default (`ExplorerChainSource` default base URL, `ErgoContracts.compile`/
@@ -56,11 +57,12 @@ Ergo blockchain. The core idea: the side of a crypto↔cash deal that acts last 
 collateral (USE stablecoin or Rosen-wrapped BTC) in an ErgoScript contract vault; the
 contract pays the collateral to whichever side presents cryptographic proof of the deal's
 outcome (Rosen oracle confirmation, trustless Bitcoin relay inclusion proof, Monero
-tx-key reveal, or the courier-signed handoff record proving cash collection). This
-substitutes for counterparty reputation. On-ramp: the user hands cash to the courier
-first and the seller sends USDT afterwards, so the seller locks the vault; the claim is
-gated on the courier-signed handoff record (deal-scoped courier key pinned in vault R7)
-and the release on the oracle's attestation **alone** — the phase-1 oracle is trusted,
+tx-key reveal, or the seller-signed handoff record proving cash collection). This
+substitutes for counterparty reputation. On-ramp: the buyer hands cash to the seller at
+an in-person meeting first and the seller sends USDT afterwards, so the seller locks the
+vault; the claim is gated on the seller-signed handoff record (the seller's R5 key, the
+same key that reclaims the collateral) and the release on the oracle's attestation
+**alone** — the phase-1 oracle is trusted,
 period, on the release path. The broader vision is Ergo as pillar 3 of
 "state-independent 21st century money": trust-minimized onramping.
 
@@ -70,9 +72,9 @@ period, on the release path. The broader vision is Ergo as pillar 3 of
 |---|---|
 | `pillars.md` | Top-level vision: four pillars of state-independent money (Ergo ledger/reserve → USE stablecoins → Rosen cross-chaining/onramp → Basis p2p cash issuance). Context for everything else. |
 | `onramp-insurance.md` | **Core design doc — read this first.** Vault contract skeleton, per-asset designs (USDT oracle-verified, BTC trustless via Bitcoin relay, XMR oracle-verified via tx-key reveal), trust-model comparison, limitations, sources. |
-| `onramp-ux.md` | Product design for all three sides of the marketplace: user app (mobile PWA), courier app, operator dashboard. Flow timings must stay consistent with the contract design (24h timeout, 12h claim maturation, ~6h BTC deadline). |
-| `onramp-business-model.md` | Protocol-layer economics: fee model (25–100 bps per deal), fee distribution, capital dynamics (protocol TVL ≈ outstanding deal volume; collateral availability is the binding constraint), volume scenarios, risks, bootstrapping sequence. |
-| `specs/` | Implementation specs (index: `specs/README.md`): vault contract, deal protocol, oracle integration, user app, courier app, operator backend. Canonical constants live in `specs/vault-contract.md` §2; canonical state names in `specs/deal-protocol.md` §1. |
+| `onramp-ux.md` | Product design for the two sides of the marketplace — buyer app (mobile PWA) and seller meeting flow — plus the operator dashboard. Flow timings must stay consistent with the contract design (24h timeout, 12h claim maturation, ~6h BTC deadline). |
+| `onramp-business-model.md` | Protocol-layer economics: fee model (25 bps, hardcoded in-contract), fee distribution, capital dynamics (protocol TVL ≈ outstanding deal volume; collateral availability is the binding constraint), volume scenarios, risks, bootstrapping sequence. |
+| `specs/` | Implementation specs (index: `specs/README.md`): vault contract, deal protocol, oracle integration, buyer app, operator backend. Canonical constants live in `specs/vault-contract.md` §2; canonical state names in `specs/deal-protocol.md` §1. |
 
 The docs form a strict reading order: `pillars.md` (why) → `onramp-insurance.md` (contracts
 and trust) → `onramp-ux.md` (product) → `onramp-business-model.md` (economics). Each file
@@ -103,13 +105,17 @@ has a "Cross-references" section linking the others.
 ## The contracts module (`contracts/`)
 
 Phase-1 vault contracts are implemented and tested here. **Scope note:** the `.es` sources
-implement the on-ramp reading of `specs/vault-contract.md` — the **v2 rework is in
-flight** (2026-09-13): R7 packs `oracleNftId || courierPubKey` (65 B — Ergo boxes have
-R4–R9 only, no R10; unchanged from the §8.3 revision), path B is gated on the
-courier-signed handoff record (a single Schnorr half under the R7-pinned courier key, no
+implement the on-ramp reading of `specs/vault-contract.md` — the **v2 rework has landed**
+(2026-09-13, and the two-role refactor followed on 2026-09-17: the old third-party cash-side role is
+gone, so the handoff record is seller-signed): vault R7 holds the bare 32-byte `oracleNftId` (the old
+65-byte two-key packing is gone; Ergo boxes have R4–R9 only, no R10), path B is gated on
+the seller-signed handoff record (a single Schnorr half under the R5 seller key, no
 oracle on the claim path), and paths C/C′ take the oracle box as a full input — the
 oracle's attestation alone releases the vault; there is no receipt signature anywhere in
-the protocol. The suite is the on-ramp matrix in `specs/vault-contract.md` §7.
+the protocol. The fee is a compile-time constant too (`ContractParams.PROTOCOL_FEE_BPS` = 25,
+substituted as `%%FEE_BPS%%`; 2026-09-17): FUNDED R8 is the plain `Long` `timeoutHeight`,
+PAYMENT_PROVEN R7 the plain `Long` `proofHeight`, and the treasury fee output is required on
+every collateral-moving path. The suite is the on-ramp matrix in `specs/vault-contract.md` §7.
 
 - **Layout:** ErgoScript sources in `contracts/src/main/ergoscript/` (`vault_funded.es`,
   `vault_payment_proven.es`, `oracle.es`) — shipped on the classpath as resources.
@@ -123,12 +129,12 @@ the protocol. The suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   `export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1 && ./gradlew :contracts:test`
   (optionally `--tests 'p2pgate.contracts.VaultContractSpec'`). Expected test counts:
   `VaultContractSpec` 49 (1 `@Disabled`: phase-2 GuardSign readiness, test 45) plus
-  `OracleContractSpec` 8; dealprotocol module: DealStateMachine 44, Messages 12,
-  QrPayload 11, DealTerms 23, Blake2b256 7 → 97; ergo module: ClaimTxBuilder 16,
-  CourierRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9, VaultBoxTracker 17
-  → 61; plus (M3-A/C): OperatorTxBuilder 20, PaymentAttestation 9, DevOracle 6,
-  FastContracts 4 → ergo 100; backend 90 (10 suites); e2e 10 (E2eFlow 5, E2eConfig 2,
-  SchnorrPort 3). Full gate:
+  `OracleContractSpec` 8 → contracts 57; dealprotocol module: DealStateMachine 44,
+  Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7 → 94; ergo module:
+  ClaimTxBuilder 16, HandoffRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9,
+  VaultBoxTracker 17 → 61; plus (M3-A/C): OperatorTxBuilder 20, PaymentAttestation 9,
+  DevOracle 6, FastContracts 4 → ergo 100; backend 87 (10 suites); e2e 10 (E2eFlow 5,
+  E2eConfig 2, SchnorrPort 3) → 348 total. Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test`.
 - **Before editing any `.es` file, read the "sigma-state 6 typing constraints" list in
   `specs/vault-contract.md` §5** — several natural ErgoScript constructs (tuple registers,
@@ -176,8 +182,9 @@ the protocol. The suite is the on-ramp matrix in `specs/vault-contract.md` §7.
 
 Agents should not weaken these positions when editing, as they are deliberate design choices:
 
-- The protocol never touches fiat and never custodies user funds; money-transmitter
-  obligations attach to operators' courier leg only (see `onramp-business-model.md` §7).
+- The protocol never touches fiat and never custodies buyer funds; money-transmitter
+  obligations attach to operators' in-person cash-collection leg only (see
+  `onramp-business-model.md` §7).
 - Vault collateral must be sellable in a dispute — DEX liquidity of USE/rsBTC caps deal
   size, not contract correctness.
 - Privacy design: mixer/stealth-address funding of vaults, deal-scoped signing keys,

@@ -15,7 +15,7 @@ class OracleContractSpec {
 
     @Test
     fun `1 rotation by oracle key preserving NFT and value passes`() {
-        val fx = VaultFixture(feeBps = 0)
+        val fx = VaultFixture()
         assertTrue(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,
@@ -29,7 +29,7 @@ class OracleContractSpec {
 
     @Test
     fun `2 rotation to a box with increased value passes`() {
-        val fx = VaultFixture(feeBps = 0)
+        val fx = VaultFixture()
         assertTrue(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,
@@ -43,7 +43,7 @@ class OracleContractSpec {
 
     @Test
     fun `3 spend by a key other than oracleKey fails`() {
-        val fx = VaultFixture(feeBps = 0)
+        val fx = VaultFixture()
         assertFalse(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,
@@ -57,7 +57,7 @@ class OracleContractSpec {
 
     @Test
     fun `4 spend without oracle signature fails`() {
-        val fx = VaultFixture(feeBps = 0)
+        val fx = VaultFixture()
         assertFalse(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,
@@ -70,7 +70,7 @@ class OracleContractSpec {
 
     @Test
     fun `5 rotation output missing the NFT fails`() {
-        val fx = VaultFixture(feeBps = 0)
+        val fx = VaultFixture()
         assertFalse(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,
@@ -89,7 +89,7 @@ class OracleContractSpec {
 
     @Test
     fun `6 rotation output carrying a different token id fails`() {
-        val fx = VaultFixture(feeBps = 0)
+        val fx = VaultFixture()
         assertFalse(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,
@@ -112,7 +112,7 @@ class OracleContractSpec {
         // The joint-spend shape pins the vault's seller payout at OUTPUTS(0) under the
         // old convention; v2 fixes the reproduction at OUTPUTS(0) instead (the vault
         // payout moved to OUTPUTS(1)), so this layout no longer verifies.
-        val fx = VaultFixture(feeBps = 0)
+        val fx = VaultFixture()
         assertFalse(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,
@@ -132,7 +132,7 @@ class OracleContractSpec {
 
     @Test
     fun `8 rotation draining value below SELF value fails`() {
-        val fx = VaultFixture(feeBps = 0)
+        val fx = VaultFixture()
         assertFalse(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,

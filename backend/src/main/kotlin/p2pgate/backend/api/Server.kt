@@ -115,11 +115,9 @@ private fun eventDto(e: BackendEvent): EventDto = when (e) {
     is BackendEvent.PauseChanged -> EventDto("pause.changed", null, if (e.paused) "paused: ${e.cause}" else "resumed", e.at.toEpochMilli())
     is BackendEvent.TxSubmitted -> EventDto("tx.submitted", e.dealId, "${e.kind} $e.txId", e.at.toEpochMilli())
     is BackendEvent.Escalated -> EventDto("escalated", e.dealId, e.reason, e.at.toEpochMilli())
-    is BackendEvent.CourierPanicked -> EventDto("courier.panicked", e.dealId, e.reason, e.at.toEpochMilli())
-    is BackendEvent.CourierCredentialFlagged -> EventDto("courier.flagged", null, e.courierId, e.at.toEpochMilli())
 }
 
-/** Result of applying one courier handoff record. */
+/** Result of applying one handoff record. */
 private enum class HandoffApply { APPLIED, DUPLICATE, REJECTED }
 
 /**
@@ -142,11 +140,11 @@ fun Application.module(app: BackendApp) {
         }
     }
 
-    val submitter = CourierOps(app)
+    val submitter = HandoffOps(app)
 
     routing {
         route("/v1") {
-            // ---------------------------------------------------------- user
+            // ---------------------------------------------------------- buyer
             get("/quotes") {
                 call.respond(QuoteFeedDto(app.quotes.active()?.let(::quoteDto)))
             }
@@ -252,10 +250,9 @@ fun Application.module(app: BackendApp) {
                             state = deal.state.name,
                             handoffRecordHex = record,
                             fundedBox = chainBoxDto(fundedBox),
-                            courierPubKey = deal.courierPubKeyHex,
-                            userPubKey = deal.userPubKeyHex,
+                            buyerPubKey = deal.buyerPubKeyHex,
                             instructions = listOf(
-                                "Build the path-B claim tx with ClaimTxBuilder (user side, specs/android-app.md §4.3).",
+                                "Build the path-B claim tx with ClaimTxBuilder (buyer side, specs/android-app.md §4.3).",
                                 "Spend the funded vault box carrying the handoff record; the tx re-creates it under vault_payment_proven.es.",
                                 "Broadcast it yourself — the backend observes the claim on-chain and opens the dispute timer.",
                                 "After CLAIM_MATURATION (${ProtocolConstants.CLAIM_MATURATION.toHours()}h) with no seller contest, path D pays you the collateral minus fee.",
@@ -263,87 +260,19 @@ fun Application.module(app: BackendApp) {
                         ),
                     )
                 }
-            }
-
-            // -------------------------------------------------------- courier
-            route("/courier") {
-                get("/jobs") {
-                    val courierId = call.authenticateCourierAny(app) ?: return@get
-                    val jobs = app.store.openDeals()
-                        .filter { it.courierId == courierId }
-                        .map {
-                            CourierJobDto(it.dealId, it.state.name, it.amount, it.fiatAmount, it.fiatCurrency, "")
-                        }
-                    call.respond(jobs)
-                }
-                post("/sync") {
-                    val courierId = call.authenticateCourierAny(app) ?: return@post
-                    val request = call.receive<CourierSyncRequest>()
-                    var accepted = 0
-                    var duplicates = 0
-                    var rejected = 0
-                    for (item in request.items) {
-                        when (submitter.applyHandoff(item.dealId, item.recordHex, item.gps, courierId)) {
-                            HandoffApply.APPLIED -> accepted++
-                            HandoffApply.DUPLICATE -> duplicates++
-                            HandoffApply.REJECTED -> rejected++
-                        }
+                post("/handoff") {
+                    val id = call.dealId()
+                    val token = call.bearer() ?: return@post call.respond(HttpStatusCode.Unauthorized, ErrorDto("missing bearer token"))
+                    if (!app.tokens.verifyDeal(token, id)) {
+                        return@post call.respond(HttpStatusCode.Forbidden, ErrorDto("invalid deal token"))
                     }
-                    call.respond(SyncResponse(accepted, duplicates, rejected))
-                }
-                route("/jobs/{dealId}") {
-                    get("/key") {
-                        val (deal, _) = call.authenticateCourierDeal(app) ?: return@get
-                        call.respond(CourierKeyDto(deal.dealId, deal.courierId, deal.courierPubKeyHex))
-                    }
-                    get("/handoff") {
-                        val (deal, _) = call.authenticateCourierDeal(app) ?: return@get
-                        val timestamp = Instant.now().epochSecond.coerceIn(0, 0xFFFF_FFFFL)
-                        val template = HandoffRecord(
-                            dealId = deal.terms().dealId,
-                            amount = deal.fiatAmount,
-                            fiatCurrency = deal.fiatCurrency.toByteArray(Charsets.US_ASCII),
-                            timestamp = timestamp,
-                            courierIdHash = HandoffRecord.courierIdHash(deal.courierId.encodeToByteArray()),
-                        )
-                        call.respond(
-                            HandoffTemplateDto(
-                                dealId = deal.dealId,
-                                magic = "P2PH",
-                                amount = template.amount,
-                                fiatCurrency = deal.fiatCurrency,
-                                timestamp = timestamp,
-                                courierIdHash = Hex.encode(template.courierIdHash),
-                                qrPayloadPreview = Hex.encode(template.encode()),
-                            ),
-                        )
-                    }
-                    post("/handoff") {
-                        val (deal, courierId) = call.authenticateCourierDeal(app) ?: return@post
-                        val request = call.receive<HandoffSubmitRequest>()
-                        when (submitter.applyHandoff(deal.dealId, request.recordHex, request.gps, courierId)) {
-                            HandoffApply.APPLIED -> call.respond(HttpStatusCode.OK, ErrorDto("handoff recorded"))
-                            HandoffApply.DUPLICATE -> call.respond(HttpStatusCode.OK, ErrorDto("handoff already on file"))
-                            HandoffApply.REJECTED ->
-                                call.respond(HttpStatusCode.UnprocessableEntity, ErrorDto("handoff record rejected"))
-                        }
-                    }
-                    post("/panic") {
-                        val (deal, _) = call.authenticateCourierDeal(app) ?: return@post
-                        val request = call.receive<PanicRequest>()
-                        app.store.updateDeal(deal.dealId) { it.copy(panicFlag = true) }
-                        val now = Instant.now()
-                        app.bus.publish(BackendEvent.CourierPanicked(deal.dealId, request.reason, now))
-                        app.bus.publish(BackendEvent.Escalated(deal.dealId, "courier panic: ${request.reason}", now))
-                        call.respond(HttpStatusCode.OK, ErrorDto("panic recorded — operator paged"))
-                    }
-                    post("/geo-confirm") {
-                        val (deal, _) = call.authenticateCourierDeal(app) ?: return@post
-                        val request = call.receive<GeoConfirmRequest>()
-                        val ref = "${request.lat},${request.lon}" +
-                            (request.overrideReason?.let { "|override:$it" } ?: "")
-                        app.store.updateDeal(deal.dealId) { it.copy(handoffGpsRef = ref) }
-                        call.respond(HttpStatusCode.OK, ErrorDto("geo confirmation recorded"))
+                    app.store.getDeal(id) ?: return@post call.respond(HttpStatusCode.NotFound, ErrorDto("unknown deal"))
+                    val request = call.receive<HandoffSubmitRequest>()
+                    when (submitter.applyHandoff(id, request.recordHex, request.gps)) {
+                        HandoffApply.APPLIED -> call.respond(HttpStatusCode.OK, ErrorDto("handoff recorded"))
+                        HandoffApply.DUPLICATE -> call.respond(HttpStatusCode.OK, ErrorDto("handoff already on file"))
+                        HandoffApply.REJECTED ->
+                            call.respond(HttpStatusCode.UnprocessableEntity, ErrorDto("handoff record rejected"))
                     }
                 }
             }
@@ -429,13 +358,6 @@ fun Application.module(app: BackendApp) {
                         call.respond(HttpStatusCode.Conflict, ErrorDto(outcome.reason))
                 }
             }
-            post("/couriers/{id}/revoke") {
-                call.authenticateOperator(app) ?: return@post
-                val courierId = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("missing courier id"))
-                app.store.flagCourier(courierId)
-                app.bus.publish(BackendEvent.CourierCredentialFlagged(courierId, Instant.now()))
-                call.respond(HttpStatusCode.OK, ErrorDto("courier credential revoked"))
-            }
             get("/infra") {
                 call.authenticateOperator(app) ?: return@get
                 call.respond(
@@ -470,14 +392,13 @@ fun Application.module(app: BackendApp) {
     }
 }
 
-/** Courier-side handoff application (shared by POST handoff and the offline sync endpoint). */
-private class CourierOps(private val app: BackendApp) {
+/** Buyer-side handoff-record application (POST /v1/deals/{id}/handoff). */
+private class HandoffOps(private val app: BackendApp) {
     private fun skewOk(record: HandoffRecord, now: Instant): Boolean =
-        Duration.between(Instant.ofEpochSecond(record.timestamp), now).abs() <= ProtocolConstants.COURIER_CLOCK_SKEW
+        Duration.between(Instant.ofEpochSecond(record.timestamp), now).abs() <= ProtocolConstants.HANDOFF_CLOCK_SKEW
 
-    fun applyHandoff(dealId: String, recordHex: String, gps: String?, courierId: String): HandoffApply {
+    fun applyHandoff(dealId: String, recordHex: String, gps: String?): HandoffApply {
         val deal = app.store.getDeal(dealId) ?: return HandoffApply.REJECTED
-        if (deal.courierId != courierId) return HandoffApply.REJECTED
         if (deal.handoffRecordHex == recordHex) return HandoffApply.DUPLICATE
         val record = try {
             HandoffRecord.decode(Hex.decode(recordHex))
@@ -514,40 +435,6 @@ private suspend fun ApplicationCall.authenticateOperator(app: BackendApp): Unit?
     )
     return if (ok) Unit else {
         respond(HttpStatusCode.Unauthorized, ErrorDto("invalid operator key"))
-        null
-    }
-}
-
-/** Courier auth for the job-list endpoints: any valid courier token identifies the courier. */
-private suspend fun ApplicationCall.authenticateCourierAny(app: BackendApp): String? {
-    val token = bearer() ?: run {
-        respond(HttpStatusCode.Unauthorized, ErrorDto("missing bearer token"))
-        return null
-    }
-    val entry = app.store.allDeals().firstOrNull { d -> app.tokens.verifyCourier(token, d.dealId, d.courierId) }
-    return if (entry == null) {
-        respond(HttpStatusCode.Forbidden, ErrorDto("invalid courier token"))
-        null
-    } else {
-        entry.courierId
-    }
-}
-
-/** Courier auth for deal-scoped endpoints: the token must belong to this deal's courier. */
-private suspend fun ApplicationCall.authenticateCourierDeal(app: BackendApp): Pair<DealRecord, String>? {
-    val id = dealId()
-    val token = bearer() ?: run {
-        respond(HttpStatusCode.Unauthorized, ErrorDto("missing bearer token"))
-        return null
-    }
-    val deal = app.store.getDeal(id) ?: run {
-        respond(HttpStatusCode.NotFound, ErrorDto("unknown deal"))
-        return null
-    }
-    return if (app.tokens.verifyCourier(token, id, deal.courierId)) {
-        Pair(deal, deal.courierId)
-    } else {
-        respond(HttpStatusCode.Forbidden, ErrorDto("invalid courier token"))
         null
     }
 }
@@ -613,11 +500,8 @@ fun Application.module() {
         webhookUrl = env("P2P_ESCALATION_WEBHOOK") ?: backend.tryGetString("webhook-url"),
         mixReadyCollateral = env("P2P_MIX_READY")?.toLongOrNull()
             ?: backend.tryGetString("mix-ready")?.toLongOrNull() ?: 0,
-        feeBps = env("P2P_FEE_BPS")?.toIntOrNull() ?: backend.tryGetString("fee-bps")?.toIntOrNull() ?: 0,
         collateralTokenIdHex = env("P2P_COLLATERAL_TOKEN_ID")
             ?: backend.tryGetString("collateral-token-id") ?: "",
-        courierId = env("P2P_COURIER_ID") ?: backend.tryGetString("courier-id") ?: "courier-dev-1",
-        courierPubKeyHex = env("P2P_COURIER_PUBKEY") ?: backend.tryGetString("courier-pubkey") ?: "",
         pollDelayMs = env("P2P_POLL_DELAY_MS")?.toLongOrNull()
             ?: backend.tryGetString("poll-delay-ms")?.toLongOrNull() ?: 30_000,
     )
@@ -640,7 +524,6 @@ fun Application.module() {
         infra = infra,
         oracle = oracle,
         riskScorer = riskScorer,
-        feeBps = config.feeBps,
         reclaimTimeoutBlocks = config.reclaimTimeoutBlocks,
     )
     val watcher = ChainWatcher(chain, trees, engine, store)

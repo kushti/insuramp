@@ -92,7 +92,6 @@ class OperatorTxBuilderSpec {
             recipientAddr = f.recipientRaw,
             collateralTokenId = Base16.decode(f.useTokenIdHex),
             timeoutHeight = f.CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS,
-            feeBps = 25,
             fundingInputs = listOf(f.fundingChainBox()),
             currentHeight = f.CREATION_HEIGHT,
             changeAddress = f.p2pkAddress(f.sellerKeys.pubKeyCompressed),
@@ -110,11 +109,11 @@ class OperatorTxBuilderSpec {
 
         assertTrue(outBytes(out, 4).contentEquals(terms.dealId))
         assertTrue(outBytes(out, 5).contentEquals(f.sellerKeys.pubKeyCompressed))
-        assertTrue(outBytes(out, 6).contentEquals(f.userKeys.pubKeyCompressed))
-        assertTrue(outBytes(out, 7).contentEquals(f.trees.oracleNftId + f.courierKeys.pubKeyCompressed))
+        assertTrue(outBytes(out, 6).contentEquals(f.buyerKeys.pubKeyCompressed))
+        assertTrue(outBytes(out, 7).contentEquals(f.trees.oracleNftId))
         assertEquals(
-            f.packInts(f.CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS, 25),
-            outLong(out, 8), // (timeoutHeight << 32) | feeBps
+            (f.CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS).toLong(),
+            outLong(out, 8), // plain Long timeoutHeight
         )
         assertTrue(outBytes(out, 9).contentEquals(f.fundingBinding()))
     }
@@ -128,7 +127,6 @@ class OperatorTxBuilderSpec {
             recipientAddr = f.recipientRaw,
             collateralTokenId = Base16.decode(f.useTokenIdHex),
             timeoutHeight = 2000,
-            feeBps = 0,
             fundingInputs = listOf(f.fundingChainBox(tokens = listOf(ChainToken(f.useTokenIdHex, f.DEAL_AMOUNT + 100_000_000L)))),
             currentHeight = f.CREATION_HEIGHT,
             changeAddress = f.p2pkAddress(f.sellerKeys.pubKeyCompressed),
@@ -154,7 +152,6 @@ class OperatorTxBuilderSpec {
                 recipientAddr = f.recipientRaw,
                 collateralTokenId = Base16.decode(f.useTokenIdHex),
                 timeoutHeight = 2000,
-                feeBps = 0,
                 fundingInputs = listOf(f.fundingChainBox(tokens = listOf(ChainToken(f.useTokenIdHex, f.DEAL_AMOUNT - 1)))),
                 currentHeight = f.CREATION_HEIGHT,
                 changeAddress = f.p2pkAddress(f.sellerKeys.pubKeyCompressed),
@@ -173,7 +170,6 @@ class OperatorTxBuilderSpec {
                 recipientAddr = recipient,
                 collateralTokenId = Base16.decode(f.useTokenIdHex),
                 timeoutHeight = timeout,
-                feeBps = 0,
                 fundingInputs = listOf(f.fundingChainBox()),
                 currentHeight = f.CREATION_HEIGHT,
                 changeAddress = f.p2pkAddress(f.sellerKeys.pubKeyCompressed),
@@ -193,7 +189,7 @@ class OperatorTxBuilderSpec {
             ErgoTestFixtures.ProverSigner(f.sellerKeys.secret, f.dealKeys.secret),
         )
         builder.buildReclaim(
-            fundedBox = f.fundedChainBox(terms, feeBps = 25, timeoutHeight = 1500),
+            fundedBox = f.fundedChainBox(terms, timeoutHeight = 1500),
             feeInputs = listOf(f.feeChainBox()),
             currentHeight = 1501,
             changeAddress = f.dealKeysAddress,
@@ -201,7 +197,7 @@ class OperatorTxBuilderSpec {
         )
         val tx = signer.lastUnsigned!!
         val sellerOut = tx.outputs[0] as OutBoxImpl
-        val fee = f.DEAL_AMOUNT * 25 / ContractParams.FEE_DENOMINATOR
+        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
         assertEquals(f.DEAL_AMOUNT - fee, sellerOut.tokens[0].value)
         assertEquals(f.useTokenIdHex, Base16.encode(sellerOut.tokens[0].id.getBytes()))
         assertEquals(
@@ -219,21 +215,31 @@ class OperatorTxBuilderSpec {
     }
 
     @Test
-    fun `reclaim with feeBps 0 pays the seller everything and needs no fee output`() {
+    fun `reclaim rounds the protocol fee down`() {
+        // The §6 formula rounds down: a collateral of DEAL_AMOUNT + 1 yields the
+        // same fee as DEAL_AMOUNT (1_250_000 at 25 bps), the seller takes the odd
+        // unit, and the prover still verifies against the always-fee contract.
         val terms = f.dealTerms()
         val signer = ErgoTestFixtures.RecordingSigner(
             ErgoTestFixtures.ProverSigner(f.sellerKeys.secret, f.dealKeys.secret),
         )
+        val collateral = f.DEAL_AMOUNT + 1
         builder.buildReclaim(
-            fundedBox = f.fundedChainBox(terms, feeBps = 0, timeoutHeight = 1500),
+            fundedBox = f.fundedChainBox(
+                terms,
+                timeoutHeight = 1500,
+                tokens = listOf(ChainToken(f.useTokenIdHex, collateral)),
+            ),
             feeInputs = listOf(f.feeChainBox()),
             currentHeight = 1501,
             changeAddress = f.dealKeysAddress,
             signer = signer,
         )
         val tx = signer.lastUnsigned!!
-        assertEquals(f.DEAL_AMOUNT, tx.outputs[0].tokens[0].value)
-        assertEquals(2, tx.outputs.size) // seller + change only
+        val fee = collateral * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
+        assertEquals(1_250_000L, fee)
+        assertEquals(collateral - fee, tx.outputs[0].tokens[0].value)
+        assertEquals(fee, tx.outputs[1].tokens[0].value)
     }
 
     @Test
@@ -268,12 +274,11 @@ class OperatorTxBuilderSpec {
 
     private fun releaseTx(
         terms: p2pgate.dealprotocol.DealTerms,
-        feeBps: Int = 0,
         attestation: PaymentAttestation,
         oracleSigner: OracleSigner = oracle.signer(),
         currentHeight: Int = 1500,
     ): SignedTransaction = builder.buildRelease(
-        fundedBox = f.fundedChainBox(terms, feeBps = feeBps),
+        fundedBox = f.fundedChainBox(terms),
         oracle = oracleSigner,
         attestation = attestation,
         feeInputs = listOf(oracle.feeInputBox()),
@@ -304,13 +309,19 @@ class OperatorTxBuilderSpec {
         assertEquals(ErgoValues.treeHex(oracle.tree), ErgoValues.treeHex(repro.ergoTree))
         assertEquals(oracle.boxValueNanoErg, repro.value)
 
-        // OUTPUTS(1): seller paid collateral (feeBps 0) at the R5 seller key.
+        // OUTPUTS(1): seller paid collateral minus the protocol fee (always
+        // charged — a compile-time constant) at the R5 seller key.
         val sellerOut = tx.outputs[1] as OutBoxImpl
-        assertEquals(f.DEAL_AMOUNT, sellerOut.tokens[0].value)
+        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
+        assertEquals(f.DEAL_AMOUNT - fee, sellerOut.tokens[0].value)
         assertEquals(
             ErgoValues.treeHex(ErgoValues.p2pkTree(f.sellerKeys.pubKeyCompressed)),
             ErgoValues.treeHex(sellerOut.ergoTree),
         )
+        // OUTPUTS(2): the treasury fee output.
+        val feeOut = tx.outputs[2] as OutBoxImpl
+        assertEquals(fee, feeOut.tokens[0].value)
+        assertEquals(f.treasuryTree.bytesHex(), feeOut.ergoTree.bytesHex())
 
         // Token conservation: USE split seller(+fee) exactly, NFT into the recreation.
         val inTokens = tx.inputs.flatMap { it.tokens }.groupBy { Base16.encode(it.id.getBytes()) }.mapValues { e -> e.value.sumOf { it.value } }
@@ -322,9 +333,9 @@ class OperatorTxBuilderSpec {
     fun `release deducts the protocol fee into the treasury output`() {
         val terms = f.dealTerms()
         val recording = RecordingOracleSigner(oracle.signer())
-        releaseTx(terms, feeBps = 25, attestation = honestAttestation(terms), oracleSigner = recording)
+        releaseTx(terms, attestation = honestAttestation(terms), oracleSigner = recording)
         val tx = recording.lastUnsigned!!
-        val fee = f.DEAL_AMOUNT * 25 / ContractParams.FEE_DENOMINATOR
+        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
         // OUTPUTS(0) is the oracle reproduction; seller payout at OUTPUTS(1),
         // treasury fee output at OUTPUTS(2).
         val sellerOut = tx.outputs[1] as OutBoxImpl
@@ -428,9 +439,9 @@ class OperatorTxBuilderSpec {
     fun `contest counters a real claim-open with the oracle digest alone`() {
         val terms = f.dealTerms()
 
-        // 1) The user opens a claim on the FUNDED box (ClaimTxBuilder, path B).
+        // 1) The buyer opens a claim on the FUNDED box (ClaimTxBuilder, path B).
         val record = f.handoffRecord(terms)
-        val sig = f.courierSign(record)
+        val sig = f.sellerSign(record)
         claimBuilder.buildClaimOpen(
             fundedBox = f.fundedChainBox(terms),
             feeInputs = listOf(f.feeChainBox()),
@@ -463,9 +474,11 @@ class OperatorTxBuilderSpec {
 
         val tx = recording.lastUnsigned!!
         assertTrue(contextVarBytes(tx, 0).contentEquals(honestAttestation(terms).encode()))
-        // OUTPUTS(0) is the oracle reproduction; seller payout at OUTPUTS(1).
+        // OUTPUTS(0) is the oracle reproduction; seller payout at OUTPUTS(1),
+        // collateral minus the always-on protocol fee.
         val sellerOut = tx.outputs[1] as OutBoxImpl
-        assertEquals(f.DEAL_AMOUNT, sellerOut.tokens[0].value)
+        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
+        assertEquals(f.DEAL_AMOUNT - fee, sellerOut.tokens[0].value)
         assertEquals(
             ErgoValues.treeHex(ErgoValues.p2pkTree(f.sellerKeys.pubKeyCompressed)),
             ErgoValues.treeHex(sellerOut.ergoTree),

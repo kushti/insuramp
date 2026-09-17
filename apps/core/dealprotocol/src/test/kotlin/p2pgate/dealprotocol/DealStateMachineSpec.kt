@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 
 /**
  * Transition matrix for the on-ramp deal state machine, `specs/deal-protocol.md` §1 + §4
- * (v2: single courier-signed handoff record, oracle-only release, 12h maturation).
+ * (v2: single seller-signed handoff record, oracle-only release, 12h maturation).
  * Covers: happy path, no-show reclaim, paid-and-ghosted reclaim, the claim branch from
  * PAYMENT_PENDING (seller never paid) and without-cause claims, the oracle-signal contest
  * of an open claim (path C′ counter), release from PAYMENT_PENDING (on-chain attestation
@@ -40,7 +40,7 @@ class DealStateMachineSpec {
     private fun funded(at: Instant = t0) = advanced(DealStateMachine.initial(), DealEvent.VaultFunded(at))
     private fun cashCollected(at: Instant = t0, confirmedAt: Instant = at) = advanced(
         funded(at),
-        DealEvent.CashCollected(courierTimestamp = at, confirmedAt = confirmedAt),
+        DealEvent.CashCollected(recordTimestamp = at, confirmedAt = confirmedAt),
     )
     private fun paymentConfirmed(at: Instant = t0) = advanced(cashCollected(at), DealEvent.PaymentConfirmed)
 
@@ -292,13 +292,13 @@ class DealStateMachineSpec {
     }
 
     @Test
-    fun `user no-show - reclaim from FUNDED`() {
+    fun `buyer no-show - reclaim from FUNDED`() {
         val m = advanced(funded(t0), DealEvent.ReclaimTimeoutElapsed(t0.plus(day).plus(seconds(3600))))
         assertEquals(DealState.RECLAIMED, m.state)
     }
 
     @Test
-    fun `seller paid and user ghosted - reclaim from PAYMENT_CONFIRMED harms no one`() {
+    fun `seller paid and buyer ghosted - reclaim from PAYMENT_CONFIRMED harms no one`() {
         val m = advanced(paymentConfirmed(t0), DealEvent.ReclaimTimeoutElapsed(t0.plus(day)))
         assertEquals(DealState.RECLAIMED, m.state)
     }
@@ -414,21 +414,21 @@ class DealStateMachineSpec {
     // ---------- freshness guards ----------
 
     @Test
-    fun `courier clock skew beyond 10 minutes is rejected at cash collection`() {
-        val skew = ProtocolConstants.COURIER_CLOCK_SKEW
+    fun `handoff record clock skew beyond 10 minutes is rejected at cash collection`() {
+        val skew = ProtocolConstants.HANDOFF_CLOCK_SKEW
         val reason = invalid(
             funded(t0),
-            DealEvent.CashCollected(courierTimestamp = t0.minus(skew).minus(seconds(1)), confirmedAt = t0),
+            DealEvent.CashCollected(recordTimestamp = t0.minus(skew).minus(seconds(1)), confirmedAt = t0),
         )
         assertTrue(reason.contains("clock"), reason)
     }
 
     @Test
     fun `clock skew boundary exactly at 10 minutes passes`() {
-        val skew = ProtocolConstants.COURIER_CLOCK_SKEW
+        val skew = ProtocolConstants.HANDOFF_CLOCK_SKEW
         val collected = advanced(
             funded(t0),
-            DealEvent.CashCollected(courierTimestamp = t0.minus(skew), confirmedAt = t0),
+            DealEvent.CashCollected(recordTimestamp = t0.minus(skew), confirmedAt = t0),
         )
         assertEquals(DealState.PAYMENT_PENDING, collected.state)
     }

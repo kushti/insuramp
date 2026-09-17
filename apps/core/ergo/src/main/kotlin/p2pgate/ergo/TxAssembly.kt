@@ -148,9 +148,6 @@ internal object TxAssembly {
         ErgoBridge.regs(registers),
     )
 
-    /** sigma 6 stores tuple registers as Coll, so the contracts pack two ints as (hi << 32) | lo. */
-    fun packInts(hi: Int, lo: Int): Long = hi.toLong() * 4294967296L + lo
-
     /** Minimal state context: only the preheader is real (offline building). */
     private class OfflineStateContext(private val preHeader: sigma.PreHeader) : BlockchainStateContext() {
         override fun sigmaPreHeader(): sigma.PreHeader = preHeader

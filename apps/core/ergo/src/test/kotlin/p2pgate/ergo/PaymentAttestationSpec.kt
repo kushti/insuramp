@@ -205,9 +205,8 @@ class PaymentAttestationSpec {
         amount = amount,
         fiatAmount = fiatAmount,
         fiatCurrency = currency.toByteArray(),
-        userPubKey = userPubKey.copyOf(),
+        buyerPubKey = buyerPubKey.copyOf(),
         sellerPubKey = sellerPubKey.copyOf(),
-        courierPubKey = courierPubKey.copyOf(),
         quoteExpiry = quoteExpiry,
     )
 }

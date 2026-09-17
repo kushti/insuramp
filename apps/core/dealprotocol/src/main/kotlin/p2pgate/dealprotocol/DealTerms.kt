@@ -3,12 +3,12 @@ package p2pgate.dealprotocol
 /**
  * Deal terms serialization, `specs/deal-protocol.md` §3.1 — the canonical
  * big-endian layout agreed at QUOTED. `dealId = blake2b256(encode())` binds
- * amount, asset, chain, and all three keys; the vault's R4 stores it and
+ * amount, asset, chain, and both keys; the vault's R4 stores it and
  * every proof references it, so no proof is replayable across deals.
  *
- * Layout (141 bytes): version(1) dealNonce(16) asset(1) srcChainId(1)
- * amount(8) fiatAmount(8) fiatCurrency(3) userPubKey(33) sellerPubKey(33)
- * courierPubKey(33) quoteExpiry(4).
+ * Layout (108 bytes): version(1) dealNonce(16) asset(1) srcChainId(1)
+ * amount(8) fiatAmount(8) fiatCurrency(3) buyerPubKey(33) sellerPubKey(33)
+ * quoteExpiry(4).
  *
  * `asset` / `srcChainId` are carried as raw wire ids: the known ids are
  * enumerated in [DealAsset] / [SourceChainId], unknown non-zero ids are
@@ -25,9 +25,8 @@ class DealTerms(
     val amount: Long,
     val fiatAmount: Long,
     val fiatCurrency: ByteArray,
-    val userPubKey: ByteArray,
+    val buyerPubKey: ByteArray,
     val sellerPubKey: ByteArray,
-    val courierPubKey: ByteArray,
     val quoteExpiry: Long,
 ) {
 
@@ -52,10 +51,9 @@ class DealTerms(
         putU64(out, 19, amount)
         putU64(out, 27, fiatAmount)
         fiatCurrency.copyInto(out, 35)
-        userPubKey.copyInto(out, 38)
+        buyerPubKey.copyInto(out, 38)
         sellerPubKey.copyInto(out, 71)
-        courierPubKey.copyInto(out, 104)
-        putU32(out, 137, quoteExpiry)
+        putU32(out, 104, quoteExpiry)
         return out
     }
 
@@ -66,9 +64,8 @@ class DealTerms(
         require(amount >= 0) { "amount must be a uint64 (non-negative), got $amount" }
         require(fiatAmount >= 0) { "fiatAmount must be a uint64 (non-negative), got $fiatAmount" }
         require(iso4217(fiatCurrency)) { "fiatCurrency must be 3 uppercase ASCII letters (ISO-4217)" }
-        requireCompressedKey(userPubKey, "userPubKey")
+        requireCompressedKey(buyerPubKey, "buyerPubKey")
         requireCompressedKey(sellerPubKey, "sellerPubKey")
-        requireCompressedKey(courierPubKey, "courierPubKey")
         require(quoteExpiry >= 0 && quoteExpiry <= 0xFFFF_FFFFL) {
             "quoteExpiry must be a uint32, got $quoteExpiry"
         }
@@ -82,9 +79,8 @@ class DealTerms(
             amount == other.amount &&
             fiatAmount == other.fiatAmount &&
             fiatCurrency.contentEquals(other.fiatCurrency) &&
-            userPubKey.contentEquals(other.userPubKey) &&
+            buyerPubKey.contentEquals(other.buyerPubKey) &&
             sellerPubKey.contentEquals(other.sellerPubKey) &&
-            courierPubKey.contentEquals(other.courierPubKey) &&
             quoteExpiry == other.quoteExpiry
 
     override fun hashCode(): Int {
@@ -94,9 +90,8 @@ class DealTerms(
         result = 31 * result + amount.hashCode()
         result = 31 * result + fiatAmount.hashCode()
         result = 31 * result + fiatCurrency.contentHashCode()
-        result = 31 * result + userPubKey.contentHashCode()
+        result = 31 * result + buyerPubKey.contentHashCode()
         result = 31 * result + sellerPubKey.contentHashCode()
-        result = 31 * result + courierPubKey.contentHashCode()
         result = 31 * result + quoteExpiry.hashCode()
         return result
     }
@@ -107,7 +102,7 @@ class DealTerms(
 
     companion object {
         const val VERSION: Int = 1
-        const val ENCODED_SIZE: Int = 141
+        const val ENCODED_SIZE: Int = 108
         const val NONCE_SIZE: Int = 16
         const val PUBKEY_SIZE: Int = 33
         const val CURRENCY_SIZE: Int = 3
@@ -126,10 +121,9 @@ class DealTerms(
                 amount = u64(bytes, 19),
                 fiatAmount = u64(bytes, 27),
                 fiatCurrency = bytes.copyOfRange(35, 38),
-                userPubKey = bytes.copyOfRange(38, 71),
+                buyerPubKey = bytes.copyOfRange(38, 71),
                 sellerPubKey = bytes.copyOfRange(71, 104),
-                courierPubKey = bytes.copyOfRange(104, 137),
-                quoteExpiry = u32(bytes, 137),
+                quoteExpiry = u32(bytes, 104),
             ).also { it.validate() }
         }
 

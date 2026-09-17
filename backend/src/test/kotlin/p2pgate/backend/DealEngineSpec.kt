@@ -150,7 +150,7 @@ class DealEngineSpec {
     }
 
     @Test
-    fun `cash collected with an absurd courier timestamp is rejected`() {
+    fun `cash collected with an absurd record timestamp is rejected`() {
         val env = env()
         val deal = env.quotedDeal()
         env.engine.apply(deal.dealId, DealEvent.VaultFunded(T0), T0)

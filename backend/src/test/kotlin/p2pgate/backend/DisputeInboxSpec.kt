@@ -86,13 +86,12 @@ class DisputeInboxSpec {
     }
 
     @Test
-    fun `investigate flags the courier credential and changes nothing on chain`() {
+    fun `investigate routes to internal review and changes nothing on chain`() {
         val env = TestEnv(vaultSigner = Fx.RealSigner())
         val deal = claimedDeal(env)
         val txsBefore = env.submitter.submitted.size
         assertEquals(DisputeInbox.ActionOutcome.Ok, env.inbox.investigate(deal.dealId))
-        assertTrue(env.store.isCourierFlagged("courier-7"))
-        assertTrue(env.events.filterIsInstance<BackendEvent.CourierCredentialFlagged>().isNotEmpty())
+        assertEquals("investigate", env.store.getDeal(deal.dealId)!!.claimAction)
         assertEquals(txsBefore, env.submitter.submitted.size)
         assertEquals(DealState.CLAIM_OPENED, env.store.getDeal(deal.dealId)!!.state)
     }

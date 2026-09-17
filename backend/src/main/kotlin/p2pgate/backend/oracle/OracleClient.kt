@@ -16,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * [attestationFor] throws [OracleUnavailableException] when the oracle cannot
  * be queried — callers treat that exactly like "no attestation yet" on the
- * user-facing path, and as a degradation signal for the infra monitor.
+ * buyer-facing path, and as a degradation signal for the infra monitor.
  */
 interface OracleClient {
     val signer: OracleSigner
