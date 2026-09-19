@@ -15,10 +15,9 @@ private fun <A, B> t(a: A, b: B): Tuple2<A, B> = Tuple2.apply(a, b)
 private fun Long.toBe(n: Int): ByteArray = ByteArray(n) { i -> (this shr (8 * (n - 1 - i))).toByte() }
 
 /**
- * Per-deal test fixture: keys, token/deal ids, the three compiled vault contracts
- * (plus a stand-in treasury script whose hash feeds TREASURY_SCRIPT_HASH), the
- * FUNDED/PAYMENT_PROVEN/oracle boxes, wire-format builders and the prove/verify
- * driver. One fixture instance per deal under test.
+ * Per-deal test fixture: keys, token/deal ids, the three compiled vault
+ * contracts, the FUNDED/PAYMENT_PROVEN/oracle boxes, wire-format builders and
+ * the prove/verify driver. One fixture instance per deal under test.
  */
 class VaultFixture(
     /** R7 substitution for the adversarial tests: a wrong oracle NFT id, or replace R7
@@ -31,7 +30,6 @@ class VaultFixture(
     val sellerKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
     val buyerKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
     val oracleKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
-    val treasuryKey: DLogProtocol.DLogProverInput = SigmaBridge.dlogRandom()
 
     val sellerPk: ByteArray = SigmaBridge.ecpEncoded(SigmaBridge.ecp(sellerKey), true)
     val buyerPk: ByteArray = SigmaBridge.ecpEncoded(SigmaBridge.ecp(buyerKey), true)
@@ -55,8 +53,6 @@ class VaultFixture(
     val fundedR7: ByteArray = r7Bytes ?: (r7OracleNftId ?: oracleNftId)
 
     val dealAmount: Long = 500_000_000L // 500 USDT, 6 decimals
-    /** The always-on protocol fee (25 bps, compile-time contract constant). */
-    val fee: Long = dealAmount * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
     val boxValue: Long = 1_000_000L // nanoERG
 
     // --- heights ---
@@ -64,30 +60,20 @@ class VaultFixture(
     val timeoutHeight: Int = creationHeight + ContractParams.RECLAIM_TIMEOUT_BLOCKS
 
     // --- compiled contracts (order matters: proven feeds funded) ---
-    val treasuryTree: ErgoTree = ContractCompiler.compile(
-        "{ proveDlog(decodePoint(%%K%%)) }",
-        mapOf("K" to ConstValue.Bytes(SigmaBridge.ecpEncoded(SigmaBridge.ecp(treasuryKey), true))),
-    )
-    val treasuryHash: ByteArray = SigmaBridge.blake2b256(treasuryTree.bytes())
-
     val provenTree: ErgoTree = ContractCompiler.compileResource(
         "vault_payment_proven.es",
         mapOf(
-            "TREASURY_SCRIPT_HASH" to ConstValue.Bytes(treasuryHash),
             "ORACLE_NFT_ID" to ConstValue.Bytes(oracleNftId),
             "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${ContractParams.HANDOFF_RECORD_MAX_AGE_MS}L"),
             "CLAIM_MATURATION_BLOCKS" to ConstValue.IntNum(ContractParams.CLAIM_MATURATION_BLOCKS),
-            "FEE_BPS" to ConstValue.IntNum(ContractParams.PROTOCOL_FEE_BPS),
         ),
     )
 
     val fundedTree: ErgoTree = ContractCompiler.compileResource(
         "vault_funded.es",
         mapOf(
-            "TREASURY_SCRIPT_HASH" to ConstValue.Bytes(treasuryHash),
             "PAYMENT_PROVEN_SCRIPT" to ConstValue.Bytes(provenTree.bytes()),
             "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${ContractParams.HANDOFF_RECORD_MAX_AGE_MS}L"),
-            "FEE_BPS" to ConstValue.IntNum(ContractParams.PROTOCOL_FEE_BPS),
         ),
     )
 
@@ -178,16 +164,39 @@ class VaultFixture(
         "cd".repeat(32), 0, creationHeight,
     )
 
+    /**
+     * The oracle singleton box as the release DATA INPUT: the oracle.es tree
+     * (never executed as a data input), the NFT, and R4 = the 112-byte
+     * attestation payload (specs/oracle-integration.md §2.2). Parameterize
+     * [payload]/[nftId]/[tree] for the adversarial release tests.
+     */
+    fun oracleDataBox(
+        payload: ByteArray = paymentPayload(),
+        tree: ErgoTree = oracleTree,
+        nftId: ByteArray = oracleNftId,
+        boxId: String = "c4".repeat(32),
+        transactionId: String = "c5".repeat(32),
+    ): ErgoBox = SigmaBridge.box(
+        boxValue, tree, tokens(tok(nftId, 1L)),
+        SigmaBridge.regs(listOf(t(SigmaBridge.regId(4), bytesC(payload)))),
+        transactionId, 0, creationHeight,
+    )
+
+    /** An oracle-shaped box carrying a DIFFERENT NFT (payload otherwise valid):
+     *  the release path's data-input NFT check must reject it (test 19). */
     val wrongNftBox: ErgoBox = SigmaBridge.box(
-        boxValue, oracleTree, tokens(tok(wrongNftId, 1L)), SigmaBridge.emptyRegs(),
+        boxValue, oracleTree, tokens(tok(wrongNftId, 1L)),
+        SigmaBridge.regs(listOf(t(SigmaBridge.regId(4), bytesC(paymentPayload())))),
         "ce".repeat(32), 0, creationHeight,
     )
 
     /** A box carrying the oracle NFT under a foreign script (the seller's P2PK, not
-     *  oracle.es): the vault's NFT check accepts it, so the on-chain defense is the
-     *  box's own script refusing to be spent without its key (see test 20). */
+     *  oracle.es) with a valid R4 payload: as a DATA INPUT the foreign script never
+     *  executes, so the vault's NFT check alone accepts it — NFT custody is the
+     *  whole phase-1 trust root (see test 20). */
     val foreignOracleBox: ErgoBox = SigmaBridge.box(
-        boxValue, sellerTree, tokens(tok(oracleNftId, 1L)), SigmaBridge.emptyRegs(),
+        boxValue, sellerTree, tokens(tok(oracleNftId, 1L)),
+        SigmaBridge.regs(listOf(t(SigmaBridge.regId(4), bytesC(paymentPayload())))),
         "cf".repeat(32), 0, creationHeight,
     )
 
@@ -198,19 +207,13 @@ class VaultFixture(
 
     // --- outputs ---
 
-    fun sellerOut(amount: Long = dealAmount - fee): ErgoBoxCandidate =
+    fun sellerOut(amount: Long = dealAmount): ErgoBoxCandidate =
         SigmaBridge.candidate(boxValue, sellerTree, creationHeight, tokens(tok(useTokenId, amount)), SigmaBridge.emptyRegs())
 
-    fun buyerOut(amount: Long = dealAmount - fee): ErgoBoxCandidate =
+    fun buyerOut(amount: Long = dealAmount): ErgoBoxCandidate =
         SigmaBridge.candidate(boxValue, buyerTree, creationHeight, tokens(tok(useTokenId, amount)), SigmaBridge.emptyRegs())
 
-    fun treasuryOut(amount: Long = fee): ErgoBoxCandidate =
-        SigmaBridge.candidate(100_000L, treasuryTree, creationHeight, tokens(tok(useTokenId, amount)), SigmaBridge.emptyRegs())
-
-    /** Plain change output to the seller (nominal token amount, so tokens(0) evaluates):
-     *  the vault scripts' release-path vals touch OUTPUTS(1) during reduction of EVERY
-     *  path (the proof reducer forces every val of the block it enters), so a spend
-     *  with a single output is rejected outright even on reclaim/open-claim/claim. */
+    /** Plain change output to the seller (nominal token amount, so tokens(0) evaluates). */
     fun changeOut(): ErgoBoxCandidate =
         SigmaBridge.candidate(boxValue, sellerTree, creationHeight, tokens(tok(useTokenId, 1)), SigmaBridge.emptyRegs())
 
@@ -237,13 +240,6 @@ class VaultFixture(
      */
     fun flippedByte(msg: ByteArray, index: Int = 40): ByteArray =
         msg.copyOf().also { it[index] = (it[index].toInt() xor 0x01).toByte() }
-
-    /**
-     * Payment-proof payload context var for the release paths C/C′ (var 0 only — v2 is
-     * oracle-only, no receipt-signature vars).
-     */
-    fun payloadVars(payload: ByteArray = paymentPayload()): Map<Int, EvaluatedValue<out SType>> =
-        mapOf(0 to bytesC(payload))
 
     /**
      * Handoff-record context vars for path B (vars 0..3): the 52-byte record at 0,

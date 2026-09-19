@@ -37,12 +37,7 @@ data class BackendConfig(
     val webhookUrl: String? = null,
     /** Pre-mixed reserve balance (USDT base units) — the capacity base (§4). */
     val mixReadyCollateral: Long = 0,
-    /**
-     * Protocol fee in bps quoted against the spread — the on-chain fee itself is
-     * a compile-time contract constant (`ContractParams.PROTOCOL_FEE_BPS`), not a
-     * runtime setting.
-     */
-    val protocolFeeBps: Int = p2pgate.contracts.ContractParams.PROTOCOL_FEE_BPS,
+    /** Operator cost floor in bps — a spread below it publishes with a warning. */
     val costFloorBps: Int = 0,
     val quoteTtl: Duration = QuotePublisher.DEFAULT_TTL,
     val quoteDefaultEtaMinutes: Int = 60,
@@ -154,7 +149,8 @@ class BackendApp(
      * canonical terms, and mints the deal token. A REJECT means no deal.
      */
     fun createDeal(request: CreateDealRequest, now: Instant = Instant.now()): CreateDealOutcome {
-        val quote = quotes.active(now) ?: return CreateDealOutcome.Rejected("no active quote")
+        val quote = quotes.activeQuote(request.quoteId, now)
+            ?: return CreateDealOutcome.Rejected("unknown or inactive quote ${request.quoteId}")
         if (request.amount <= 0 || request.amount > quote.maxAmount) {
             return CreateDealOutcome.Rejected("amount ${request.amount} outside quote bounds (max ${quote.maxAmount})")
         }

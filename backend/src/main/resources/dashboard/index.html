@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>p2pgate — operator dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Login: nothing else is visible without an operator token (spec §3.1). -->
+  <section id="login-view" class="login-view" hidden>
+    <form id="login-form" class="login-card">
+      <h1>p2pgate</h1>
+      <p class="muted">Operator dashboard. The token authorizes actions, not keys —
+        vault-signing keys never leave the vault manager.</p>
+      <label for="token-input">Operator token</label>
+      <input id="token-input" type="password" autocomplete="off" required>
+      <button type="submit">Open dashboard</button>
+      <p id="login-error" class="error" role="alert" hidden></p>
+    </form>
+  </section>
+
+  <!-- App shell. -->
+  <div id="app" hidden>
+    <header class="topbar">
+      <strong>p2pgate</strong>
+      <nav id="tabs">
+        <button data-tab="lane" class="tab active">Vault lane</button>
+        <button data-tab="pool" class="tab">Pool</button>
+        <button data-tab="disputes" class="tab">Disputes</button>
+        <button data-tab="infra" class="tab">Infra</button>
+      </nav>
+      <span id="conn-state" class="conn" title="live event stream">connecting…</span>
+      <button id="logout" class="link">Sign out</button>
+    </header>
+
+    <div id="pause-banner" class="banner" hidden></div>
+    <div id="fail-loud" class="banner danger" hidden></div>
+
+    <main>
+      <section id="tab-lane" class="tab-page">
+        <div id="lane" class="lane"></div>
+      </section>
+
+      <section id="tab-pool" class="tab-page" hidden>
+        <div id="pool" class="panel"></div>
+        <div id="quote" class="panel"></div>
+      </section>
+
+      <section id="tab-disputes" class="tab-page" hidden>
+        <div id="disputes"></div>
+      </section>
+
+      <section id="tab-infra" class="tab-page" hidden>
+        <div id="infra" class="panel"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- The meeting screen: one job per screen, opened from a FUNDED card (spec §3.3). -->
+  <section id="meeting-view" class="meeting-view" hidden>
+    <div class="meeting-card">
+      <header class="meeting-header">
+        <div>
+          <div id="meeting-amount" class="meeting-amount"></div>
+          <div id="meeting-sub" class="muted"></div>
+        </div>
+        <button id="meeting-close" class="link">Back to lane</button>
+      </header>
+
+      <!-- Step 2: the counted-cash gate. -->
+      <div id="meeting-gate">
+        <p class="warning-box">
+          Signing before the cash is counted hands the buyer a payout key against
+          the seller's own collateral. Count, then sign.
+        </p>
+        <label class="confirm-row">
+          <input id="cash-counted" type="checkbox">
+          Cash counted in person
+        </label>
+        <button id="sign-btn" disabled>Sign handoff record</button>
+        <p id="meeting-error" class="error" role="alert" hidden></p>
+      </div>
+
+      <!-- Step 3/4: the QR, then the post-sign state. -->
+      <div id="meeting-qr" hidden>
+        <img id="qr-img" alt="Handoff QR for the buyer to scan">
+        <p class="muted">The buyer's app validates the record against its deal terms
+          and shows its own "safe to leave" indicator. The meeting ends only when it does.</p>
+        <p id="meeting-signed" class="signed-state" hidden>record signed — the buyer verifies</p>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

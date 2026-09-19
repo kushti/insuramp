@@ -11,7 +11,8 @@ import p2pgate.dealprotocol.SourceChainId
  * vault contract checks `dealId`/`srcChainId`/`tokenId`/`recipient`/`amount`
  * against its R4/R9 registers in the release spend (paths C/C′); `srcTxId`,
  * `srcBlockHeight`, `srcBlockTime` ride along for audit and are bound only by
- * the oracle's co-signature.
+ * the oracle's NFT custody (the payload rides in the oracle box's R4 as a
+ * release data input; a data input's script never executes).
  *
  * Layout (all integers big-endian):
  *
@@ -67,7 +68,7 @@ class PaymentAttestation(
         }
     }
 
-    /** The exact 112-byte wire form carried as context var 0 of the release tx. */
+    /** The exact 112-byte wire form carried in the oracle data input's R4 of the release tx. */
     fun encode(): ByteArray {
         val out = ByteArray(SIZE)
         out[0] = version.toByte()

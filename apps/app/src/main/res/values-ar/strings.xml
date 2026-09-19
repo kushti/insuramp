@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Navigation shell -->
+    <string name="nav_quote">عرض</string>
+    <string name="nav_recover">استرجاع</string>
+    <string name="scan_qr_prompt">امسح رمز QR</string>
+
+    <!-- Quote screen -->
+    <string name="quote_title">اشترِ USDT نقدًا</string>
+    <string name="fiat_currency_label">العملة الورقية</string>
+    <string name="fiat_inr">الروبية الهندية</string>
+    <string name="fiat_usd">الدولار الأمريكي</string>
+    <string name="fiat_ksh">الشلن الكيني</string>
+    <string name="fiat_currency_option">%1$s — %2$s</string>
+    <string name="quote_amount_label">المبلغ الذي تسلّمه (بأصغر وحدة، مثل القروش/السنتات)</string>
+    <string name="quote_address_label">عنوان استلام USDT الخاص بك (Tron base58 أو EIP-55)</string>
+    <string name="quote_best">أفضل العروض</string>
+    <string name="quote_view_list">قائمة</string>
+    <string name="quote_view_map">خريطة</string>
+    <string name="quote_refresh">تحديث</string>
+    <string name="quote_refreshing">جارٍ التحديث…</string>
+    <string name="quote_stale">الخادم غير متاح — يتم عرض آخر عرض معروف.</string>
+    <string name="quote_none">لا يوجد عرض منشور حاليًا — حدّث لإعادة المحاولة.</string>
+    <string name="quote_unlocated">لم ينشر البائع موقعًا لهذا العرض — بدّل إلى القائمة لاختياره.</string>
+    <string name="quote_creating">جارٍ إنشاء الصفقة…</string>
+    <string name="quote_eta">~%1$d دقيقة</string>
+    <string name="quote_available">حتى %1$d USDT متاحة</string>
+    <string name="quote_collateral_line">لقد جمّد البائع ضمانًا بهذا المقدار — يمكنك المطالبة به إذا لم تصلك USDT أبدًا.</string>
+    <string name="quote_choose">اختيار</string>
+    <string name="quote_create_error">تعذّر إنشاء الصفقة: %1$s</string>
+    <string name="quote_marker_title">حتى %1$d USDT · ~%2$d دقيقة</string>
+
+    <!-- Canonical protocol states → human labels -->
+    <string name="state_quoted">تم عرض سعر الصفقة — بانتظار تجميد البائع للضمان</string>
+    <string name="state_funded">جمّد البائع الضمان لصفقتك</string>
+    <string name="state_payment_pending">سلّم النقد إلى البائع</string>
+    <string name="state_payment_confirmed">USDT في الطريق</string>
+    <string name="state_claim_opened">فُتحت المطالبة — السجل على السلسلة</string>
+    <string name="state_claimable">المطالبة في فترة النضج (~12 ساعة)</string>
+    <string name="state_released">اكتملت الصفقة</string>
+    <string name="state_reclaimed">انتهت المهلة — استرجع البائع الضمان</string>
+    <string name="state_claimed">دُفع الضمان إليك</string>
+
+    <!-- Deal timeline rows with deal terms interpolated -->
+    <string name="timeline_hand_cash">سلّم %1$d %2$s إلى البائع</string>
+    <string name="timeline_wait_usdt">انتظر %1$d USDT</string>
+
+    <!-- Deal timeline screen -->
+    <string name="deal_title">صفقة #%1$s</string>
+    <string name="deal_stale">الخادم غير متاح — قد تكون آخر مزامنة قديمة.</string>
+    <string name="deal_loading">جارٍ تحميل الصفقة…</string>
+    <string name="deal_fiat_amount">%1$d %2$s</string>
+    <string name="deal_collateral_locked">ضمان بقيمة %1$d USDT مجمّد</string>
+    <string name="deal_timeout_running">مهلة الخزنة (RECLAIM_TIMEOUT) خلال %1$d ساعة و%2$d دقيقة</string>
+    <string name="deal_timeout_expired">انتهت مهلة الخزنة (RECLAIM_TIMEOUT)</string>
+    <string name="deal_maturation_running">تنضج المطالبة خلال %1$d ساعة و%2$d دقيقة</string>
+    <string name="deal_maturation_expired">انتهت فترة نضج المطالبة</string>
+    <string name="deal_contested">أرفق البائع دليل دفع — بانتظار انتهاء المهلة.</string>
+    <string name="deal_record_warning_title">لا تغادر دون السجل — إنه دليلك الوحيد.</string>
+    <string name="deal_record_warning_body">المغادرة قبل التحقق من السجل الموقَّع من البائع تعني المغادرة دون سجل موثَّق — لا شيء على السلسلة يثبت أن النقد غيّر أيديه.</string>
+    <string name="deal_record_verified">✓ تم التحقق من السجل وحفظه — المغادرة من اللقاء آمنة.</string>
+    <string name="deal_claim_offer">استُلم النقد ولم تصل USDT؟ يمكنك المطالبة بالضمان المجمّد البالغ %1$d USDT.</string>
+    <string name="deal_claim_payout_note">يُدفع بعد ~12 ساعة (CLAIM_MATURATION).</string>
+    <string name="deal_stop_polling">إيقاف الاستعلام في الخلفية</string>
+
+    <!-- Shared actions -->
+    <string name="action_start_claim">بدء المطالبة</string>
+    <string name="handoff_scan_qr">امسح رمز QR للتسليم الخاص بالبائع</string>
+
+    <!-- Handoff (meeting) screen -->
+    <string name="handoff_title">اللقاء — إثباتك للنقد</string>
+    <string name="handoff_record_plain">استلم البائع %1$d %2$s للصفقة #%3$s، %4$s</string>
+    <string name="handoff_watch_count">سلّم النقد وراقب البائع وهو يعدّه. يوقّع البائع فقط بعد العدّ.</string>
+    <string name="handoff_sig_a_label">توقيع البائع — a (hex)</string>
+    <string name="handoff_sig_z_label">توقيع البائع — z (hex)</string>
+    <string name="handoff_rejected">✗ %1$s. لا تعتبر هذا السجل دليلًا.</string>
+    <string name="handoff_reject_not_handoff_qr">ليس رمز QR لتسليم P2PGate</string>
+    <string name="handoff_reject_invalid">السجل لا يطابق هذه الصفقة، أو منتهي الصلاحية، أو توقيعه غير صالح</string>
+    <string name="handoff_missing_seller_key">مفتاح البائع غير مرفق بهذه الصفقة بعد، لذا لا يمكن للتطبيق تأكيد السجل. لا تغادر اللقاء دون حلّ هذه المشكلة.</string>
+    <string name="handoff_waiting_signature">بانتظار توقيع البائع…</string>
+    <string name="handoff_scan_to_begin">امسح رمز QR الخاص بالبائع للبدء.</string>
+    <string name="handoff_verified">✓ تم التحقق من السجل مقابل صفقتك.</string>
+    <string name="handoff_saved_relayed">تم الحفظ والإرسال إلى المشغّل.</string>
+    <string name="handoff_saved_relay_failed">تم الحفظ على هذا الجهاز — فشل الإرسال (%1$s)، وإعادة المحاولة تهمّ فقط حالة البائع.</string>
+    <string name="handoff_saved_local">تم الحفظ على هذا الجهاز…</string>
+    <string name="handoff_safe_to_leave">المغادرة من اللقاء آمنة.</string>
+    <string name="handoff_not_safe">المغادرة الآن تعني المغادرة دون سجل موثَّق — السجل الموثَّق هو دليل النزاع الوحيد لديك.</string>
+
+    <!-- Claim screen -->
+    <string name="claim_title">طالِب بضمان البائع المجمّد</string>
+    <string name="claim_intro">استُلم النقد ولم تصل USDT؟ ضمان البائع يدفع لك. هذا مسار مطالبة الضمان — وليس تذكرة نزاع.</string>
+    <string name="claim_not_available">تصبح المطالبة متاحة بمجرد استلام النقد (الصفقة في حالة %1$s).</string>
+    <string name="claim_maturation_deadline">موعد نضج المطالبة: %1$d (~12 ساعة، CLAIM_MATURATION).</string>
+    <string name="claim_contested">أرفق البائع دليلًا من أوراكل — العقد هو من يقرر؛ بانتظار انتهاء المهلة.</string>
+    <string name="claim_opening">جارٍ فتح المطالبة…</string>
+    <string name="claim_guide_title">فُتحت المطالبة — الخطوات التالية</string>
+    <string name="claim_error">تعذّر فتح المطالبة: %1$s</string>
+
+    <!-- Recover screen -->
+    <string name="recover_title">استرجاع صفقة</string>
+    <string name="recover_instructions">الصق رابط الصفقة الذي حفظته (أو معرّف الصفقة # الرمز).</string>
+    <string name="recover_input_label">رابط الصفقة أو id#token</string>
+    <string name="recover_recovering">جارٍ الاسترجاع…</string>
+    <string name="recover_restore">استرجاع الصفقة</string>
+    <string name="recover_restored">تم استرجاع الصفقة.</string>
+    <string name="recover_error_invalid_link">هذا لا يبدو رابط صفقة — تحقق من وجود معرّف الصفقة والرمز بعد #.</string>
+    <string name="recover_error_failed">فشل الاسترجاع: %1$s</string>
+</resources>

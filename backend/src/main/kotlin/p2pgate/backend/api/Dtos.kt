@@ -22,10 +22,14 @@ data class QuoteDto(
     val maxAmount: Long,
     val createdAtEpochMs: Long,
     val expiresAtEpochMs: Long,
+    /** Optional seller meeting location (WGS-84); both set or neither. */
+    val lat: Double? = null,
+    val lon: Double? = null,
 )
 
+/** The quote feed: every active quote (several sellers may quote at once). */
 @Serializable
-data class QuoteFeedDto(val quote: QuoteDto?)
+data class QuoteFeedDto(val quotes: List<QuoteDto>)
 
 @Serializable
 data class CreateDealRequest(
@@ -47,6 +51,11 @@ data class DealDto(
     val fiatCurrency: String,
     /** The insured badge reads the actual vault collateral (§5) — 1:1 ratio. */
     val insuredAmount: Long,
+    /**
+     * The deal's seller key, compressed secp256k1 hex — the vault R5 key the
+     * buyer app verifies the handoff record's signature against (path B).
+     */
+    val sellerPubKey: String,
     val vaultBoxId: String? = null,
     val contested: Boolean = false,
     val createdAtEpochMs: Long,
@@ -111,6 +120,25 @@ data class HandoffSubmitRequest(
     val gps: String? = null,
 )
 
+/**
+ * Seller-meeting signing (POST /v1/dashboard/deals/{id}/handoff/sign): the
+ * 52-byte P2PH record signed under the vault's R5 seller key (t/3407 Schnorr),
+ * plus the `p2pgate://handoff?m=...` QR payload the dashboard renders for the
+ * buyer to scan. Accepted from FUNDED only: the signature is the
+ * cash-collection witness and drives the deal to PAYMENT_PENDING; the response
+ * [state] is always PAYMENT_PENDING on success.
+ */
+@Serializable
+data class HandoffSignResponse(
+    val dealId: String,
+    val state: String,
+    val recordHex: String,
+    val signatureA: String,
+    val signatureZ: String,
+    val sellerPubKey: String,
+    val qrPayload: String,
+)
+
 @Serializable
 data class LaneCardDto(
     val dealId: String,
@@ -139,7 +167,14 @@ data class PoolDto(
 )
 
 @Serializable
-data class PutQuoteRequest(val spreadBps: Int, val etaMinutes: Int, val maxAmount: Long)
+data class PutQuoteRequest(
+    val spreadBps: Int,
+    val etaMinutes: Int,
+    val maxAmount: Long,
+    /** Optional seller meeting location (WGS-84); both set or neither. */
+    val lat: Double? = null,
+    val lon: Double? = null,
+)
 
 @Serializable
 data class PublishQuoteResponse(val published: Boolean, val quote: QuoteDto? = null, val reason: String? = null)

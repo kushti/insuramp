@@ -2,38 +2,42 @@ package p2pgate.backend.oracle
 
 import p2pgate.ergo.ChainBox
 import p2pgate.ergo.DevOracle
-import p2pgate.ergo.OracleSigner
 import p2pgate.ergo.PaymentAttestation
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Payment-proof oracle seam, `specs/operator-backend.md` §2 "oracle client":
  * the backend never observes Tron/Ethereum itself — it consumes attestation
- * status for funded deals through this interface. The [signer] is the
- * production seam of `specs/oracle-integration.md` §3.1: M3 wires [DevOracle]
- * in tests/dev; production swaps in a remote signer talking to the
- * attestation API without touching the vault manager.
+ * status for funded deals through this interface. M3 wires [DevOracle] in
+ * tests/dev; production swaps in a remote client talking to the attestation
+ * API (`POST /v1/attestations`) without touching the vault manager.
  *
  * [attestationFor] throws [OracleUnavailableException] when the oracle cannot
  * be queried — callers treat that exactly like "no attestation yet" on the
  * buyer-facing path, and as a degradation signal for the infra monitor.
+ *
+ * ## How a release consumes the attestation
+ *
+ * The vault contracts read the attestation from the oracle box's R4 via
+ * `CONTEXT.dataInputs(0)` — the oracle box is a DATA INPUT of the
+ * release/contest tx and its script never executes, so there is no oracle
+ * co-signature to collect. [attestationBoxFor] hands the vault manager that
+ * data-input box per deal (the on-chain box the oracle posted by rotating its
+ * `oracle.es` singleton with R4 = the payload); release txs are
+ * operator-wallet-only, funded from the vault signer's fee inputs.
  */
 interface OracleClient {
-    val signer: OracleSigner
-
     /** The attestation for [dealId] (hex), or `null` while unobserved. */
     fun attestationFor(dealId: String): PaymentAttestation?
 
+    /**
+     * The oracle box carrying [dealId]'s attestation as a release-ready data
+     * input (NFT + R4 payload), or `null` while no attestation is posted.
+     */
+    fun attestationBoxFor(dealId: String): ChainBox?
+
     /** Liveness probe for the infra monitor's ORACLE_LAG signal. */
     fun reachable(): Boolean
-
-    /**
-     * Miner-fee inputs usable in an oracle-signed release/contest tx. M3 seam:
-     * the dev oracle signs the whole tx with its own key, so its fee inputs
-     * must be oracle-key boxes; production co-signs in stages (operator wallet
-     * + oracle), making this provider-specific.
-     */
-    fun feeInputs(): List<ChainBox> = emptyList()
 }
 
 class OracleUnavailableException(message: String, cause: Throwable? = null) :
@@ -51,8 +55,6 @@ class DevOracleClient(
 
     @Volatile
     private var up: Boolean = true
-
-    override val signer: OracleSigner get() = devOracle.signer()
 
     /** Dev/test only: records (or replaces) the attestation for a deal. */
     fun attest(dealId: String, attestation: PaymentAttestation) {
@@ -73,7 +75,11 @@ class DevOracleClient(
         return attestations[dealId]
     }
 
-    override fun reachable(): Boolean = up
+    override fun attestationBoxFor(dealId: String): ChainBox? {
+        if (!up) throw OracleUnavailableException("oracle unreachable")
+        val attestation = attestations[dealId] ?: return null
+        return devOracle.attestationBox(attestation)
+    }
 
-    override fun feeInputs(): List<ChainBox> = listOf(devOracle.feeInputBox())
+    override fun reachable(): Boolean = up
 }

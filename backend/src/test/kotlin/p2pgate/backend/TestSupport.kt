@@ -24,7 +24,6 @@ import p2pgate.backend.store.AmlRecord
 import p2pgate.backend.store.DealRecord
 import p2pgate.backend.store.DealStore
 import p2pgate.backend.store.InMemoryDealStore
-import p2pgate.backend.util.Crypto
 import p2pgate.backend.util.Hex
 import p2pgate.backend.util.Secp256k1
 import p2pgate.backend.util.SigmaTrees
@@ -63,14 +62,10 @@ object Fx {
 
     val seller = keys(0x1111)
     val buyer = keys(0x2222)
-    val treasury = keys(0x5555)
     val oracle = keys(0x9999)
 
-    val treasuryTree = SigmaTrees.p2pkTree(treasury.pubKeyCompressed)
-    val treasuryHash: ByteArray = Crypto.blake2b256(treasuryTree.bytes())
-
-    /** Compiled vault trees whose treasury pin matches a real treasury tree. */
-    val trees: ErgoContracts.VaultTrees by lazy { ErgoContracts.compile(treasuryScriptHash = treasuryHash) }
+    /** Compiled vault trees (canonical dummy parameters). */
+    val trees: ErgoContracts.VaultTrees by lazy { ErgoContracts.compile() }
 
     fun devOracle(): DevOracle = DevOracle(oracle.secret, oracleNftId = trees.oracleNftId)
 
@@ -230,6 +225,9 @@ object Fx {
         override fun fundingInputs(collateralTokenIdHex: String, minAmount: Long): List<ChainBox> = emptyList()
         override fun feeInputs(): List<ChainBox> = emptyList()
         override fun signer(): DealTxSigner = ProverSigner(seller.secret)
+        override fun signHandoff(record: ByteArray) = p2pgate.backend.util.Schnorr.sign(
+            seller.secret, record, seller.pubKeyCompressed,
+        )
     }
 
     /** A signer that can really fund/reclaim: seller-key funding + fee boxes. */
@@ -243,6 +241,9 @@ object Fx {
             funding.filter { it.tokenAmount(collateralTokenIdHex) >= minAmount }
         override fun feeInputs(): List<ChainBox> = fees
         override fun signer(): DealTxSigner = ProverSigner(seller.secret)
+        override fun signHandoff(record: ByteArray) = p2pgate.backend.util.Schnorr.sign(
+            seller.secret, record, seller.pubKeyCompressed,
+        )
     }
 }
 
@@ -268,7 +269,6 @@ class TestEnv(
     val submitter = Fx.RecordingSubmitter()
     val vaultManager = VaultManager(
         trees = Fx.trees,
-        treasuryTree = Fx.treasuryTree,
         signer = vaultSigner,
         chain = chain,
         submitter = submitter,
@@ -351,10 +351,11 @@ class TestEnv(
 
     /** The seller-signed handoff flow at component level (record as obtained at the meeting). */
     fun collectCash(dealId: String, at: Instant = T0) {
+        val deal = store.getDeal(dealId)!!
         val record = HandoffRecord(
-            dealId = store.getDeal(dealId)!!.terms().dealId,
-            amount = 250_000L,
-            fiatCurrency = "USD".toByteArray(),
+            dealId = deal.terms().dealId,
+            amount = deal.fiatAmount,
+            fiatCurrency = deal.fiatCurrency.toByteArray(Charsets.US_ASCII),
             timestamp = at.epochSecond,
         )
         store.updateDeal(dealId) { it.copy(handoffRecordHex = Hex.encode(record.encode())) }

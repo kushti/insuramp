@@ -11,7 +11,6 @@ import p2pgate.ergo.ExplorerChainSource
  * | `E2E_EXPLORER_URL` | `https://api.ergoplatform.com` | explorer base URL (mainnet; testnet via `https://api-testnet.ergoplatform.com`) |
  * | `E2E_FAUCET_URL` | `off` | faucet base URL (`off` = manual funding; the faucet is testnet-only, e.g. `https://testnet.ergofaucet.org`) |
  * | `E2E_MINER_FEE_NANO_ERG` | 1_100_000 | miner fee per tx |
- * | `E2E_FEE_BOX_NANO_ERG` | 1_000_000 | §6 treasury fee output value |
  * | `E2E_FUNDED_BOX_NANO_ERG` | 0 = auto (tree-size dust) | FUNDED box ERG value |
  * | `E2E_RECLAIM_TIMEOUT_BLOCKS` | 6 | fast reclaim timeout (funding-time R8) |
  * | `E2E_FUNDING_TIMEOUT_MS` | 300_000 | faucet/balance poll deadline |
@@ -27,7 +26,6 @@ class E2eConfig(
     val faucetEnabled: Boolean = (System.getenv("E2E_FAUCET_URL") ?: "off") != "off",
     val dryRun: Boolean = false,
     val minerFeeNanoErg: Long = System.getenv("E2E_MINER_FEE_NANO_ERG")?.toLongOrNull() ?: 1_100_000L,
-    val feeBoxValueNanoErg: Long = System.getenv("E2E_FEE_BOX_NANO_ERG")?.toLongOrNull() ?: 1_000_000L,
     /** 0 = auto: dust-derived from the compiled FUNDED tree size. */
     val fundedBoxValueNanoErg: Long = System.getenv("E2E_FUNDED_BOX_NANO_ERG")?.toLongOrNull() ?: 0L,
     val reclaimTimeoutBlocks: Int = System.getenv("E2E_RECLAIM_TIMEOUT_BLOCKS")?.toIntOrNull()

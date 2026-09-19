@@ -15,7 +15,6 @@ import p2pgate.ergo.ClaimTxBuilder
 import p2pgate.ergo.DevOracle
 import p2pgate.ergo.ErgoContracts
 import p2pgate.ergo.OperatorTxBuilder
-import p2pgate.ergo.OracleSigner
 import p2pgate.ergo.PaymentAttestation
 import sigma.ast.ErgoTree
 import java.math.BigInteger
@@ -27,7 +26,7 @@ import java.math.BigInteger
  * ([ErgoContracts.compileFast]):
  *
  *  1. preflight (explorer reachable) → exit 2 with manual instructions if not;
- *  2. per-run keypairs (operator/seller, buyer, oracle, treasury);
+ *  2. per-run keypairs (operator/seller, buyer, oracle);
  *  3. funding of the operator: manual by default (the gate prints the address
  *     + needed nanoERG and polls the balance; exit 2 with instructions when
  *     the `E2E_FUNDING_TIMEOUT_MS` deadline passes), or via the testnet faucet
@@ -37,11 +36,12 @@ import java.math.BigInteger
  *     tx's first input box id), mint the collateral ("USE") token, fund the
  *     buyer address for claim fees;
  *  5. Flow A (release): fund → seller-signed 52-byte P2PH handoff record →
- *     oracle attestation → release (the oracle.es box as the full oracle
- *     input, recreated per its `OUTPUTS.exists` condition) → assert seller
- *     paid minus fee and the NFT preserved;
+ *     oracle attestation (the oracle posts it: an `oracle.es` rotation spend
+ *     recreating the singleton box with R4 = the 112-byte payload) → release
+ *     (operator-wallet-only, the posted oracle box as a DATA INPUT — no
+ *     oracle signature) → assert seller paid in full;
  *  6. Flow B (dispute): fund → record → claim-open → wait maturation (3
- *     blocks, fast) → claim-payout → assert buyer payout minus fee;
+ *     blocks, fast) → claim-payout → assert buyer paid in full;
  *  7. Flow C (reclaim): fund → wait the short timeout (6 blocks) → reclaim →
  *     assert seller refund.
  *
@@ -70,10 +70,9 @@ class E2eFlow(
     private val networkPrefix: Byte =
         if (networkType == NetworkType.MAINNET) ContractParams.NETWORK_PREFIX_MAINNET else ContractParams.NETWORK_PREFIX_TESTNET
 
-    // Deal parameters: the protocol fee is a compile-time contract constant
-    // (ContractParams.PROTOCOL_FEE_BPS); small collateral per deal (the contract
-    // only requires A token with the pinned id — the gate mints a dev token;
-    // there is no real USE on either network).
+    // Deal parameters: small collateral per deal (the contract only requires
+    // A token with the pinned id — the gate mints a dev token; there is no
+    // real USE on either network).
     private val dealAmount = 100_000_000L
     private val collateralTotal = 10 * dealAmount
 
@@ -103,7 +102,6 @@ class E2eFlow(
         val operator: Keys,
         val buyer: Keys,
         val oracle: Keys,
-        val treasury: Keys,
     )
 
     fun run(): Int {
@@ -122,16 +120,14 @@ class E2eFlow(
         simHeight = height0
 
         // ------------------------------------------------ 2. keys (per run, no secrets stored)
-        keys = RunKeys(Keys.random(), Keys.random(), Keys.random(), Keys.random())
+        keys = RunKeys(Keys.random(), Keys.random(), Keys.random())
         recipient = ByteArray(21) { (it * 31 + 5).toByte() }
         val operatorAddress = p2pkAddress(keys.operator)
         log("operator (seller): $operatorAddress")
 
         // ------------------------------------------------ 3. compile (dummy NFT first to measure dust)
-        val treasuryTree = Wire.p2pkTree(keys.treasury.pubKeyCompressed)
-        val treasuryHash = Blake2b256.digest(treasuryTree.bytes())
         val dummyNft = ByteArray(32) { 7 }
-        val probeTrees = ErgoContracts.compileFast(oracleNftId = dummyNft, treasuryScriptHash = treasuryHash)
+        val probeTrees = ErgoContracts.compileFast(oracleNftId = dummyNft)
         val probeOracle = DevOracle(keys.oracle.secret, dummyNft, networkPrefix, boxValueNanoErg = 1_000_000L)
         val autoFundedValue = maxOf(2_000_000L, probeTrees.fundedTree.bytes().size.toLong() * DUST_PER_BYTE)
         val fundedValue = if (config.fundedBoxValueNanoErg != E2eConfig.AUTO_FUNDED_VALUE) {
@@ -140,7 +136,7 @@ class E2eFlow(
             autoFundedValue
         }
         val oracleBoxValue = maxOf(1_000_000L, probeOracle.tree.bytes().size.toLong() * DUST_PER_BYTE)
-        // Covers the release's miner fee + treasury fee box + change dust.
+        // Covers the attestation-posting rotation's miner fee + change dust.
         val oracleFeeBoxValue = 5_000_000L
         val collateralBoxValue = 2_000_000L
         val buyerBoxValue = 5_000_000L
@@ -168,7 +164,7 @@ class E2eFlow(
         // Recompile against the REAL NFT id (the mint tx's first input box id).
         nftIdHex = setup.nftIdHex
         collateralTokenIdHex = setup.collateralTokenIdHex
-        val trees = ErgoContracts.compileFast(oracleNftId = Hex.decode(nftIdHex), treasuryScriptHash = treasuryHash)
+        val trees = ErgoContracts.compileFast(oracleNftId = Hex.decode(nftIdHex))
         val devOracle = DevOracle(
             keys.oracle.secret, Hex.decode(nftIdHex), networkPrefix,
             boxValueNanoErg = setup.oracleBox.value,
@@ -178,8 +174,8 @@ class E2eFlow(
             "recompiled oracle tree does not match the minted oracle box"
         }
         fundedValueForFund = fundedValue
-        val operatorBuilder = newOperatorBuilder(trees, treasuryTree, fundedValue)
-        val claimBuilder = newClaimBuilder(trees, treasuryTree)
+        val operatorBuilder = newOperatorBuilder(trees, fundedValue)
+        val claimBuilder = newClaimBuilder(trees)
         val oracle = OracleState(devOracle, setup.oracleBox, setup.oracleFeeBox)
         summary["nftId"] = nftIdHex
         summary["collateralTokenId"] = collateralTokenIdHex
@@ -208,17 +204,43 @@ class E2eFlow(
         val txIds: Map<String, String>,
     )
 
-    /** The oracle co-signs through the REAL explorer-parsed box — ids and heights must match the network. */
-    private class OracleState(val devOracle: DevOracle, var box: ChainBox, var feeBox: ChainBox) {
-        fun signer(): OracleSigner {
-            val delegate = devOracle.signer()
-            val input = box
-            return object : OracleSigner {
-                override val oracleNftId: ByteArray get() = delegate.oracleNftId
-                override fun oracleInputBox(): ChainBox = input
-                override fun sign(tx: org.ergoplatform.appkit.UnsignedTransaction) = delegate.sign(tx)
-            }
+    /** The oracle's on-chain state: its singleton box and an oracle-key fee box. */
+    private class OracleState(val devOracle: DevOracle, var box: ChainBox, var feeBox: ChainBox)
+
+    /**
+     * Posts [attestation] on-chain: an `oracle.es` rotation spend recreating the
+     * singleton box with R4 = the 112-byte payload (oracle.es pins NFT + value
+     * reproduction at OUTPUTS(0); registers are unconstrained). Returns the
+     * posted box — the release's DATA INPUT. Live: broadcast through the real
+     * explorer-parsed box (ids and heights must match the network); dry-run:
+     * the synthetic spend is recorded, not broadcast.
+     */
+    private fun postAttestation(oracle: OracleState, attestation: PaymentAttestation, height: Int): ChainBox {
+        val rotationTx = assemble(
+            inputs = listOf(oracle.box, oracle.feeBox),
+            candidates = listOf(
+                RawTx.candidate(
+                    oracle.box.value,
+                    oracle.devOracle.tree,
+                    listOf(ChainToken(nftIdHex, 1L)),
+                    height,
+                    registers = listOf(4 to sigma.ast.ByteArrayConstant.apply(attestation.encode())),
+                ),
+            ),
+            height = height,
+            secrets = listOf(keys.oracle.secret),
+            // The rotation's change returns to the oracle key — it doubles as
+            // the oracle's fee box for any later posting.
+            changeTree = Wire.p2pkTree(keys.oracle.pubKeyCompressed),
+        )
+        val rotationTxId = broadcastAndConfirm("flowA.oraclePostAttestation", rotationTx)
+        val posted = txOutputs(rotationTxId).first { out -> out.tokens.any { it.tokenId == nftIdHex && it.amount == 1L } }
+        oracle.box = posted
+        oracle.feeBox = txOutputs(rotationTxId).first {
+            it.tokens.isEmpty() &&
+                it.ergoTreeHex.equals(Wire.treeHex(Wire.p2pkTree(keys.oracle.pubKeyCompressed)), ignoreCase = true)
         }
+        return posted
     }
 
     private fun setup(
@@ -297,7 +319,7 @@ class E2eFlow(
             recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = height + config.reclaimTimeoutBlocks,
-            fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.feeBoxValueNanoErg + config.minerFeeNanoErg + 1_000_000L),
+            fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.minerFeeNanoErg + 1_000_000L),
             currentHeight = height,
             changeAddress = p2pkAddress(keys.operator),
             signer = proverSigner(keys.operator.secret),
@@ -315,34 +337,32 @@ class E2eFlow(
             srcBlockHeight = height.toLong(), srcBlockTime = nowSec(),
         )
 
+        // The oracle posts the attestation: an oracle.es rotation spend recreating
+        // the singleton box with R4 = the payload. The release then takes that box
+        // as a DATA INPUT — no oracle signature — and is operator-wallet-only.
+        val attestationBox = postAttestation(oracle, attestation, buildHeight())
         val releaseTx = operatorBuilder.buildRelease(
             fundedBox = fundedBox,
-            oracle = oracle.signer(),
+            oracleDataInput = attestationBox,
             attestation = attestation,
-            feeInputs = listOf(oracle.feeBox),
+            feeInputs = operatorErgInputs(config.minerFeeNanoErg + 1_000_000L),
             currentHeight = buildHeight(),
-            changeAddress = p2pkAddress(keys.oracle),
+            changeAddress = p2pkAddress(keys.operator),
+            signer = proverSigner(keys.operator.secret),
         )
         val releaseTxId = broadcastAndConfirm("flowA.release", releaseTx)
 
         // Live: discover the spend from the chain; dry-run: the release tx IS the spend.
         val spendTxId = if (config.dryRun) releaseTxId else pollSpent(fundedBox.boxId, "flowA: vault spend")
         val outs = txOutputs(spendTxId)
-        val sellerOut = requirePayout(outs, collateralTokenIdHex, netAmount(terms), Wire.p2pkTree(keys.operator.pubKeyCompressed), "seller")
-        val nftOut = outs.firstOrNull { out -> out.tokens.any { it.tokenId == nftIdHex && it.amount == 1L } }
-            ?: fail("flowA: oracle NFT not preserved in the release outputs")
-        log("flowA ok: seller paid ${netAmount(terms)} (net of ${ContractParams.PROTOCOL_FEE_BPS} bps fee), oracle NFT preserved in box ${nftOut.boxId}")
+        val sellerOut = requirePayout(outs, collateralTokenIdHex, terms.amount, Wire.p2pkTree(keys.operator.pubKeyCompressed), "seller")
+        log("flowA ok: seller paid ${terms.amount} in full; attestation box ${attestationBox.boxId} rode as the data input")
 
         summary["flowA"] = mapOf(
             "fundTxId" to fundTxId, "releaseTxId" to releaseTxId, "spendTxId" to spendTxId,
             "fundedBoxId" to fundedBox.boxId, "sellerPayoutBoxId" to sellerOut.boxId,
+            "attestationBoxId" to attestationBox.boxId,
         )
-        // The release spends the oracle box + fee box and recreates both — refresh for any later use.
-        oracle.box = outs.first { it.tokens.any { t -> t.tokenId == nftIdHex } }
-        oracle.feeBox = outs.first {
-            it.tokens.isEmpty() &&
-                it.ergoTreeHex.equals(Wire.treeHex(Wire.p2pkTree(keys.oracle.pubKeyCompressed)), ignoreCase = true)
-        }
         // The fund tx change carries the remaining collateral back to the operator.
         return txOutputs(fundTxId).first { it.tokenAmount(collateralTokenIdHex) > 0 && it.boxId != fundedBox.boxId }
     }
@@ -364,7 +384,7 @@ class E2eFlow(
             recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = height + config.reclaimTimeoutBlocks,
-            fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.feeBoxValueNanoErg + config.minerFeeNanoErg + 1_000_000L),
+            fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.minerFeeNanoErg + 1_000_000L),
             currentHeight = height,
             changeAddress = p2pkAddress(keys.operator),
             signer = proverSigner(keys.operator.secret),
@@ -404,8 +424,8 @@ class E2eFlow(
 
         val spendTxId = if (config.dryRun) payoutTxId else pollSpent(provenBox.boxId, "flowB: proven box spend")
         val outs = txOutputs(spendTxId)
-        val buyerOut = requirePayout(outs, collateralTokenIdHex, netAmount(terms), Wire.p2pkTree(keys.buyer.pubKeyCompressed), "buyer")
-        log("flowB ok: buyer paid ${netAmount(terms)} (net of ${ContractParams.PROTOCOL_FEE_BPS} bps fee) after dispute")
+        val buyerOut = requirePayout(outs, collateralTokenIdHex, terms.amount, Wire.p2pkTree(keys.buyer.pubKeyCompressed), "buyer")
+        log("flowB ok: buyer paid ${terms.amount} in full after dispute")
 
         summary["flowB"] = mapOf(
             "fundTxId" to fundTxId, "claimOpenTxId" to openTxId, "claimPayoutTxId" to payoutTxId,
@@ -431,7 +451,7 @@ class E2eFlow(
             recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = timeoutHeight,
-            fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.feeBoxValueNanoErg + config.minerFeeNanoErg + 1_000_000L),
+            fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.minerFeeNanoErg + 1_000_000L),
             currentHeight = height,
             changeAddress = p2pkAddress(keys.operator),
             signer = proverSigner(keys.operator.secret),
@@ -452,8 +472,8 @@ class E2eFlow(
 
         val spendTxId = if (config.dryRun) reclaimTxId else pollSpent(fundedBox.boxId, "flowC: vault spend")
         val outs = txOutputs(spendTxId)
-        val sellerOut = requirePayout(outs, collateralTokenIdHex, netAmount(terms), Wire.p2pkTree(keys.operator.pubKeyCompressed), "seller")
-        log("flowC ok: seller refunded ${netAmount(terms)} (net of ${ContractParams.PROTOCOL_FEE_BPS} bps fee) after timeout")
+        val sellerOut = requirePayout(outs, collateralTokenIdHex, terms.amount, Wire.p2pkTree(keys.operator.pubKeyCompressed), "seller")
+        log("flowC ok: seller refunded ${terms.amount} in full after timeout")
 
         summary["flowC"] = mapOf(
             "fundTxId" to fundTxId, "reclaimTxId" to reclaimTxId, "spendTxId" to spendTxId,
@@ -527,11 +547,6 @@ class E2eFlow(
     /** The vault box value the current operatorBuilder was configured with. */
     private var fundedValueForFund: Long = 0L
 
-    private fun netAmount(terms: DealTerms): Long {
-        val fee = terms.amount * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        return terms.amount - fee
-    }
-
     private fun dealTerms(nonce: Int): DealTerms = DealTerms(
         dealNonce = ByteArray(16) { (it + nonce * 16).toByte() },
         asset = 1,
@@ -558,19 +573,17 @@ class E2eFlow(
             sigma.data.ProveDlog.apply(Wire.decodePoint(keys.pubKeyCompressed)), networkType,
         ).toString()
 
-    private fun newOperatorBuilder(trees: ErgoContracts.VaultTrees, treasuryTree: ErgoTree, fundedValue: Long) =
+    private fun newOperatorBuilder(trees: ErgoContracts.VaultTrees, fundedValue: Long) =
         OperatorTxBuilder(
-            trees, treasuryTree,
+            trees,
             minerFeeNanoErg = config.minerFeeNanoErg,
-            feeBoxValueNanoErg = config.feeBoxValueNanoErg,
             fundedBoxValueNanoErg = fundedValue,
         )
 
-    private fun newClaimBuilder(trees: ErgoContracts.VaultTrees, treasuryTree: ErgoTree) =
+    private fun newClaimBuilder(trees: ErgoContracts.VaultTrees) =
         ClaimTxBuilder(
-            trees, treasuryTree,
+            trees,
             minerFeeNanoErg = config.minerFeeNanoErg,
-            feeBoxValueNanoErg = config.feeBoxValueNanoErg,
             claimMaturationBlocks = ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS,
             handoffRecordMaxAgeMs = ErgoContracts.Fast.HANDOFF_RECORD_MAX_AGE_MS,
         )
@@ -602,6 +615,8 @@ class E2eFlow(
         inputs: List<ChainBox>,
         candidates: List<org.ergoplatform.ErgoBoxCandidate>,
         height: Int,
+        secrets: List<BigInteger> = listOf(keys.operator.secret),
+        changeTree: ErgoTree = Wire.p2pkTree(keys.operator.pubKeyCompressed),
     ): SignedTransaction = RawTx.assemble(
         inputs = inputs.map { RawTx.toErgoBox(it, RawTx.decodeTree(it)) },
         candidates = candidates,
@@ -609,14 +624,14 @@ class E2eFlow(
         minChangeNanoErg = 1_000_000L,
         currentHeight = height,
         txTimestampMs = nowMillis(),
-        changeTree = Wire.p2pkTree(keys.operator.pubKeyCompressed),
+        changeTree = changeTree,
         networkType = networkType,
-        secrets = listOf(keys.operator.secret),
+        secrets = secrets,
     )
 
     /**
-     * Extra operator ERG for fund txs (the vault box value + treasury fee box
-     * + miner fee + change dust ride on top of the collateral box's ERG):
+     * Extra operator ERG for fund txs (the vault box value + miner fee +
+     * change dust ride on top of the collateral box's ERG):
      * live — real selected UTXOs; dry-run — a synthetic operator-keyed box.
      */
     private fun operatorErgInputs(minTotal: Long): List<ChainBox> = if (config.dryRun) {

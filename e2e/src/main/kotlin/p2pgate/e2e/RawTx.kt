@@ -58,12 +58,15 @@ object RawTx {
         tree: ErgoTree,
         tokens: List<ChainToken>,
         creationHeight: Int,
+        registers: List<Pair<Int, sigma.ast.EvaluatedValue<out sigma.ast.SType>>> = emptyList(),
     ): ErgoBoxCandidate = ErgoBridge.candidate(
         value,
         tree,
         creationHeight,
         if (tokens.isEmpty()) ErgoBridge.emptyTokens() else ErgoBridge.tokens(tokens.map { Tuple2(Hex.decode(it.tokenId), it.amount) }),
-        ErgoBridge.regs(emptyList()),
+        if (registers.isEmpty()) ErgoBridge.regs(emptyList()) else ErgoBridge.regs(
+            registers.map { Tuple2(ErgoBridge.regId(it.first), it.second) },
+        ),
     )
 
     /**

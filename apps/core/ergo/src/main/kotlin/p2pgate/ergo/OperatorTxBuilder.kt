@@ -2,13 +2,8 @@ package p2pgate.ergo
 
 import org.ergoplatform.appkit.NetworkType
 import org.ergoplatform.appkit.SignedTransaction
-import p2pgate.contracts.ContractParams
 import p2pgate.dealprotocol.DealTerms
-import scala.Tuple2
 import sigma.ast.ErgoTree
-import sigma.ast.EvaluatedValue
-import sigma.ast.SType
-import sigma.serialization.ValueSerializer
 
 /**
  * Builds the four vault transactions only the operator backend ever
@@ -17,37 +12,34 @@ import sigma.serialization.ValueSerializer
  *  - [buildFund] — create the FUNDED box (R4–R9 per `specs/vault-contract.md`
  *    §3.1), collateral in, deal parameters pinned;
  *  - [buildReclaim] — path A: `HEIGHT > timeoutHeight` (R8), seller-signed,
- *    seller paid minus the protocol fee (§6 treasury fee output);
- *  - [buildRelease] — path C from the FUNDED box: the oracle box as a full
- *    input (NFT pinned in R7), the 112-byte attestation as
- *    context var 0, digest field checks vs R4/R9 in-script — nothing else (v2:
- *    the phase-1 oracle's attestation alone releases the vault);
+ *    seller paid in full;
+ *  - [buildRelease] — path C from the FUNDED box: the oracle box as a DATA
+ *    INPUT (NFT pinned in R7), its R4 carrying the 112-byte attestation —
+ *    digest field checks vs R4/R9 in-script, no oracle signature anywhere
+ *    (v2: the phase-1 oracle's attestation alone releases the vault);
  *  - [buildContest] — path C′: the same from the PAYMENT_PROVEN box (the
  *    oracle NFT id is the compile-time pin of the proven tree, §8.3 item 3).
  *
  * Same style as [ClaimTxBuilder]: plain-JVM [ChainBox] inputs, a signer
- * callback ([DealTxSigner] / [OracleSigner]), offline assembly via
- * [TxAssembly]. Every successful build is prover-verified against the compiled
- * scripts by the suite's offline prover.
+ * callback ([DealTxSigner]), offline assembly via [TxAssembly]. Every
+ * successful build is prover-verified against the compiled scripts by the
+ * suite's offline prover.
  *
- * ## The release's oracle input
+ * ## The release's oracle data input
  *
- * The vault authenticates the release by NFT presence among the inputs; the
- * input's own script must validate in the same transaction. The
- * `oracle.es`-governed box is that input: its self-reproduction is pinned at
- * `OUTPUTS(0)` (same tree, same NFT id + amount, value ≥ input value), so on
- * joint release spends the vault pays the seller at `OUTPUTS(1)` (v2,
- * 2026-09-17 — see `specs/vault-contract.md` §8.4).
+ * The vault authenticates the release by NFT presence on
+ * `CONTEXT.dataInputs(0)` and reads the attestation payload from that box's
+ * R4. A data input's script never executes, so release/contest txs are
+ * operator-wallet-only — the oracle does NOT co-sign (the oracle's
+ * involvement is posting the attestation box on-chain in the first place,
+ * via its own `oracle.es` rotation spend). The seller payout therefore
+ * sits at `OUTPUTS(0)`, sharing the slot convention with every other path.
  */
 class OperatorTxBuilder(
     /** Compiled vault parameter set the boxes are expected to carry. */
     private val trees: ErgoContracts.VaultTrees,
-    /** The treasury proposition whose `blake2b256` equals the compiled `TREASURY_SCRIPT_HASH` (§6). */
-    private val treasuryTree: ErgoTree,
     /** Miner fee, nanoERG (default 0.001 ERG — the protocol minimum). */
     private val minerFeeNanoErg: Long = 1_000_000L,
-    /** ERG value of the treasury fee output. */
-    private val feeBoxValueNanoErg: Long = 100_000L,
     /** Change below this is rejected (dust protection); exact-zero change is allowed. */
     private val minChangeNanoErg: Long = 1_000_000L,
     /** Default ERG value of the FUNDED box the fund tx creates. */
@@ -62,11 +54,6 @@ class OperatorTxBuilder(
         require(minerFeeNanoErg >= ClaimTxBuilder.MIN_MINER_FEE_NANO_ERG) {
             "miner fee $minerFeeNanoErg below protocol minimum ${ClaimTxBuilder.MIN_MINER_FEE_NANO_ERG}"
         }
-        require(feeBoxValueNanoErg > 0) { "fee box value must be positive" }
-        val treasuryHash = SchnorrVerifier.blake2b256(treasuryTree.bytes())
-        require(treasuryHash.contentEquals(trees.treasuryScriptHash)) {
-            "treasuryTree hash does not match the compiled TREASURY_SCRIPT_HASH — fee outputs would be rejected"
-        }
     }
 
     /**
@@ -74,9 +61,7 @@ class OperatorTxBuilder(
      * buyer's raw USDT address payload (padded per chain into R9); the deal
      * amount of [collateralTokenId] (USE) is drawn from [fundingInputs]
      * (surplus collateral rides the change output). The box's R8 pins the
-     * plain `Long` `timeoutHeight`; R7 is the 32-byte `oracleNftId`. The
-     * protocol fee is a compile-time contract constant
-     * ([ContractParams.PROTOCOL_FEE_BPS]) — it is not a funding parameter.
+     * plain `Long` `timeoutHeight`; R7 is the 32-byte `oracleNftId`.
      */
     fun buildFund(
         dealTerms: DealTerms,
@@ -145,9 +130,8 @@ class OperatorTxBuilder(
 
     /**
      * Reclaim (path A): spends the FUNDED box once `HEIGHT > timeoutHeight`
-     * (R8), paying `collateral − fee` to the seller's R5 deal key (the contract
-     * pins OUTPUTS(0) to `proveDlog(sellerPubKey)`) plus the §6 treasury fee
-     * output. The seller signs.
+     * (R8), paying the full collateral to the seller's R5 deal key (the
+     * contract pins OUTPUTS(0) to `proveDlog(sellerPubKey)`). The seller signs.
      */
     fun buildReclaim(
         fundedBox: ChainBox,
@@ -171,16 +155,14 @@ class OperatorTxBuilder(
         }
 
         val useToken = fundedBox.tokens.first()
-        val collateral = useToken.amount
-        val fee = collateral * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        val sellerAmount = collateral - fee
+        val sellerAmount = useToken.amount
         require(sellerAmount > 0) {
-            "protocol fee leaves no seller payout (collateral $collateral, fee $fee)"
+            "collateral $sellerAmount — the reclaim tx would carry a zero-amount token"
         }
 
         // The contract pays the R5 seller key — reclaim is seller-signed.
         val sellerTree = ErgoValues.p2pkTree(sellerPk)
-        val candidates = mutableListOf(
+        val candidates = listOf(
             TxAssembly.candidate(
                 value = fundedBox.value,
                 tree = sellerTree,
@@ -189,15 +171,6 @@ class OperatorTxBuilder(
                 creationHeight = currentHeight,
             ),
         )
-        if (fee > 0) {
-            candidates += TxAssembly.candidate(
-                value = feeBoxValueNanoErg,
-                tree = treasuryTree,
-                tokens = listOf(ChainToken(useToken.tokenId, fee)),
-                registers = emptyList(),
-                creationHeight = currentHeight,
-            )
-        }
 
         val inputs = listOf(TxAssembly.toErgoBox(fundedBox, trees.fundedTree)) + feeInputs.map { TxAssembly.toErgoBox(it, TxAssembly.decodeTree(it)) }
         return TxAssembly.assemble(
@@ -216,19 +189,22 @@ class OperatorTxBuilder(
     }
 
     /**
-     * Release (path C) from the FUNDED box: the oracle box as a full input
-     * (NFT == R7), the 112-byte [attestation] as context var 0.
-     * The oracle co-signs via [oracle]; the tx pays `collateral − fee` to the
-     * seller's R5 key plus the §6 fee output, and recreates the oracle input
-     * box (see the class doc).
+     * Release (path C) from the FUNDED box: [oracleDataInput] is the oracle
+     * singleton box attached as a read-only data input — it must carry the
+     * NFT pinned in the box's R7 and the 112-byte [attestation] payload in
+     * its R4 (build-time mirror checks fail fast, exactly the in-script
+     * conditions). No oracle co-signature: the tx is [signer]-signed
+     * (operator wallet) and pays the full collateral to the seller's R5 key
+     * at OUTPUTS(0).
      */
     fun buildRelease(
         fundedBox: ChainBox,
-        oracle: OracleSigner,
+        oracleDataInput: ChainBox,
         attestation: PaymentAttestation,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
         changeAddress: String,
+        signer: DealTxSigner,
     ): SignedTransaction {
         require(fundedBox.ergoTreeHex.equals(trees.fundedPropositionHex, ignoreCase = true)) {
             "input box is not a FUNDED vault box of this contract"
@@ -239,27 +215,29 @@ class OperatorTxBuilder(
         return buildOracleRelease(
             vaultBox = fundedBox,
             vaultTree = trees.fundedTree,
-            oracle = oracle,
+            oracleDataInput = oracleDataInput,
             attestation = attestation,
             feeInputs = feeInputs,
             currentHeight = currentHeight,
             changeAddress = changeAddress,
             nftPin = nftPin,
+            signer = signer,
         )
     }
 
     /**
      * Contest (path C′) from the PAYMENT_PROVEN box: same gate as
-     * [buildRelease] — the oracle digest alone counters any claim. The oracle
-     * NFT id is the compile-time pin of the proven tree (§8.3 item 3).
+     * [buildRelease] — the oracle attestation alone counters any claim. The
+     * oracle NFT id is the compile-time pin of the proven tree (§8.3 item 3).
      */
     fun buildContest(
         provenBox: ChainBox,
-        oracle: OracleSigner,
+        oracleDataInput: ChainBox,
         attestation: PaymentAttestation,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
         changeAddress: String,
+        signer: DealTxSigner,
     ): SignedTransaction {
         require(provenBox.ergoTreeHex.equals(trees.provenPropositionHex, ignoreCase = true)) {
             "input box is not a PAYMENT_PROVEN vault box of this contract"
@@ -267,12 +245,13 @@ class OperatorTxBuilder(
         return buildOracleRelease(
             vaultBox = provenBox,
             vaultTree = trees.provenTree,
-            oracle = oracle,
+            oracleDataInput = oracleDataInput,
             attestation = attestation,
             feeInputs = feeInputs,
             currentHeight = currentHeight,
             changeAddress = changeAddress,
             nftPin = trees.oracleNftId,
+            signer = signer,
         )
     }
 
@@ -281,12 +260,13 @@ class OperatorTxBuilder(
     private fun buildOracleRelease(
         vaultBox: ChainBox,
         vaultTree: ErgoTree,
-        oracle: OracleSigner,
+        oracleDataInput: ChainBox,
         attestation: PaymentAttestation,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
         changeAddress: String,
         nftPin: ByteArray,
+        signer: DealTxSigner,
     ): SignedTransaction {
         require(feeInputs.isNotEmpty()) { "at least one fee input is required" }
 
@@ -296,9 +276,21 @@ class OperatorTxBuilder(
         require(vaultBox.tokens.isNotEmpty()) { "vault box carries no collateral tokens" }
         val binding = parseFundingBinding(r9)
 
-        // Build-time mirror of the in-script digest field checks (vault_funded.es
-        // path C / vault_payment_proven.es path C′ fieldsOk): reject before
-        // broadcasting what the contract would burn a fee rejecting.
+        // Build-time mirror of the in-script release conditions
+        // (vault_funded.es path C / vault_payment_proven.es path C′): the data
+        // input must carry the pinned NFT, its R4 must hold exactly the
+        // attestation payload, and the attestation fields must match the
+        // vault's R4/R9 — reject before broadcasting what the contract would
+        // burn a fee rejecting.
+        val nftHex = Base16.encode(nftPin)
+        require(oracleDataInput.tokens.any { it.tokenId.equals(nftHex, ignoreCase = true) }) {
+            "oracle data input carries no oracle NFT (pinned id mismatch)"
+        }
+        val payloadBytes = oracleDataInput.registerBytes(4)
+            ?: throw IllegalArgumentException("oracle data input has no R4 attestation payload")
+        require(payloadBytes.contentEquals(attestation.encode())) {
+            "oracle data input R4 payload does not match the attestation"
+        }
         require(attestation.dealId.contentEquals(dealId)) { "attestation dealId does not match the vault's R4" }
         require(attestation.srcChainId == binding.chainId) {
             "attestation srcChainId 0x%02x does not match the R9 binding 0x%02x".format(attestation.srcChainId, binding.chainId)
@@ -313,63 +305,29 @@ class OperatorTxBuilder(
             "attestation amount ${attestation.amount} does not match the R9 binding's expectedAmount ${binding.amount}"
         }
 
-        // Oracle authentication: a full input carrying the pinned NFT. This is
-        // the in-script oracleOk check, enforced before the oracle co-signs.
-        val oracleBox = oracle.oracleInputBox()
-        val nftHex = Base16.encode(nftPin)
-        require(oracleBox.tokens.any { it.tokenId.equals(nftHex, ignoreCase = true) }) {
-            "oracle input box carries no oracle NFT (pinned id mismatch)"
-        }
-
         val useToken = vaultBox.tokens.first()
-        val collateral = useToken.amount
-        val fee = collateral * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        val sellerAmount = collateral - fee
+        val sellerAmount = useToken.amount
         require(sellerAmount > 0) {
-            "protocol fee leaves no seller payout (collateral $collateral, fee $fee)"
+            "collateral $sellerAmount — the release tx would carry a zero-amount token"
         }
 
-        // OUTPUTS(0): the oracle input recreated — oracle.es pins its reproduction
-        // at index 0 (same tree, same tokens, NFT id + amount preserved, value ≥
-        // input value).
-        val candidates = mutableListOf(
-            TxAssembly.candidateRaw(
-                value = oracleBox.value,
-                tree = TxAssembly.decodeTree(oracleBox),
-                tokens = oracleBox.tokens,
-                registers = oracleBox.registers.mapIndexedNotNull { i, reg ->
-                    if (reg == null) null else Tuple2(
-                        ErgoBridge.regId(i + 4),
-                        ValueSerializer.deserialize(reg.serialized, 0) as EvaluatedValue<out SType>,
-                    )
-                },
+        // OUTPUTS(0): seller payout — the contract pins R5's key and the full collateral.
+        val candidates = listOf(
+            TxAssembly.candidate(
+                value = vaultBox.value,
+                tree = ErgoValues.p2pkTree(sellerPk),
+                tokens = listOf(ChainToken(useToken.tokenId, sellerAmount)),
+                registers = emptyList(),
                 creationHeight = currentHeight,
             ),
         )
-        // OUTPUTS(1): seller payout — the contract pins R5's key and collateral − fee.
-        candidates += TxAssembly.candidate(
-            value = vaultBox.value,
-            tree = ErgoValues.p2pkTree(sellerPk),
-            tokens = listOf(ChainToken(useToken.tokenId, sellerAmount)),
-            registers = emptyList(),
-            creationHeight = currentHeight,
-        )
-        if (fee > 0) {
-            candidates += TxAssembly.candidate(
-                value = feeBoxValueNanoErg,
-                tree = treasuryTree,
-                tokens = listOf(ChainToken(useToken.tokenId, fee)),
-                registers = emptyList(),
-                creationHeight = currentHeight,
-            )
-        }
 
-        val contextVars = mapOf(0 to ErgoValues.collBytesConstant(attestation.encode()))
-        val inputs = listOf(TxAssembly.toErgoBox(vaultBox, vaultTree), TxAssembly.toErgoBox(oracleBox, TxAssembly.decodeTree(oracleBox))) +
+        val inputs = listOf(TxAssembly.toErgoBox(vaultBox, vaultTree)) +
             feeInputs.map { TxAssembly.toErgoBox(it, TxAssembly.decodeTree(it)) }
         return TxAssembly.assemble(
             inputs = inputs,
-            contextVars = contextVars,
+            dataInputs = listOf(TxAssembly.toErgoBox(oracleDataInput, TxAssembly.decodeTree(oracleDataInput))),
+            contextVars = emptyMap(),
             contextVarInputIndex = 0,
             candidates = candidates,
             minerFeeNanoErg = minerFeeNanoErg,
@@ -378,7 +336,7 @@ class OperatorTxBuilder(
             txTimestampMs = null,
             changeAddress = changeAddress,
             networkType = networkType,
-            signer = oracle,
+            signer = signer,
         )
     }
 

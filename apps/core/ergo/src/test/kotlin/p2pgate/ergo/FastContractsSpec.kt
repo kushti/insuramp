@@ -20,12 +20,10 @@ class FastContractsSpec {
 
     private val f = ErgoTestFixtures
 
-    private val fastTrees: ErgoContracts.VaultTrees =
-        ErgoContracts.compileFast(treasuryScriptHash = f.treasuryHash)
+    private val fastTrees: ErgoContracts.VaultTrees = ErgoContracts.compileFast()
 
     private val fastBuilder: ClaimTxBuilder = ClaimTxBuilder(
         fastTrees,
-        f.treasuryTree,
         claimMaturationBlocks = ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS,
         handoffRecordMaxAgeMs = ErgoContracts.Fast.HANDOFF_RECORD_MAX_AGE_MS,
     )
@@ -35,14 +33,12 @@ class FastContractsSpec {
         assertEquals(org.ergoplatform.appkit.NetworkType.MAINNET, fastTrees.networkType)
         assertTrue(fastTrees.fundedPropositionHex.isNotBlank())
         assertTrue(fastTrees.provenPropositionHex.isNotBlank())
-        // The treasury pin and oracle NFT carry over.
-        assertTrue(fastTrees.treasuryScriptHash.contentEquals(f.treasuryHash))
+        // The oracle NFT carries over.
         assertTrue(fastTrees.oracleNftId.contentEquals(f.trees.oracleNftId))
         // Testnet remains selectable via the networkPrefix parameter: same
         // trees, testnet rendering — the P2S addresses differ from the
         // mainnet bundle.
         val testnetTrees = ErgoContracts.compileFast(
-            treasuryScriptHash = f.treasuryHash,
             networkPrefix = ContractParams.NETWORK_PREFIX_TESTNET,
         )
         assertEquals(org.ergoplatform.appkit.NetworkType.TESTNET, testnetTrees.networkType)
@@ -71,7 +67,7 @@ class FastContractsSpec {
     @Test
     fun `canonical builder still enforces the canonical maturation at the same height`() {
         val terms = f.dealTerms()
-        val canonical = ClaimTxBuilder(f.trees, f.treasuryTree)
+        val canonical = ClaimTxBuilder(f.trees)
         assertFailsWith<IllegalArgumentException> {
             canonical.buildClaimPayout(
                 provenBox = f.provenChainBox(terms, proofHeight = 100),

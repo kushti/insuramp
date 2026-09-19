@@ -103,7 +103,7 @@ class LifecycleSpec {
         env.watcher.tick(claimAt.plus(Duration.ofHours(12)))
         assertEquals(DealState.CLAIMABLE, env.store.getDeal(deal.dealId)!!.state)
 
-        // The buyer's path-D spend lands: collateral minus fee pays the buyer.
+        // The buyer's path-D spend lands: the full collateral pays the buyer.
         val provenId = env.store.getDeal(deal.dealId)!!.provenBoxId!!
         val payout = Fx.payoutBox(Fx.buyer.pubKeyCompressed, Fx.useTokenIdHex, deal.amount, "c1".repeat(32))
         env.chain.spend(provenId, "b2".repeat(32), ChainSpend("b2".repeat(32), 1600, listOf(payout)))

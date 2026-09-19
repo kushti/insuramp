@@ -24,8 +24,8 @@ import java.time.Instant
  * - RELEASED = box spent via path C/C′, gated on the oracle attestation of the
  *   seller's USDT transfer **alone** — the phase-1 oracle is trusted, period.
  *   RECLAIMED = path A (HEIGHT > timeoutHeight); CLAIMED = path D (HEIGHT >
- *   proofHeight + CLAIM_MATURATION). All collateral-moving paths deduct the
- *   protocol fee (a compile-time contract constant, `ContractParams.PROTOCOL_FEE_BPS`).
+ *   proofHeight + CLAIM_MATURATION). All collateral-moving paths pay the
+ *   recipient in full — there is no protocol fee.
  *
  * Design decisions, made explicit for review:
  * - RECLAIMED is accepted only from FUNDED (buyer no-show — nothing happened) and
@@ -40,9 +40,9 @@ import java.time.Instant
  *   awaits the seller's path C′ counter-spend rather than leaving a zombie claim).
  * - RELEASED is accepted from PAYMENT_CONFIRMED (routine path C) and from
  *   CLAIM_OPENED / CLAIMABLE (path C′). It is also accepted from PAYMENT_PENDING:
- *   the on-chain C-spend carries the oracle box as a full input, i.e. it *is* the
- *   oracle attestation, so observing the spend subsumes the off-chain signal when
- *   the two race.
+ *   the on-chain C-spend carries the oracle box as a data input, i.e. it *is*
+ *   the oracle attestation, so observing the spend subsumes the off-chain
+ *   signal when the two race.
  */
 data class DealStateMachine(
     val state: DealState = DealState.QUOTED,
@@ -115,7 +115,7 @@ data class DealStateMachine(
             else -> invalid("release requires a collected cash handoff")
         }
 
-        // Path A: vault_funded.es timeout spend back to the seller (minus fee).
+        // Path A: vault_funded.es timeout spend back to the seller (in full).
         // Contract guard equivalent: HEIGHT > timeoutHeight. From FUNDED = no-show.
         // From PAYMENT_CONFIRMED = the seller already paid (the digest exists) and
         // the buyer ghosted — the buyer keeps the USDT, so the reclaim harms no one.
@@ -172,7 +172,7 @@ data class DealStateMachine(
         }
 
         // Path D: vault_payment_proven.es payout spend to the buyer's deal-key address
-        // (minus fee). Buyer-side tx, built by the buyer app (specs/android-app.md §4.3).
+        // (in full). Buyer-side tx, built by the buyer app (specs/android-app.md §4.3).
         // Accepted from CLAIMABLE even when contested: the machine tracks what the
         // chain allows, and the contract cannot see the oracle signal.
         is DealEvent.ClaimPaid -> when (state) {

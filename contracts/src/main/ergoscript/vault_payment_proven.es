@@ -4,12 +4,14 @@
 // The box exists so CLAIM_MATURATION is anchored to the on-chain moment the claim —
 // the handoff record — landed (proofHeight in R7). Spending paths (see
 // specs/vault-contract.md §4):
-//   C' — release: oracle box as full input (phase-1 NFT, compile-time pin — the proven
-//        box has no spare register for it, R9 carries the copied funding binding) with
-//        the payment-proof digest supplied in-tx (context var 0) — nothing else (v2:
-//        no buyer receipt signature; the oracle is trusted, period); seller paid minus
-//        fee. Oracle-only C' is also how an honest seller counters ANY claim: the
-//        digest alone resolves it.
+//   C' — release: the oracle singleton box as a DATA INPUT (phase-1 NFT,
+//        compile-time pin — the proven box has no spare register for it, R9
+//        carries the copied funding binding) with the 112-byte attestation
+//        payload in the data input's R4 — nothing else (v2: no buyer receipt
+//        signature; the oracle is trusted, period); seller paid in full.
+//        A data input's script never executes, so no oracle signature rides
+//        in the contest tx. Oracle-only C' is also how an honest seller
+//        counters ANY claim: the attestation alone resolves it.
 //   D  — claim:   HEIGHT > proofHeight + CLAIM_MATURATION_BLOCKS, buyer signs
 //
 // Registers:
@@ -24,14 +26,14 @@
 //                        the path C' digest fields are checked against this;
 //                        recipientAddr is the buyer's USDT address (the seller pays the buyer)
 //
-// Context variables (release path only):
-//   (0) Coll[Byte]  payment-proof payload (112 B, specs/oracle-integration.md §2.2 —
-//                   digest of the SELLER's USDT transfer to the R9 buyer address)
+// Context variables: none on either path — the claim discharges proveDlog(buyerKey)
+// and the release payload rides in the oracle data input's R4.
 //
-// ErgoScript vals are lazy and if / Boolean && / || short-circuit, so the release-path
-// material below is only evaluated when the release path is actually taken — a claim
-// spend must not supply context variables. (SigmaProp || would evaluate every branch
-// during proof reduction, so the paths are selected with a Boolean if instead.)
+// ErgoScript vals are lazy and if / Boolean && / || short-circuit, so the
+// release-path material below is only evaluated when the release path is
+// actually taken — a claim spend never touches the oracle data input. (SigmaProp
+// || would evaluate every branch during proof reduction, so the paths are
+// selected with a Boolean if instead.)
 {
   val sellerKey = decodePoint(SELF.R5[Coll[Byte]].get)
   val buyerKey = decodePoint(SELF.R6[Coll[Byte]].get)
@@ -42,63 +44,50 @@
   val chainId = r9(0)
   val tokenIdF = r9(1)
   val recipient = r9.slice(2, 23)
-  // The protocol fee is a compile-time constant (%%FEE_BPS%% bps, §6) — always
-  // charged, so the treasury fee output is always required. NB: rounds down, so
-  // sub-400-unit collaterals yield fee 0 and can never satisfy the fee output
-  // (a box cannot carry a 0-amount token) — the practical minimum deal size.
-  val fee = collateral * %%FEE_BPS%%.toLong / 10000L
-
-  // Oracle authentication (path C'): the oracle box must be a full INPUT of this
-  // transaction carrying the phase-1 oracle NFT. The FUNDED box pins the NFT id in
-  // its R7; the proven box has no spare register for it (R9 carries the copied
-  // funding binding the digest fields are checked against), so the NFT id is a
-  // compile-time pin — the same oracle the funding vault pinned (phase 2 replaces
-  // this check with the guard-set box, §3.3 of the spec). A data input is not sufficient.
-  val oracleOk = INPUTS.exists { (b: Box) => b.tokens.exists { (t: (Coll[Byte], Long)) => t._1 == %%ORACLE_NFT_ID%% } }
-
-  val feeOutOk = OUTPUTS.exists { (o: Box) =>
-    blake2b256(o.propositionBytes) == %%TREASURY_SCRIPT_HASH%% &&
-    o.tokens(0)._1 == useTokenId &&
-    o.tokens(0)._2 == fee
-  }
-  // The fee is always charged (compile-time constant), so the treasury fee
-  // output is always required.
-  val feeOk = feeOutOk
-
-  // Path D pays the buyer into OUTPUTS(0); path C′ shares the transaction with the
-  // oracle box, whose contract pins its own reproduction at OUTPUTS(0) (oracle.es),
-  // so the release payout goes to OUTPUTS(1).
+  // Paths C′ and D both pay out in full at OUTPUTS(0) — the release is no
+  // longer a joint spend with the oracle box (it rides as a data input), so
+  // the old OUTPUTS(1) seller-payout convention is gone.
   val buyerPaid =
     OUTPUTS(0).propositionBytes == proveDlog(buyerKey).propBytes &&
     OUTPUTS(0).tokens(0)._1 == useTokenId &&
-    OUTPUTS(0).tokens(0)._2 == collateral - fee
+    OUTPUTS(0).tokens(0)._2 == collateral
   val sellerPaid =
-    OUTPUTS(1).propositionBytes == proveDlog(sellerKey).propBytes &&
-    OUTPUTS(1).tokens(0)._1 == useTokenId &&
-    OUTPUTS(1).tokens(0)._2 == collateral - fee
+    OUTPUTS(0).propositionBytes == proveDlog(sellerKey).propBytes &&
+    OUTPUTS(0).tokens(0)._1 == useTokenId &&
+    OUTPUTS(0).tokens(0)._2 == collateral
 
   // NB: the proof reducer evaluates every val of the block it is in, so all
-  // getVar-dependent material lives inside the branch that consumes it — a claim
-  // spend never touches it (specs/vault-contract.md §4.2). The payment conditions
-  // are part of the guard so each branch is a bare SigmaProp (a mixed proveDlog &&
-  // Boolean would not type as SigmaProp).
-  if (HEIGHT.toLong > proofH + %%CLAIM_MATURATION_BLOCKS%%.toLong && buyerPaid && feeOk) {
+  // data-input-dependent material lives inside the branch that consumes it —
+  // a claim spend never touches it (specs/vault-contract.md §4.2). The payment
+  // conditions are part of the guard so each branch is a bare SigmaProp (a
+  // mixed proveDlog && Boolean would not type as SigmaProp).
+  if (HEIGHT.toLong > proofH + %%CLAIM_MATURATION_BLOCKS%%.toLong && buyerPaid) {
     // Path D — claim after maturation; the buyer discharges proveDlog(buyerKey).
     proveDlog(buyerKey)
   } else {
-    // Path C' — release, oracle-only: the oracle digest of the SELLER's USDT transfer
-    // (supplied in-tx — this box carries the handoff record, not the digest); no key
-    // needed from the submitter (funds can only go to the seller). Context var 0.
-    // NB: sigma-state 6 only typechecks byteArrayToBigInt when its argument is a
-    // direct expression (no val references), so the conversions stay fully inline.
-    val payload = getVar[Coll[Byte]](0).get
+    // Path C' — release, oracle-only: the oracle singleton box as a DATA INPUT
+    // (its script never executes — no oracle signature), its R4 carrying the
+    // 112-byte attestation payload of the SELLER's USDT transfer (this box
+    // carries the handoff record, not the digest). The data input must carry
+    // the phase-1 oracle NFT — the compile-time pin of this tree (the FUNDED
+    // box pins the NFT id in its R7; the proven box has no spare register for
+    // it, R9 carries the copied funding binding; phase 2 replaces this check
+    // with the guard-set box, §3.3 of the spec). NFT custody is the whole
+    // phase-1 trust root — a data input's script never executes, so any box
+    // carrying the pinned NFT id and a field-matching R4 payload passes.
+    val attestationBox = CONTEXT.dataInputs(0)
+    val payload = attestationBox.R4[Coll[Byte]].get
+    val oracleNftOk = attestationBox.tokens(0)._1 == %%ORACLE_NFT_ID%%
     // The attestation must match THIS vault's deal (fields pinned in R4/R9).
+    // The amount is compared as raw big-endian bytes (both sides carry the
+    // same 8-byte form) — byteArrayToBigInt on a val reference fails the
+    // sigma-state 6 typer.
     val fieldsOk =
       payload.slice(1, 33) == SELF.R4[Coll[Byte]].get &&
       payload(33) == chainId &&
       payload(34) == tokenIdF &&
       payload.slice(35, 56) == recipient &&
-      byteArrayToBigInt(getVar[Coll[Byte]](0).get.slice(56, 64)) == byteArrayToBigInt(SELF.R9[Coll[Byte]].get.slice(23, 31))
-    sigmaProp(oracleOk && fieldsOk && sellerPaid && feeOk)
+      payload.slice(56, 64) == r9.slice(23, 31)
+    sigmaProp(oracleNftOk && fieldsOk && sellerPaid)
   }
 }

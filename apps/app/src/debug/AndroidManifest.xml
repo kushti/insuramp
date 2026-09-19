@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only overlay: permit cleartext to the emulator host loopback so the
+     app can talk to a local demo backend. The release/main manifest has no
+     networkSecurityConfig and therefore stays cleartext-blocked. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:networkSecurityConfig="@xml/network_security_config"
+        tools:targetApi="n" />
+</manifest>

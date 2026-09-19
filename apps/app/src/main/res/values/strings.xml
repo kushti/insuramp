@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand: never translated. -->
+    <string name="app_name" translatable="false">P2PGate</string>
+
+    <!-- Navigation shell -->
+    <string name="nav_quote">Quote</string>
+    <string name="nav_recover">Recover</string>
+    <string name="scan_qr_prompt">Scan the QR code</string>
+
+    <!-- Quote screen -->
+    <string name="quote_title">Buy USDT with cash</string>
+    <string name="fiat_currency_label">Fiat currency</string>
+    <string name="fiat_inr">Indian Rupee</string>
+    <string name="fiat_usd">US Dollar</string>
+    <string name="fiat_ksh">Kenyan Shilling</string>
+    <string name="fiat_currency_option">%1$s — %2$s</string>
+    <string name="quote_amount_label">You hand (smallest unit, e.g. piastres/cents)</string>
+    <string name="quote_address_label">Your USDT receive address (Tron base58 or EIP-55)</string>
+    <string name="quote_best">Best quotes</string>
+    <string name="quote_view_list">List</string>
+    <string name="quote_view_map">Map</string>
+    <string name="quote_refresh">Refresh</string>
+    <string name="quote_refreshing">Refreshing…</string>
+    <string name="quote_stale">Backend unreachable — showing the last known quote.</string>
+    <string name="quote_none">No quote published right now — refresh to retry.</string>
+    <string name="quote_unlocated">The seller didn\'t publish a location for this quote — switch to List to choose it.</string>
+    <string name="quote_creating">Creating deal…</string>
+    <string name="quote_eta">~%1$d min</string>
+    <string name="quote_available">Up to %1$d USDT available</string>
+    <string name="quote_collateral_line">The seller has locked that much collateral — you can claim it if your USDT never arrives.</string>
+    <string name="quote_choose">Choose</string>
+    <string name="quote_create_error">Could not create the deal: %1$s</string>
+    <string name="quote_marker_title">Up to %1$d USDT · ~%2$d min</string>
+
+    <!-- Canonical protocol states (specs/deal-protocol.md §1) → human labels.
+         The canonical name itself is never translated and stays visible in
+         small print next to these labels. -->
+    <string name="state_quoted">Deal quoted — waiting for the seller to lock collateral</string>
+    <string name="state_funded">Seller has locked collateral for your deal</string>
+    <string name="state_payment_pending">Hand cash to the seller</string>
+    <string name="state_payment_confirmed">USDT on its way</string>
+    <string name="state_claim_opened">Claim opened — record on-chain</string>
+    <string name="state_claimable">Claim maturing (~12h)</string>
+    <string name="state_released">Deal complete</string>
+    <string name="state_reclaimed">Timed out — the seller reclaimed the collateral</string>
+    <string name="state_claimed">Collateral paid out to you</string>
+
+    <!-- Deal timeline rows with deal terms interpolated -->
+    <string name="timeline_hand_cash">Hand %1$d %2$s to the seller</string>
+    <string name="timeline_wait_usdt">Wait for %1$d USDT</string>
+
+    <!-- Deal timeline screen -->
+    <string name="deal_title">Deal #%1$s</string>
+    <string name="deal_stale">Backend unreachable — last sync may be stale.</string>
+    <string name="deal_loading">Loading deal…</string>
+    <string name="deal_fiat_amount">%1$d %2$s</string>
+    <string name="deal_collateral_locked">%1$d USDT collateral locked</string>
+    <string name="deal_timeout_running">Vault timeout (RECLAIM_TIMEOUT) in %1$dh %2$dm</string>
+    <string name="deal_timeout_expired">Vault timeout (RECLAIM_TIMEOUT) expired</string>
+    <string name="deal_maturation_running">Claim matures in %1$dh %2$dm</string>
+    <string name="deal_maturation_expired">Claim maturation expired</string>
+    <string name="deal_contested">The seller attached payment evidence — awaiting timeout.</string>
+    <string name="deal_record_warning_title">Don\'t leave without the record — it is your only proof.</string>
+    <string name="deal_record_warning_body">Leaving before the seller-signed record is verified means leaving without a verified record — nothing on-chain proves the cash changed hands.</string>
+    <string name="deal_record_verified">✓ Record verified and saved — safe to leave the meeting.</string>
+    <string name="deal_claim_offer">Cash collected but no USDT? You can claim the %1$d USDT locked collateral.</string>
+    <string name="deal_claim_payout_note">Pays out after ~12h (CLAIM_MATURATION).</string>
+    <string name="deal_stop_polling">Stop background polling</string>
+
+    <!-- Shared actions -->
+    <string name="action_start_claim">Start claim</string>
+    <string name="handoff_scan_qr">Scan the seller\'s handoff QR</string>
+
+    <!-- Handoff (meeting) screen -->
+    <string name="handoff_title">The meeting — your proof of cash</string>
+    <string name="handoff_record_plain">Seller collected %1$d %2$s for deal #%3$s, %4$s</string>
+    <string name="handoff_watch_count">Hand over the cash and watch the seller count it. The seller signs only after the count.</string>
+    <string name="handoff_sig_a_label">Seller signature — a (hex)</string>
+    <string name="handoff_sig_z_label">Seller signature — z (hex)</string>
+    <string name="handoff_rejected">✗ %1$s. Do NOT treat this record as proof.</string>
+    <string name="handoff_reject_not_handoff_qr">Not a P2PGate handoff QR</string>
+    <string name="handoff_reject_invalid">The record does not match this deal, is stale, or its signature is invalid</string>
+    <string name="handoff_missing_seller_key">The seller key is not attached to this deal yet, so the app cannot confirm the record. Do not leave the meeting without resolving this.</string>
+    <string name="handoff_waiting_signature">Waiting for the seller\'s signature…</string>
+    <string name="handoff_scan_to_begin">Scan the seller\'s QR to begin.</string>
+    <string name="handoff_verified">✓ Record verified against your deal.</string>
+    <string name="handoff_saved_relayed">Saved and relayed to the operator.</string>
+    <string name="handoff_saved_relay_failed">Saved on this device — relay failed (%1$s), retrying matters only for the seller\'s status.</string>
+    <string name="handoff_saved_local">Saved on this device…</string>
+    <string name="handoff_safe_to_leave">Safe to leave the meeting.</string>
+    <string name="handoff_not_safe">Leaving now means leaving without a verified record — the verified record is your only dispute artifact.</string>
+
+    <!-- Claim screen -->
+    <string name="claim_title">Claim the seller\'s locked collateral</string>
+    <string name="claim_intro">Cash collected but no USDT? The seller\'s collateral pays you out. This is the collateral-claim path — not a dispute ticket.</string>
+    <string name="claim_not_available">A claim becomes available once cash is collected (deal is %1$s).</string>
+    <string name="claim_maturation_deadline">Claim maturation deadline: %1$d (~12h, CLAIM_MATURATION).</string>
+    <string name="claim_contested">The seller attached oracle evidence — the contract decides; awaiting timeout.</string>
+    <string name="claim_opening">Opening claim…</string>
+    <string name="claim_guide_title">Claim opened — next steps</string>
+    <string name="claim_error">Could not open the claim: %1$s</string>
+
+    <!-- Recover screen -->
+    <string name="recover_title">Recover a deal</string>
+    <string name="recover_instructions">Paste the deal link you saved (or the deal id # token).</string>
+    <string name="recover_input_label">Deal link or id#token</string>
+    <string name="recover_recovering">Recovering…</string>
+    <string name="recover_restore">Restore deal</string>
+    <string name="recover_restored">Deal restored.</string>
+    <string name="recover_error_invalid_link">That does not look like a deal link — check that it has the deal id and the # token.</string>
+    <string name="recover_error_failed">Recovery failed: %1$s</string>
+</resources>

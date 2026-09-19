@@ -2,10 +2,7 @@ package p2pgate.ergo
 
 import org.bouncycastle.crypto.ec.CustomNamedCurves
 import org.bouncycastle.crypto.params.ECDomainParameters
-import org.ergoplatform.appkit.ColdErgoClient
 import org.ergoplatform.appkit.NetworkType
-import org.ergoplatform.appkit.SignedTransaction
-import org.ergoplatform.appkit.UnsignedTransaction
 import p2pgate.contracts.ConstValue
 import p2pgate.contracts.ContractCompiler
 import p2pgate.contracts.ContractParams
@@ -14,51 +11,24 @@ import sigma.ast.ErgoTree
 import java.math.BigInteger
 
 /**
- * The oracle-signing seam for the operator backend (`specs/oracle-integration.md`
- * §3.1, §4.1 "Signing oracle"): the vault manager asks for the oracle's current
- * input box and hands over the unsigned release tx; whatever implements this
- * interface co-signs it. The phase-1 dev oracle implements it in-process; the
- * production backend swaps in a remote signer talking to the attestation API
- * (`POST /v1/attestations`) without touching the builders.
- *
- * Extends [DealTxSigner] so an [OperatorTxBuilder] release/contest can use the
- * oracle as the transaction's single signer callback.
- */
-interface OracleSigner : DealTxSigner {
-
-    /** The phase-1 oracle NFT id the vaults pin (FUNDED R7). */
-    val oracleNftId: ByteArray
-
-    /**
-     * The box to include as a FULL INPUT of the release transaction: it must
-     * carry [oracleNftId] among its tokens (the vault's in-script check).
-     */
-    fun oracleInputBox(): ChainBox
-
-    /** Co-signs [tx] (which spends [oracleInputBox]) with the oracle key. */
-    override fun sign(tx: UnsignedTransaction): SignedTransaction
-}
-
-/**
  * The phase-1 oracle as a dev/test object (`specs/oracle-integration.md` §4 —
  * dev mode): holds the oracle Dlog key and NFT id, compiles `oracle.es`,
- * constructs the current oracle box, and mints [PaymentAttestation]s for deals.
+ * constructs oracle boxes, and mints [PaymentAttestation]s for deals.
  * No real Tron/Ethereum observation happens here: the CALLER asserts the
  * seller's transfer happened (the e2e harness drives it); the production
- * observers replace this class behind [OracleSigner].
+ * observers replace this class behind the backend's oracle client seam.
  *
- * ## Which box co-signs a release
+ * ## How the attestation reaches the release
  *
- * The vault authenticates the release by checking that a full INPUT carries
- * the oracle NFT (`vault_funded.es` / `vault_payment_proven.es` `oracleOk`),
- * so the release/contest input is the `oracle.es`-governed box itself
- * ([oracleChainBox], exposed to [OracleSigner] as [releaseInputBox]): a joint
- * vault+oracle spend works because `oracle.es` pins its self-reproduction at
- * `OUTPUTS(0)` (NFT id + amount and value preserved, same tree) while the
- * vault pays the seller at `OUTPUTS(1)` on release paths (v2, 2026-09-17 —
- * see `specs/vault-contract.md` §8.4). [OperatorTxBuilder] recreates the input
- * as the output at index 0 under its actual (oracle.es) script, exactly per
- * that condition.
+ * The vault contracts read the release attestation from the oracle box's R4
+ * via `CONTEXT.dataInputs(0)` — the oracle singleton box is a DATA INPUT of
+ * the release/contest tx, and a data input's script never executes, so the
+ * oracle does NOT co-sign releases. The oracle's on-chain involvement is
+ * posting the attestation: it spends its singleton box (governed by
+ * `oracle.es`, which pins the NFT + value reproduction at `OUTPUTS(0)`; its
+ * registers are unconstrained) and recreates it with R4 = the 112-byte
+ * payload. [attestationBox] models that posted box; [oracleChainBox] models
+ * the at-rest box (no registers) the rotation spends.
  */
 class DevOracle(
     /** The oracle Dlog secret (HSM/encrypted keystore in production). */
@@ -96,11 +66,10 @@ class DevOracle(
     )
 
     /**
-     * The current oracle box governed by `oracle.es`: value + the NFT, no
-     * registers (oracle.es requires none) — the at-rest box rotations spend
-     * and recreate, and the box [OracleSigner] offers as the release/contest
-     * input (NFT id + amount and value preserved into OUTPUTS(0) —
-     * oracle.es's pinned reproduction, see the class doc).
+     * The at-rest oracle box governed by `oracle.es`: value + the NFT, no
+     * registers (oracle.es requires none). The oracle's attestation-posting
+     * rotation spends this box and recreates it with R4 = the payload
+     * ([attestationBox] models the recreation).
      */
     fun oracleChainBox(
         boxId: String = this.boxId,
@@ -118,38 +87,25 @@ class DevOracle(
     )
 
     /**
-     * The box the oracle offers as the release/contest input: the
-     * `oracle.es`-governed box ([oracleChainBox]) carrying the NFT. Its script
-     * validates in the joint vault spend — oracle.es pins its reproduction at
-     * `OUTPUTS(0)`, so the vault pays the seller at `OUTPUTS(1)` on release
-     * paths (see the class doc). Recreated by [OperatorTxBuilder] at output
-     * index 0 per that self-reproduction condition.
+     * The oracle box as the release/contest tx sees it: the `oracle.es`-governed
+     * singleton carrying the NFT and R4 = the 112-byte [attestation] payload
+     * (the result of the oracle's attestation-posting rotation). Attached as a
+     * DATA INPUT — the script never executes, so no oracle signature is needed.
      */
-    fun releaseInputBox(
+    fun attestationBox(
+        attestation: PaymentAttestation,
         boxId: String = this.boxId,
         transactionId: String = this.transactionId,
-    ): ChainBox = oracleChainBox(boxId, transactionId)
-
-    /**
-     * A plain oracle-key P2PK box holding only ERG — the release/contest
-     * miner-fee input for the dev harness (the oracle's prover must be able to
-     * prove every input it signs; in production the operator wallet and the
-     * oracle co-sign in stages).
-     */
-    fun feeInputBox(
-        valueNanoErg: Long = 5_000_000L,
-        boxId: String = "e1".repeat(32),
-        transactionId: String = "e2".repeat(32),
     ): ChainBox = ChainBox(
         boxId = boxId,
         transactionId = transactionId,
         index = 0,
-        value = valueNanoErg,
+        value = boxValueNanoErg,
         creationHeight = 0,
-        ergoTreeHex = ErgoValues.treeHex(ErgoValues.p2pkTree(pubKeyCompressed)),
+        ergoTreeHex = ErgoValues.treeHex(tree),
         address = "",
-        tokens = emptyList(),
-        registers = List(6) { null },
+        tokens = listOf(ChainToken(Base16.encode(oracleNftId), 1L)),
+        registers = listOf(ChainRegister.CollBytes(attestation.encode()), null, null, null, null, null),
     )
 
     /**
@@ -170,19 +126,6 @@ class DevOracle(
         srcBlockHeight = srcBlockHeight,
         srcBlockTime = srcBlockTime,
     )
-
-    /** In-process [OracleSigner] over this oracle's key (the dev seam). */
-    fun signer(): OracleSigner = object : OracleSigner {
-        override val oracleNftId: ByteArray get() = this@DevOracle.oracleNftId.copyOf()
-        override fun oracleInputBox(): ChainBox = releaseInputBox()
-        override fun sign(tx: UnsignedTransaction): SignedTransaction =
-            ColdErgoClient(networkType, coldParameters(networkType)).execute { ctx ->
-                ctx.newProverBuilder()
-                    .withDLogSecret(secret)
-                    .build()
-                    .sign(tx)
-            }
-    }
 
     companion object {
         private val spec = CustomNamedCurves.getByName("secp256k1")

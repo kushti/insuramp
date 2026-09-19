@@ -18,17 +18,16 @@ import kotlin.test.assertTrue
 /**
  * The two buyer-side transactions (`specs/android-app.md` §4.3): claim-open
  * (path B) and claim payout (path D). Asserts context-var bytes exactly,
- * output-0 register-by-register contents, the R8 record id, fee math at the
- * always-on protocol fee (rounding down), change correctness, and the
- * rejection cases. Every successful build is also *signed* by the offline
- * prover, which runs the real contract scripts during reduction — so a
- * passing build proves the tx satisfies the vault contract, not just the
- * builder's own math.
+ * output-0 register-by-register contents, the R8 record id, change
+ * correctness, and the rejection cases. Every successful build is also
+ * *signed* by the offline prover, which runs the real contract scripts during
+ * reduction — so a passing build proves the tx satisfies the vault contract,
+ * not just the builder's own math.
  */
 class ClaimTxBuilderSpec {
 
     private val f = ErgoTestFixtures
-    private val builder = ClaimTxBuilder(f.trees, f.treasuryTree)
+    private val builder = ClaimTxBuilder(f.trees)
 
     // ---------------------------------------------------------------- helpers
 
@@ -114,7 +113,7 @@ class ClaimTxBuilderSpec {
     }
 
     @Test
-    fun `claim-open change returns the fee surplus to the deal key`() {
+    fun `claim-open change returns the miner-fee surplus to the deal key`() {
         val (tx, _, _) = openTx(feeInputValue = 5_000_000L)
         assertEquals(2, tx.outputs.size)
         val change = tx.outputs[1] as OutBoxImpl
@@ -251,45 +250,23 @@ class ClaimTxBuilderSpec {
     }
 
     @Test
-    fun `claim payout pays the buyer collateral minus fee and fees the treasury`() {
+    fun `claim payout pays the buyer the full collateral`() {
         val tx = payoutTx()
         val buyerOut = tx.outputs[0] as OutBoxImpl
-        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        assertEquals(f.DEAL_AMOUNT - fee, buyerOut.tokens[0].value)
+        assertEquals(f.DEAL_AMOUNT, buyerOut.tokens[0].value)
         assertEquals(f.useTokenIdHex, Base16.encode(buyerOut.tokens[0].id.getBytes()))
         assertEquals(
             ErgoValues.treeHex(ErgoValues.p2pkTree(f.buyerKeys.pubKeyCompressed)),
             ErgoValues.treeHex(buyerOut.ergoTree),
         )
-        val feeOut = tx.outputs[1] as OutBoxImpl
-        assertEquals(fee, feeOut.tokens[0].value)
-        assertEquals(f.treasuryTree.bytesHex(), feeOut.ergoTree.bytesHex())
         assertEquals(f.BOX_VALUE_NANO_ERG, buyerOut.value)
-    }
-
-    @Test
-    fun `fee math at the protocol fee rounds down`() {
-        // The §6 formula at the always-on 25 bps: exact division at the fixture
-        // amount, rounding down at odd collaterals, remainder to the buyer.
-        assertEquals(
-            ClaimTxBuilder.FeeBreakdown(1_250_000, f.DEAL_AMOUNT - 1_250_000),
-            builder.feeBreakdown(f.DEAL_AMOUNT),
-        )
-        assertEquals(
-            ClaimTxBuilder.FeeBreakdown(1_250_000, f.DEAL_AMOUNT + 1 - 1_250_000),
-            builder.feeBreakdown(f.DEAL_AMOUNT + 1),
-        )
-        assertEquals(
-            ClaimTxBuilder.FeeBreakdown(0, 1),
-            builder.feeBreakdown(1),
-        )
     }
 
     @Test
     fun `claim payout change and balance are exact`() {
         val tx = payoutTx()
         val change = tx.outputs.last() as OutBoxImpl
-        val expectedChange = 5_000_000L - 1_000_000L /* miner fee */ - 100_000L /* fee box ERG */
+        val expectedChange = 5_000_000L - 1_000_000L /* miner fee */
         assertEquals(expectedChange, change.value)
         val inSum = tx.inputs.sumOf { it.value }
         val outSum = tx.outputs.sumOf { it.value }
@@ -329,7 +306,7 @@ class ClaimTxBuilderSpec {
     }
 
     @Test
-    fun `claim payout rejects insufficient fee ERG`() {
+    fun `claim payout rejects insufficient miner-fee ERG`() {
         val terms = f.dealTerms()
         val signer = ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret)
         assertFailsWith<IllegalArgumentException> {
@@ -341,14 +318,6 @@ class ClaimTxBuilderSpec {
                 changeAddress = f.dealKeysAddress,
                 signer = signer,
             )
-        }
-    }
-
-    @Test
-    fun `builder rejects a treasury tree that does not match the compiled hash`() {
-        val otherTree = ErgoValues.p2pkTree(TestKeys.of(0x7777).pubKeyCompressed)
-        assertFailsWith<IllegalArgumentException> {
-            ClaimTxBuilder(f.trees, otherTree)
         }
     }
 }

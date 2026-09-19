@@ -27,6 +27,8 @@ data class StoredEvent(val dealId: String?, val kind: String, val detail: String
  * over reference), ETA promise (minutes from FUNDED to the meeting), max deal
  * size (a hard capacity cap — never publish above free collateral).
  * [version] increments on every publish; [expiresAt] bounds the TTL.
+ * [lat]/[lon] are the optional seller meeting location (WGS-84) the buyer app
+ * renders on its map — both set or neither.
  */
 data class QuoteRecord(
     val id: String,
@@ -36,6 +38,8 @@ data class QuoteRecord(
     val maxAmount: Long,
     val createdAt: Instant,
     val expiresAt: Instant,
+    val lat: Double? = null,
+    val lon: Double? = null,
 )
 
 /**
@@ -103,7 +107,8 @@ data class DealRecord(
  * M3 ships the interface plus a thread-safe in-memory implementation —
  * a restart loses state (documented deviation; the spec names PostgreSQL).
  * The interface is shaped so a JDBC implementation drops in behind it:
- * single-row atomic updates, an append-only event log, and one current-quote row.
+ * single-row atomic updates, an append-only event log, and a keyed set of
+ * active-quote rows.
  */
 interface DealStore {
     fun createDeal(record: DealRecord)
@@ -124,10 +129,17 @@ interface DealStore {
     fun appendEvent(event: StoredEvent)
     fun events(dealId: String? = null): List<StoredEvent>
 
-    /** The currently published quote; `null` when withdrawn or never published. */
+    /**
+     * The active quotes (`specs/operator-backend.md` §5), keyed by id: several
+     * quotes coexist (e.g., one per seller meeting location), each with its own
+     * TTL; [saveQuote] upserts, [removeQuote] withdraws one, [clearQuotes]
+     * withdraws the whole feed (auto-pause).
+     */
     fun saveQuote(quote: QuoteRecord)
-    fun clearQuote()
-    fun currentQuote(): QuoteRecord?
+    fun removeQuote(id: String): QuoteRecord?
+    fun getQuote(id: String): QuoteRecord?
+    fun quotes(): List<QuoteRecord>
+    fun clearQuotes()
 }
 
 /** Thread-safe in-memory [DealStore] (M3 default; see the interface doc). */
@@ -135,7 +147,7 @@ class InMemoryDealStore : DealStore {
     private val lock = java.util.concurrent.locks.ReentrantLock()
     private val deals = LinkedHashMap<String, DealRecord>()
     private val eventLog = mutableListOf<StoredEvent>()
-    private var quote: QuoteRecord? = null
+    private val quotesById = LinkedHashMap<String, QuoteRecord>()
 
     override fun createDeal(record: DealRecord) = locked {
         require(!deals.containsKey(record.dealId)) { "deal ${record.dealId} already exists" }
@@ -161,11 +173,15 @@ class InMemoryDealStore : DealStore {
         if (dealId == null) eventLog.toList() else eventLog.filter { it.dealId == dealId }
     }
 
-    override fun saveQuote(quote: QuoteRecord) = locked { this.quote = quote }
+    override fun saveQuote(quote: QuoteRecord) = locked { quotesById[quote.id] = quote }
 
-    override fun clearQuote() = locked { quote = null }
+    override fun removeQuote(id: String): QuoteRecord? = locked { quotesById.remove(id) }
 
-    override fun currentQuote(): QuoteRecord? = locked { quote }
+    override fun getQuote(id: String): QuoteRecord? = locked { quotesById[id] }
+
+    override fun quotes(): List<QuoteRecord> = locked { quotesById.values.toList() }
+
+    override fun clearQuotes() = locked { quotesById.clear() }
 
     private fun <T> locked(block: () -> T): T {
         lock.lock()

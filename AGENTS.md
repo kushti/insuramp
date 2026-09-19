@@ -12,19 +12,38 @@ The `contracts/` Gradle module is live: ErgoScript `.es` sources under
 `contracts/src/test/`. `apps/core/dealprotocol/` is live too: the pure-Kotlin deal
 state machine (`specs/deal-protocol.md` §1) with its transition-matrix test suite.
 `apps/core/ergo/` is live since 2026-09-16 (milestone M2, extended M3-A): the chain-interaction layer
-(`specs/android-app.md` §4) — `ChainSource` + explorer client, `VaultBoxTracker`
+(`specs/android-app.md` §4) — `ChainSource` with two implementations (`ExplorerChainSource`,
+mainnet-default; `NodeChainSource`, any Ergo node's `/blockchain` extra-indexer API with
+multi-URL failover — selected in the backend via `P2P_CHAIN_SOURCE=node` + `P2P_NODE_URL`),
+`VaultBoxTracker`
 (chain facts → `DealEvent`s), `ClaimTxBuilder` (the two buyer-side txs), `OperatorTxBuilder`
 (fund/reclaim/release/contest), `PaymentAttestation` (112-byte oracle payload), `DevOracle`
-+ `OracleSigner` seam, `ErgoContracts` incl. `compileFast` variants. Every built tx is
+(attestation-box builder; release paths reference the oracle box as a **data input**, so
+there is no oracle signature in buyer/seller txs — the `OracleSigner` co-signing seam is
+deleted), `ErgoContracts` incl. `compileFast` variants. Every built tx is
 prover-verified against the compiled vault scripts. Pure Kotlin/JVM on ergo-appkit 6.0.1;
 Android-injectable via interfaces.
-`backend/` is live since 2026-09-17 (milestone M3-B): the Ktor operator backend
-(`specs/operator-backend.md`) — deal engine (sole transition authority), chain watcher,
-vault manager (state-aware reclaim: FUNDED/PAYMENT_CONFIRMED only), quote publisher,
-buyer/dashboard `/v1` APIs + WebSockets, dispute inbox, AML `RiskScorer` hook,
-infra monitor + auto-pause. In-memory `DealStore` behind a JDBC-shaped interface
-(PostgreSQL impl is the documented follow-up); `TxSubmitter` seam for broadcast.
-The buyer-authed `POST /v1/deals/{id}/handoff` uploads the seller-signed handoff record.
+`backend/` is live since 2026-09-17 (milestone M3-B, M4 seller-meeting additions): the
+runnable Ktor operator backend (`./gradlew :backend:run`, Netty, port 8080) — deal engine
+(sole transition authority), chain watcher, vault manager (state-aware reclaim:
+FUNDED/PAYMENT_CONFIRMED only), quote publisher (multi-quote feed since 2026-09-19 —
+`GET /v1/quotes` returns `{quotes: [...]}`, operator publishes/withdraws via
+`/v1/dashboard/quotes`; `P2P_DEMO_QUOTES=true` seeds three located example quotes), buyer/dashboard `/v1` APIs + WebSockets,
+dispute inbox, AML `RiskScorer` hook, infra monitor + auto-pause. In-memory `DealStore`
+behind a JDBC-shaped interface (PostgreSQL impl is the documented follow-up);
+`TxSubmitter` seam for broadcast. (The in-contract protocol fee was removed
+2026-09-18: `QuotePublisher` has no `protocolFeeBps` and there is no
+`P2P_TREASURY_SECRET` wiring.) The buyer-authed `POST /v1/deals/{id}/handoff` uploads
+the seller-signed handoff record; the dashboard-authed
+`POST /v1/dashboard/deals/{id}/handoff/sign` Schnorr-signs it server-side with the vault
+R5 key and drives `CashCollected` FUNDED → PAYMENT_PENDING, with
+`GET /v1/dashboard/deals/{id}/handoff/qr.png` rendering the `p2pgate://handoff?m=...` QR
+(ZXing). The buyer deal DTO exposes `sellerPubKey` (the R5 key the app verifies the
+signature against). The static seller dashboard (`backend/src/main/resources/dashboard/`)
+is served at `/dashboard/` — public shell, token-gated API (`P2P_OPERATOR_KEY`; unset =
+demo-open). Release/contest txs take the oracle attestation box as a data input
+(`OracleClient.attestationBoxFor`); the oracle serializes attestation postings — one in
+flight, a release must confirm on-chain before the next posting.
 `e2e/` is live since 2026-09-17 (milestone M3-C): the end-to-end gate
 (`./gradlew :e2e:run`, `--dry-run` for a no-broadcast build against live chain) —
 funded operator (manual funding by default; testnet faucet via `E2E_FAUCET_URL`),
@@ -33,7 +52,11 @@ minted dev-oracle NFT + test collateral, and three real flows
 reclaim). Mainnet is the default target since 2026-09-17 ("change Ergo testnet to
 mainnet everywhere, lets test with mainnet"); testnet stays fully selectable via
 `E2E_EXPLORER_URL`/`E2E_FAUCET_URL`.
-The rest of `apps/` (Android shells) remains reserved-only. There is no `pyproject.toml`,
+The buyer app module (`apps/app`, native Android, `specs/android-app.md`) and the
+seller dashboard front-end (`specs/seller-dashboard.md`, a static web app served by the
+Ktor backend at `/dashboard/`) landed in M4 (2026-09-17/18); the rest of `apps/` remains
+reserved-only.
+There is no `pyproject.toml`,
 `package.json`, or `Cargo.toml`. Likewise,
 there is no `rosen/` directory: the docs cross-reference `rosen/deck.html` (a Rosen bridge
 pitch deck), but it lives outside this repo.
@@ -72,9 +95,9 @@ period, on the release path. The broader vision is Ergo as pillar 3 of
 |---|---|
 | `pillars.md` | Top-level vision: four pillars of state-independent money (Ergo ledger/reserve → USE stablecoins → Rosen cross-chaining/onramp → Basis p2p cash issuance). Context for everything else. |
 | `onramp-insurance.md` | **Core design doc — read this first.** Vault contract skeleton, per-asset designs (USDT oracle-verified, BTC trustless via Bitcoin relay, XMR oracle-verified via tx-key reveal), trust-model comparison, limitations, sources. |
-| `onramp-ux.md` | Product design for the two sides of the marketplace — buyer app (mobile PWA) and seller meeting flow — plus the operator dashboard. Flow timings must stay consistent with the contract design (24h timeout, 12h claim maturation, ~6h BTC deadline). |
-| `onramp-business-model.md` | Protocol-layer economics: fee model (25 bps, hardcoded in-contract), fee distribution, capital dynamics (protocol TVL ≈ outstanding deal volume; collateral availability is the binding constraint), volume scenarios, risks, bootstrapping sequence. |
-| `specs/` | Implementation specs (index: `specs/README.md`): vault contract, deal protocol, oracle integration, buyer app, operator backend. Canonical constants live in `specs/vault-contract.md` §2; canonical state names in `specs/deal-protocol.md` §1. |
+| `onramp-ux.md` | Product design for the two sides of the marketplace — buyer app (native Android app) and seller meeting flow — plus the operator dashboard. Flow timings must stay consistent with the contract design (24h timeout, 12h claim maturation, ~6h BTC deadline). |
+| `onramp-business-model.md` | Protocol-layer economics: fee model (the in-contract protocol fee was removed 2026-09-18; protocol revenue is undefined/deferred [spec]), capital dynamics (protocol TVL ≈ outstanding deal volume; collateral availability is the binding constraint), volume scenarios, risks, bootstrapping sequence. |
+| `specs/` | Implementation specs (index: `specs/README.md`): vault contract, deal protocol, oracle integration, seller dashboard, buyer app, operator backend. Canonical constants live in `specs/vault-contract.md` §2; canonical state names in `specs/deal-protocol.md` §1. |
 
 The docs form a strict reading order: `pillars.md` (why) → `onramp-insurance.md` (contracts
 and trust) → `onramp-ux.md` (product) → `onramp-business-model.md` (economics). Each file
@@ -110,12 +133,16 @@ implement the on-ramp reading of `specs/vault-contract.md` — the **v2 rework h
 gone, so the handoff record is seller-signed): vault R7 holds the bare 32-byte `oracleNftId` (the old
 65-byte two-key packing is gone; Ergo boxes have R4–R9 only, no R10), path B is gated on
 the seller-signed handoff record (a single Schnorr half under the R5 seller key, no
-oracle on the claim path), and paths C/C′ take the oracle box as a full input — the
-oracle's attestation alone releases the vault; there is no receipt signature anywhere in
-the protocol. The fee is a compile-time constant too (`ContractParams.PROTOCOL_FEE_BPS` = 25,
-substituted as `%%FEE_BPS%%`; 2026-09-17): FUNDED R8 is the plain `Long` `timeoutHeight`,
-PAYMENT_PROVEN R7 the plain `Long` `proofHeight`, and the treasury fee output is required on
-every collateral-moving path. The suite is the on-ramp matrix in `specs/vault-contract.md` §7.
+oracle on the claim path), and paths C/C′ take the oracle box as a **data input** — the
+oracle's attestation alone releases the vault (NFT custody is the authenticity anchor;
+no oracle signature exists in release txs); there is no receipt signature anywhere in
+the protocol. The in-contract protocol fee was removed on 2026-09-18 (owner
+decision): `ContractParams.PROTOCOL_FEE_BPS` (25 bps, in-contract since
+2026-09-17) is deleted, no treasury fee output exists, and every
+collateral-moving path pays the recipient in full — the miner fee is unchanged.
+FUNDED R8 is the plain `Long` `timeoutHeight`, PAYMENT_PROVEN R7 the plain
+`Long` `proofHeight` (that register shape landed 2026-09-17 and stayed). The
+suite is the on-ramp matrix in `specs/vault-contract.md` §7.
 
 - **Layout:** ErgoScript sources in `contracts/src/main/ergoscript/` (`vault_funded.es`,
   `vault_payment_proven.es`, `oracle.es`) — shipped on the classpath as resources.
@@ -128,14 +155,21 @@ every collateral-moving path. The suite is the on-ramp matrix in `specs/vault-co
   `~/.local/opt/jdk-17.0.20.1+1`, so run:
   `export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1 && ./gradlew :contracts:test`
   (optionally `--tests 'p2pgate.contracts.VaultContractSpec'`). Expected test counts:
-  `VaultContractSpec` 49 (1 `@Disabled`: phase-2 GuardSign readiness, test 45) plus
-  `OracleContractSpec` 8 → contracts 57; dealprotocol module: DealStateMachine 44,
+  `VaultContractSpec` 44 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
+  the 2026-09-18 fee removal deleted the old 35a–35e fee tests) plus
+  `OracleContractSpec` 8 → contracts 52; dealprotocol module: DealStateMachine 44,
   Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7 → 94; ergo module:
-  ClaimTxBuilder 16, HandoffRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9,
-  VaultBoxTracker 17 → 61; plus (M3-A/C): OperatorTxBuilder 20, PaymentAttestation 9,
-  DevOracle 6, FastContracts 4 → ergo 100; backend 87 (10 suites); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → 348 total. Full gate:
-  `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test`.
+  ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9,
+  VaultBoxTracker 17; plus (M3-A/C): OperatorTxBuilder 20, PaymentAttestation 9,
+  DevOracle 6, FastContracts 4; plus (2026-09-17): NodeChainSource 12 → ergo 110;
+  backend 107 (11 suites); e2e 10 (E2eFlow 5,
+  E2eConfig 2, SchnorrPort 3) → JVM modules 373; plus the Android buyer app
+  (`apps/app`, M4; + map view, localization hi/sw/ar, in-app locale switcher +
+  multi-quote list 2026-09-19): 51 JVM
+  unit tests (`:app:testDebugUnitTest`) → **424 total**.
+  Full gate:
+  `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :app:testDebugUnitTest :app:assembleDebug`
+  (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).
 - **Before editing any `.es` file, read the "sigma-state 6 typing constraints" list in
   `specs/vault-contract.md` §5** — several natural ErgoScript constructs (tuple registers,
   `byteArrayToBigInt` in arithmetic, `SigmaProp ||` path selection) fail against sigma 6

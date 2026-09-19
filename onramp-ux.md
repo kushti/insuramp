@@ -4,14 +4,19 @@
 
 ## 1. Design principles
 
-1. **Hide the machinery.** The buyer never reads the words vault, oracle, Schnorr, ErgoScript. They see "insured" badges, progress states, and one button per decision. The entire Ergo side is invisible until — and unless — a dispute happens.
+1. **Hide the machinery.** The buyer never reads the words vault, oracle, Schnorr, ErgoScript. They see collateral lines, progress states, and one button per decision. The entire Ergo side is invisible until — and unless — a dispute happens.
 2. **One timeline per deal.** The whole protocol is a state machine; the UI renders it as a single vertical timeline. Every screen answers one question: "what happens now, and what happens if something goes wrong?"
 3. **Fail-safe framing, not tech framing.** Never say "escrow smart contract". Say: *"The seller has locked $2,000 you can claim if your USDT never arrives — no trust needed."* The insurance is the product.
 4. **Privacy-preserving defaults.** No accounts, no KYC in the app itself (the AML check lives on the seller side, as in the contract design). Deal-scoped identity only: a fresh buyer signing key per deal, discardable. Notifications opt-in.
 5. **Bring-your-own-receive-address.** The app never custodies funds, and the buyer never sends crypto. The buyer needs a USDT receive address (their own wallet on Tron or Ethereum) and signs **no attestations**: the only protocol signature the buyer ever handles is the seller's handoff-record signature, which their app *verifies*. The app still generates a burner deal key — it backs the dispute path (claim transactions) and deal recovery, and it never touches funds.
-6. **Calm disputes.** The dispute path is a first-class, always-visible button — not hidden behind support tickets. It is displayed with its expected wait time so it never feels like a failure state, just the insured path.
+6. **Calm disputes.** The dispute path is a first-class, always-visible button — not hidden behind support tickets. It is displayed with its expected wait time so it never feels like a failure state, just the collateral-backed path.
 
-## 2. Buyer app (mobile-first PWA)
+## 2. Buyer app (native Android)
+
+*Platform (owner decision, 2026-09-17): the buyer app is a **native Android app**, not a
+mobile-first PWA — the older PWA wording elsewhere is superseded (`specs/android-app.md`
+§1). Deal entry stays link-based: an anonymous link or Telegram-bot message opens the app
+straight into the quote flow (first use: an install, once).*
 
 ### 2.1 Discovery & quote
 
@@ -27,16 +32,22 @@
 │                          │
 │ ── Best quotes ──        │
 │ Cairo · ~40 min          │
-│ 1 USDT = 31.2 EGP · insured $500 │
+│ 1 USDT = 31.2 EGP · $500 locked by seller │
 │ [Choose]                 │
 │ Cairo · ~90 min          │
-│ 1 USDT = 30.9 EGP · insured $2k  │
+│ 1 USDT = 30.9 EGP · $2k locked by seller  │
 │ [Choose]                 │
 └─────────────────────────┘
 ```
 
 - Instant-quote matching, not an order book: the operator layer pre-publishes quotes; the buyer never negotiates.
-- Every quote carries the **insured badge**: "insured up to $X" — the actual vault collateral value, not a marketing claim. Below the quote line, one tappable line: *"What does insured mean?"* → plain-language explainer with an optional "show me on-chain" deep link.
+- Every quote carries the **collateral line**: "Up to $X available — the seller has locked
+  that much collateral" — the actual vault collateral value, not a marketing claim. (Since
+  2026-09-18 the buyer app no longer uses "insured/insurance" wording; the factual
+  collateral framing above is the app copy. The seller dashboard and the design docs keep
+  the insurance framing — that is deliberate.) Below the quote line, one tappable line:
+  *"What does the seller's locked collateral mean?"* → plain-language explainer with an
+  optional "show me on-chain" deep link.
 - The buyer pastes their **USDT receive address** at quote time (Tron base58 or EIP-55); it is pinned in the deal terms so the seller pays exactly that address (`specs/deal-protocol.md` §3.1).
 - Location selection is coarse (city-level); exact meeting point is only revealed after the seller funds the vault.
 
@@ -45,20 +56,20 @@
 Three states, always rendered top-to-bottom with the pending ones greyed:
 
 ```
-✓ Seller has insured your deal          ← FUNDED: vault funded, USE locked
+✓ Seller has locked collateral for your deal  ← FUNDED: vault funded, USE locked
 ● Hand 15,600 EGP to the seller          ← PAYMENT_PENDING: seller-signed handoff record
 ○ 500 USDT on its way                    ← PAYMENT_CONFIRMED: oracle confirmed → RELEASED
 ```
 
 Per-state details:
 
-- **State 2 — hand over cash.** Meeting point revealed at FUNDED; a countdown shows the vault timeout (`RECLAIM_TIMEOUT`, 24h). The handoff record is created live at the meeting: the buyer hands over the cash, watches the seller count it, and the seller signs the record only after the count. The app validates the record against the deal terms (amount, currency, deal id), verifies the seller's signature against the seller key pinned in the deal terms (the vault's R5 key), and shows the **"safe to leave the meeting" indicator** — record received + validated — only once the verified record is persisted. The rule is absolute: **don't leave the meeting without the record.** It is the buyer's only dispute artifact; leaving without it is leaving uninsured.
+- **State 2 — hand over cash.** Meeting point revealed at FUNDED; a countdown shows the vault timeout (`RECLAIM_TIMEOUT`, 24h). The handoff record is created live at the meeting: the buyer hands over the cash, watches the seller count it, and the seller signs the record only after the count. The app validates the record against the deal terms (amount, currency, deal id), verifies the seller's signature against the seller key pinned in the deal terms (the vault's R5 key), and shows the **"safe to leave the meeting" indicator** — record received + validated — only once the verified record is persisted. The rule is absolute: **don't leave the meeting without the record.** It is the buyer's only dispute artifact; leaving without it means walking away with no claim if the USDT never arrives.
 - **State 3 — waiting for USDT.** The "USDT confirmed" indicator turns green once the oracle has confirmed the seller's USDT transfer to the buyer's pinned address — until then the seller could still stall, and the answer is the dispute button below. Green means the release follows automatically: the seller's backend submits it with the oracle digest alone, no buyer action needed. Checking the wallet is still good advice, but it gates nothing.
 
 The dispute button lives permanently under the timeline:
 
 ```
-Cash collected but no USDT? You can claim the $500 insured amount.
+Cash collected but no USDT? You can claim the $500 the seller locked.
 [Start claim] — available once cash is collected, pays out after ~12h
 ```
 
@@ -66,8 +77,8 @@ Cash collected but no USDT? You can claim the $500 insured amount.
 
 The on-ramp has exactly **one** hard sequencing rule, and it is physical, not cryptographic:
 
-1. At deal creation the buyer generates (or imports) a **deal key**. If they have an Ergo wallet, use it; otherwise the PWA generates a burner key, and the key can live entirely in-browser — it backs the claim path and recovery, it never touches funds and never signs attestations.
-2. **At the meeting, don't leave without the record.** The seller shows a QR (`p2pgate://handoff?m=...`) encoding the handoff record; the app validates amount/currency against the deal terms and displays the record in plain language — *"seller collected 15,600 EGP for deal #A3F9, 14:32"*. The buyer hands over the cash and watches the seller count it; the seller signs only *after* the count, in the seller's wallet/app. The app verifies the seller's signature against the seller key pinned in the deal terms and shows the **"safe to leave" indicator** only once the verified record is persisted locally. A record the app hasn't verified is worthless, so the app never says "safe to leave" before verification — and it says plainly, until then, that leaving means walking away uninsured.
+1. At deal creation the buyer generates (or imports) a **deal key**. If they have an Ergo wallet, use it; otherwise the app generates a burner deal key, held in Android Keystore (`specs/android-app.md` §2.1) — it backs the claim path and recovery, it never touches funds and never signs attestations.
+2. **At the meeting, don't leave without the record.** The seller shows a QR (`p2pgate://handoff?m=...`) encoding the handoff record; the app validates amount/currency against the deal terms and displays the record in plain language — *"seller collected 15,600 EGP for deal #A3F9, 14:32"*. The buyer hands over the cash and watches the seller count it; the seller signs only *after* the count, in the seller's wallet/app. The app verifies the seller's signature against the seller key pinned in the deal terms and shows the **"safe to leave" indicator** only once the verified record is persisted locally. A record the app hasn't verified is worthless, so the app never says "safe to leave" before verification — and it says plainly, until then, that leaving means walking away with no dispute artifact at all.
 
 Anti-pattern to avoid: softening the meeting rule. There is no second signature, no post-payment step, nothing the buyer must do after the meeting — which makes the meeting itself the only moment that can go wrong for them. The UX must make "don't leave without the record" unmissable, not merely documented. ("Check your wallet" survives only as guidance copy on the state-3 screen; no signature follows from it.)
 
@@ -97,7 +108,7 @@ The seller is the capital-heavy side; the dashboard's job is capital efficiency 
 
 - **Vault lane** — kanban of deals by state: Quoted → Funded → Cash collected → Payment confirmed → Released/Reclaimed. Each card shows locked collateral, timeout countdown, and the reclaim path available.
 - **Collateral management** — pool view: USE balance, utilization %, "capital idle 38% — reclaim 2 expired vaults" nudges. One-tap reclaim of timed-out vaults (the default routine path, also the privacy-preserving one).
-- **Quote publishing** — set spread, ETA promise, max deal size = vault capacity. The insured badge on the buyer side reads straight from here, so overstating capacity is self-defeating — the badge is the vault.
+- **Quote publishing** — set spread, ETA promise, max deal size = vault capacity. The buyer-side collateral line reads straight from here, so overstating capacity is self-defeating — the line is the vault.
 - **AML pre-check panel** — paste address, get risk score, accept/reject. Off-chain tooling; the app records only the accept/reject decision, not the report, into deal metadata.
 - **Dispute inbox** — open claims with the evidence view: the **seller-signed handoff record** (the seller acknowledging cash receipt under the same key that reclaims the collateral) versus the **oracle digest of the seller's USDT transfer** (was the buyer paid?), deadlines. Actions: contest (present the oracle digest alone — path C′ — mechanical when the digest exists), wait-for-timeout, escalate to manual review.
 - **Infrastructure status** — oracle lag, observer health. If the oracle is lagging, quote publishing pauses automatically — never sell insurance you can't currently verify.
@@ -119,7 +130,7 @@ The seller is the capital-heavy side; the dashboard's job is capital efficiency 
 
 ## 7. Onboarding & market design
 
-- **Buyer entry:** anonymous web link or Telegram bot → quote → deal. Zero install required (PWA). The first-run experience is exactly one screen before the first quote.
+- **Buyer entry:** deal entry stays link-based — an anonymous web link or Telegram bot → quote → deal — but the app itself is a native Android install: install once, then every deal link opens straight into the quote flow. The first-run experience is exactly one screen before the first quote.
 - **Seller entry:** this is the capital side and can be heavier: dashboard setup, collateral top-up flow, wallet hygiene checklist, oracle-dependency acknowledgment. Onboarding copy is honest about the trust model — *"your outgoing USDT payments are verified by the oracle, and the oracle's attestation alone releases your vault — which is why oracle operator ≠ marketplace operator, and why phase 2 replaces it with a guard threshold"* — because seller operators *are* the technical audience.
 - **Market bootstrapping:** quotes are only as good as collateral depth; the operator tooling should make utilization visible so sellers price spread against idle capital. The deck's point stands: this market needs collateral liquidity first, UI second.
 

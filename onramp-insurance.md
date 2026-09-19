@@ -137,16 +137,21 @@ code: the live watcher/guard set cannot attest deal-scoped events, and Rosen has
 **Implementation status (2026-09-17):** the `.es` contracts in `contracts/` implement the
 v2 design (2026-09-13): R7 holds the bare 32-byte
 `oracleNftId` (the old two-key packing is gone), claim path B is gated on the
-seller-signed handoff record with no oracle input, and the release paths C/C′ take the oracle box
-as a full input — the digest alone, no receipt signature anywhere. The tested suite is the on-ramp
-matrix in `specs/vault-contract.md` §7 (49 tests + 8 oracle-box tests, green);
+seller-signed handoff record with no oracle input, and the release paths C/C′ take the
+oracle's attestation box as a **data input** — the attestation alone, no oracle signature
+in the release tx, no receipt signature anywhere. The tested suite is the on-ramp
+matrix in `specs/vault-contract.md` §7 (44 tests + 8 oracle-box tests, green — the
+2026-09-18 fee removal deleted the old fee tests, 35a–35e);
 `specs/deal-protocol.md` is canonical for roles and wire formats (its state machine and wire
 formats are implemented and tested in `apps/core/dealprotocol/`). On top of that: the chain layer
 landed 2026-09-16 (M2, extended M3-A) in `apps/core/ergo/` — explorer-backed `ChainSource`,
 `VaultBoxTracker`, the claim txs (`ClaimTxBuilder`), the operator-side txs
 (`OperatorTxBuilder`: fund/reclaim/release/contest), the 112-byte `PaymentAttestation`, and the
-`DevOracle`/`OracleSigner` seam; the Ktor operator backend landed 2026-09-17 (M3-B, `backend/`);
-and an end-to-end gate (`e2e/`, M3-C) drives release-via-attestation, dispute, and timeout-reclaim
+`DevOracle` attestation-box seam; the Ktor operator backend landed 2026-09-17 (M3-B, `backend/`);
+the 2026-09-17 data-input rework removed the `OracleSigner` co-signing seam — release txs
+now reference the oracle box as a data input, with the attestation serialized one in
+flight (a release must confirm before the next posting). An end-to-end gate (`e2e/`, M3-C)
+drives release-via-attestation, dispute, and timeout-reclaim
 against the live chain (mainnet by default since 2026-09-17, `--dry-run` no-broadcast mode).
 The deployed phase-1 oracle *service* (Tron/Ethereum observers + HTTP attestation API) is still
 future work — until it exists, "oracle confirmed" in the components is an assertion fed to the dev

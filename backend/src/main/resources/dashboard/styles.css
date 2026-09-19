@@ -1,0 +1,268 @@
+/* p2pgate operator dashboard — plain modern CSS, system font stack, no
+ * external assets. Must stay legible on a phone held over a table of
+ * banknotes (the meeting screen, specs/seller-dashboard.md §3.3). */
+
+:root {
+  --bg: #10141a;
+  --panel: #1a2029;
+  --panel-2: #222a36;
+  --text: #e8edf3;
+  --muted: #93a1b3;
+  --accent: #3fa46a;
+  --accent-dark: #2c7a4e;
+  --danger: #d9534f;
+  --warn: #e2b93d;
+  --border: #2d3644;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 0.75rem; }
+h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 1rem 0 0.5rem; }
+
+.muted { color: var(--muted); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8em; }
+.error { color: var(--danger); }
+.empty { padding: 0.5rem; }
+
+button {
+  font: inherit;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--accent-dark); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+button.secondary:hover:not(:disabled) { background: var(--border); }
+button.link { background: none; color: var(--muted); padding: 0.25rem 0.5rem; }
+button.link:hover { color: var(--text); }
+
+input[type="password"], input[type="text"] {
+  font: inherit;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+/* ------------------------------------------------------------------ login */
+.login-view {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ----------------------------------------------------------------- topbar */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+.topbar nav { display: flex; gap: 0.25rem; flex: 1; }
+.tab {
+  background: none;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 0.4rem 0.8rem;
+}
+.tab.active { background: var(--panel-2); color: var(--text); }
+.conn { font-size: 0.8rem; color: var(--muted); }
+.conn.ok { color: var(--accent); }
+.conn.bad { color: var(--warn); }
+
+.banner {
+  margin: 0.75rem 1rem 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+.banner.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.55; } }
+
+main { padding: 1rem; }
+
+/* --------------------------------------------------------------- vault lane */
+.lane {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+.lane-col {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem;
+  min-height: 6rem;
+}
+.lane-col h2 { display: flex; justify-content: space-between; }
+.count {
+  background: var(--panel-2);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+}
+
+.card, .dispute {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.card.contested, .dispute.contested { border-color: var(--danger); }
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.countdown { font-size: 0.85rem; color: var(--warn); }
+.countdown.none { color: var(--muted); }
+.countdown.over { color: var(--danger); font-weight: 600; }
+
+.exit { font-size: 0.8rem; color: var(--muted); }
+.card-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.25rem; }
+
+/* ------------------------------------------------------------------ panels */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+.stat-value { font-size: 1.15rem; font-weight: 600; }
+
+/* ------------------------------------------------------------------ disputes */
+.evidence { font-size: 0.85rem; }
+
+/* -------------------------------------------------------------------- infra */
+.signal {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  background: var(--panel-2);
+  margin-bottom: 0.4rem;
+}
+.signal.ok strong { color: var(--accent); }
+.signal.bad { border: 1px solid var(--danger); }
+.signal.bad strong { color: var(--danger); }
+
+/* ------------------------------------------------------------------ meeting */
+.meeting-view {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--bg);
+}
+.meeting-card {
+  width: 100%;
+  max-width: 30rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.meeting-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.meeting-amount { font-size: 2.2rem; font-weight: 700; line-height: 1.1; }
+
+.warning-box {
+  background: var(--panel);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  color: var(--warn);
+  margin: 0;
+}
+
+.confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1.05rem;
+  padding: 0.4rem 0;
+  cursor: pointer;
+}
+.confirm-row input { width: 1.3rem; height: 1.3rem; accent-color: var(--accent); }
+
+#sign-btn { font-size: 1.1rem; padding: 0.8rem; width: 100%; }
+
+#meeting-qr { text-align: center; display: flex; flex-direction: column; gap: 0.75rem; align-items: center; }
+#qr-img {
+  width: min(78vw, 21rem);
+  height: min(78vw, 21rem);
+  background: #fff;
+  border-radius: 12px;
+  padding: 0.5rem;
+}
+.signed-state {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .meeting-amount { font-size: 1.8rem; }
+  .topbar { gap: 0.5rem; }
+}

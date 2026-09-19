@@ -28,7 +28,9 @@ sealed interface BackendEvent {
         BackendEvent
 
     data class QuotePublished(val quote: QuoteRecord, val at: Instant) : BackendEvent
-    data class QuoteWithdrawn(val cause: String?, val at: Instant) : BackendEvent
+
+    /** [quoteId] is null when the whole feed was withdrawn at once (auto-pause). */
+    data class QuoteWithdrawn(val cause: String?, val at: Instant, val quoteId: String? = null) : BackendEvent
     data class QuoteRejected(val reason: String, val at: Instant) : BackendEvent
     data class QuoteWarning(val reason: String, val at: Instant) : BackendEvent
 

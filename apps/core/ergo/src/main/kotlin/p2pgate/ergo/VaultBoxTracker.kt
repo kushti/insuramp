@@ -105,9 +105,11 @@ class VaultBoxTracker(
         }
 
         // Paths A / C / C′: the seller was paid. Both reclaim (A) and release
-        // (C/C′) pay the seller's P2PK; a release carries the oracle box as a
-        // full input (its NFT among the input tokens), while reclaim is only
-        // valid past the R8 timeout — either signal discriminates.
+        // (C/C′) pay the seller's P2PK. The release carries the oracle box as a
+        // DATA input, so the oracle NFT no longer appears among the spent
+        // inputs' token ids (inputTokenIds only fires for backends that report
+        // data inputs there); reclaim is only valid past the R8 timeout — the
+        // spend height discriminates what the NFT signal cannot.
         if (tx.outputs.any { it.ergoTreeHex.equals(sellerTreeHex, ignoreCase = true) && it.tokens.isNotEmpty() }) {
             val oracleNftHex = Base16.encode(trees.oracleNftId)
             if (tx.inputTokenIds.any { it.equals(oracleNftHex, ignoreCase = true) }) {

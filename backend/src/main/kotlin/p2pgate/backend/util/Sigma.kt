@@ -22,7 +22,7 @@ object Secp256k1 {
 
 /**
  * Direct sigma interop for the small set of tree operations the backend needs
- * (the vault manager's treasury tree, test/dev P2PK derivations).
+ * (test/dev P2PK derivations).
  * `:apps:core:ergo`'s `ErgoValues` is internal; these helpers duplicate its
  * three public-facing operations against the same sigma APIs.
  */

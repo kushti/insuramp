@@ -2,17 +2,20 @@ package p2pgate.backend.api
 
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.ContentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
 import io.ktor.server.application.log
 import io.ktor.server.config.tryGetString
+import io.ktor.server.http.content.staticResources
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -41,6 +44,7 @@ import p2pgate.backend.quotes.QuotePublisher
 import p2pgate.backend.store.DealRecord
 import p2pgate.backend.store.InMemoryDealStore
 import p2pgate.backend.util.Hex
+import p2pgate.backend.util.QrCodes
 import p2pgate.backend.util.SigmaTrees
 import p2pgate.backend.vault.CollateralPool
 import p2pgate.backend.vault.EmbeddedVaultSigner
@@ -51,6 +55,7 @@ import p2pgate.dealprotocol.DealEvent
 import p2pgate.dealprotocol.DealState
 import p2pgate.dealprotocol.HandoffRecord
 import p2pgate.dealprotocol.ProtocolConstants
+import p2pgate.dealprotocol.QrPayload
 import p2pgate.ergo.ChainBox
 import p2pgate.ergo.ChainRegister
 import p2pgate.ergo.DevOracle
@@ -69,11 +74,13 @@ private fun ApplicationCall.bearer(): String? =
 private fun quoteDto(q: p2pgate.backend.store.QuoteRecord) = QuoteDto(
     id = q.id, version = q.version, spreadBps = q.spreadBps, etaMinutes = q.etaMinutes,
     maxAmount = q.maxAmount, createdAtEpochMs = q.createdAt.toEpochMilli(), expiresAtEpochMs = q.expiresAt.toEpochMilli(),
+    lat = q.lat, lon = q.lon,
 )
 
 private fun dealDto(d: DealRecord) = DealDto(
     dealId = d.dealId, state = d.state.name, amount = d.amount, fiatAmount = d.fiatAmount,
-    fiatCurrency = d.fiatCurrency, insuredAmount = d.amount, vaultBoxId = d.vaultBoxId,
+    fiatCurrency = d.fiatCurrency, insuredAmount = d.amount, sellerPubKey = d.sellerPubKeyHex,
+    vaultBoxId = d.vaultBoxId,
     contested = d.contested, createdAtEpochMs = d.createdAt.toEpochMilli(),
     fundedAtEpochMs = d.fundedAt?.toEpochMilli(),
     reclaimDeadlineEpochMs = d.fundedAt?.plus(ProtocolConstants.RECLAIM_TIMEOUT)?.toEpochMilli(),
@@ -109,12 +116,23 @@ private fun eventDto(e: BackendEvent): EventDto = when (e) {
     is BackendEvent.DealAbandoned -> EventDto("deal.abandoned", e.dealId, "quote expired", e.at.toEpochMilli())
     is BackendEvent.InvariantViolation -> EventDto("violation", e.dealId, "${e.event}: ${e.reason}", e.at.toEpochMilli())
     is BackendEvent.QuotePublished -> EventDto("quote.published", null, json.encodeToString(quoteDto(e.quote)), e.at.toEpochMilli())
-    is BackendEvent.QuoteWithdrawn -> EventDto("quote.withdrawn", null, e.cause ?: "manual", e.at.toEpochMilli())
+    is BackendEvent.QuoteWithdrawn ->
+        EventDto("quote.withdrawn", null, (e.quoteId?.let { "$it: " } ?: "") + (e.cause ?: "manual"), e.at.toEpochMilli())
     is BackendEvent.QuoteRejected -> EventDto("quote.rejected", null, e.reason, e.at.toEpochMilli())
     is BackendEvent.QuoteWarning -> EventDto("quote.warning", null, e.reason, e.at.toEpochMilli())
     is BackendEvent.PauseChanged -> EventDto("pause.changed", null, if (e.paused) "paused: ${e.cause}" else "resumed", e.at.toEpochMilli())
     is BackendEvent.TxSubmitted -> EventDto("tx.submitted", e.dealId, "${e.kind} $e.txId", e.at.toEpochMilli())
     is BackendEvent.Escalated -> EventDto("escalated", e.dealId, e.reason, e.at.toEpochMilli())
+}
+
+/** The dashboard app shell (index.html) off the classpath, as text/html. */
+private suspend fun serveDashboardIndex(call: ApplicationCall) {
+    val bytes = BackendApp::class.java.classLoader.getResourceAsStream("dashboard/index.html")?.use { it.readBytes() }
+    if (bytes == null) {
+        call.respond(HttpStatusCode.NotFound, ErrorDto("dashboard not packaged"))
+        return
+    }
+    call.respondBytes(bytes, ContentType.Text.Html)
 }
 
 /** Result of applying one handoff record. */
@@ -143,13 +161,28 @@ fun Application.module(app: BackendApp) {
     val submitter = HandoffOps(app)
 
     routing {
+        // The seller-dashboard app shell (M4, specs/seller-dashboard.md §1):
+        // the html/js/css is served unauthenticated — it holds no keys and
+        // renders nothing without a token; the login gate is client-side and
+        // every API route below stays operator-token-gated as before. No SPA
+        // fallback: an unknown subpath must 404, so the index is served by
+        // explicit routes rather than staticResources' default() (which would
+        // answer any missing file with index.html).
+        staticResources("/dashboard", "dashboard")
+        get("/dashboard") { serveDashboardIndex(call) }
+        get("/dashboard/") { serveDashboardIndex(call) }
         route("/v1") {
             // ---------------------------------------------------------- buyer
             get("/quotes") {
-                call.respond(QuoteFeedDto(app.quotes.active()?.let(::quoteDto)))
+                call.respond(QuoteFeedDto(app.quotes.active().map(::quoteDto)))
             }
             webSocket("/quotes/stream") {
-                send(Frame.Text(json.encodeToString(QuoteFeedDto(app.quotes.active()?.let(::quoteDto)))))
+                // Full-snapshot feed: the initial frame and every
+                // publish/withdraw/expire/pause push the whole active list.
+                suspend fun sendSnapshot() {
+                    send(Frame.Text(json.encodeToString(QuoteFeedDto(app.quotes.active().map(::quoteDto)))))
+                }
+                sendSnapshot()
                 val channel = Channel<BackendEvent>(Channel.BUFFERED)
                 val unsubscribe = app.bus.subscribe { e -> channel.trySend(e) }
                 try {
@@ -157,7 +190,7 @@ fun Application.module(app: BackendApp) {
                         if (event is BackendEvent.QuotePublished || event is BackendEvent.QuoteWithdrawn ||
                             event is BackendEvent.PauseChanged
                         ) {
-                            send(Frame.Text(json.encodeToString(eventDto(event))))
+                            sendSnapshot()
                         }
                     }
                 } finally {
@@ -255,7 +288,7 @@ fun Application.module(app: BackendApp) {
                                 "Build the path-B claim tx with ClaimTxBuilder (buyer side, specs/android-app.md §4.3).",
                                 "Spend the funded vault box carrying the handoff record; the tx re-creates it under vault_payment_proven.es.",
                                 "Broadcast it yourself — the backend observes the claim on-chain and opens the dispute timer.",
-                                "After CLAIM_MATURATION (${ProtocolConstants.CLAIM_MATURATION.toHours()}h) with no seller contest, path D pays you the collateral minus fee.",
+                                "After CLAIM_MATURATION (${ProtocolConstants.CLAIM_MATURATION.toHours()}h) with no seller contest, path D pays you the full collateral.",
                             ),
                         ),
                     )
@@ -310,18 +343,91 @@ fun Application.module(app: BackendApp) {
                         call.respond(HttpStatusCode.Conflict, ErrorDto(outcome.reason))
                 }
             }
-            get("/quotes/current") {
-                call.authenticateOperator(app) ?: return@get
-                call.respond(QuoteFeedDto(app.quotes.current()?.let(::quoteDto)))
+            post("/dashboard/deals/{id}/handoff/sign") {
+                call.authenticateOperator(app) ?: return@post
+                val id = call.dealId()
+                val deal = app.store.getDeal(id) ?: return@post call.respond(HttpStatusCode.NotFound, ErrorDto("unknown deal"))
+                // State gate: signing happens at the meeting, on a FUNDED deal.
+                // PAYMENT_PENDING means a record is already on file (never
+                // re-sign — the front-end re-displays via qr.png); from a claim
+                // or a terminal state it is too late.
+                if (deal.state != DealState.FUNDED) {
+                    return@post call.respond(
+                        HttpStatusCode.Conflict,
+                        ErrorDto("handoff signing requires a funded deal awaiting the meeting (deal is ${deal.state})"),
+                    )
+                }
+                // The seller's signature IS the cash-collection witness: build
+                // the fresh record from the terms, sign it under the vault's R5
+                // seller key, store it, and drive CashCollected → PAYMENT_PENDING
+                // (the buyer's later upload of the same bytes is a recognized
+                // duplicate). Store-first, mirroring the engine's rule.
+                val record = freshHandoffRecord(deal)
+                val recordBytes = record.encode()
+                val signature = app.vaultManager.signer.signHandoff(recordBytes)
+                val now = Instant.now()
+                app.store.updateDeal(id) { it.copy(handoffRecordHex = Hex.encode(recordBytes)) }
+                when (
+                    val outcome = app.engine.apply(
+                        id,
+                        DealEvent.CashCollected(Instant.ofEpochSecond(record.timestamp), now),
+                        now,
+                    )
+                ) {
+                    is DealEngine.Result.Advanced -> call.respond(
+                        HandoffSignResponse(
+                            dealId = id,
+                            state = DealState.PAYMENT_PENDING.name,
+                            recordHex = Hex.encode(recordBytes),
+                            signatureA = Hex.encode(signature.a),
+                            signatureZ = Hex.encode(signature.z),
+                            sellerPubKey = deal.sellerPubKeyHex,
+                            qrPayload = QrPayload.encodeHandoff(record),
+                        ),
+                    )
+                    is DealEngine.Result.Violation ->
+                        call.respond(HttpStatusCode.Conflict, ErrorDto(outcome.reason))
+                    DealEngine.Result.Aborted ->
+                        call.respond(HttpStatusCode.Conflict, ErrorDto("deal abandoned"))
+                }
             }
-            put("/quotes/current") {
+            get("/dashboard/deals/{id}/handoff/qr.png") {
+                call.authenticateOperator(app) ?: return@get
+                val id = call.dealId()
+                val deal = app.store.getDeal(id) ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("unknown deal"))
+                // 409 (not 404): the deal exists, only the signed record does
+                // not — the operator must sign first.
+                val recordHex = deal.handoffRecordHex ?: return@get call.respond(
+                    HttpStatusCode.Conflict,
+                    ErrorDto("no handoff record on file for this deal — sign first via POST /v1/dashboard/deals/{id}/handoff/sign"),
+                )
+                val payload = QrPayload.encodeHandoff(HandoffRecord.decode(Hex.decode(recordHex)))
+                call.respondBytes(QrCodes.png(payload), ContentType.Image.PNG)
+            }
+            // ---------------------------------------------------- quotes (operator)
+            // Publishing and withdrawing quotes are operator acts; the buyer
+            // side only reads the public feed above.
+            get("/dashboard/quotes") {
+                call.authenticateOperator(app) ?: return@get
+                call.respond(QuoteFeedDto(app.quotes.all().map(::quoteDto)))
+            }
+            put("/dashboard/quotes") {
                 call.authenticateOperator(app) ?: return@put
                 val request = call.receive<PutQuoteRequest>()
-                when (val outcome = app.quotes.publish(request.spreadBps, request.etaMinutes, request.maxAmount)) {
+                when (val outcome = app.quotes.publish(request.spreadBps, request.etaMinutes, request.maxAmount, lat = request.lat, lon = request.lon)) {
                     is QuotePublisher.PublishOutcome.Published ->
                         call.respond(PublishQuoteResponse(true, quoteDto(outcome.quote)))
                     is QuotePublisher.PublishOutcome.Rejected ->
                         call.respond(HttpStatusCode.Conflict, PublishQuoteResponse(false, null, outcome.reason))
+                }
+            }
+            post("/dashboard/quotes/{id}/withdraw") {
+                call.authenticateOperator(app) ?: return@post
+                val id = call.dealId()
+                if (app.quotes.withdraw(id, "operator withdraw")) {
+                    call.respond(MessageDto("quote $id withdrawn"))
+                } else {
+                    call.respond(HttpStatusCode.NotFound, ErrorDto("unknown quote $id"))
                 }
             }
             post("/aml/check") {
@@ -425,6 +531,19 @@ private class HandoffOps(private val app: BackendApp) {
 private fun ApplicationCall.dealId(): String =
     parameters["id"] ?: parameters["dealId"] ?: throw IllegalArgumentException("missing id")
 
+/**
+ * Builds the P2PH record for the meeting from the deal terms
+ * (`specs/deal-protocol.md` §3.2) with the server clock. The sign endpoint's
+ * timestamp doubles as the `CashCollected` record timestamp, so the server
+ * clock must be sane — the same freshness rule the buyer app applies.
+ */
+private fun freshHandoffRecord(deal: DealRecord): HandoffRecord = HandoffRecord(
+    dealId = deal.terms().dealId,
+    amount = deal.fiatAmount,
+    fiatCurrency = deal.fiatCurrency.toByteArray(Charsets.US_ASCII),
+    timestamp = Instant.now().epochSecond,
+)
+
 private suspend fun ApplicationCall.authenticateOperator(app: BackendApp): Unit? {
     val key = app.config.operatorKey
     val provided = bearer()
@@ -466,14 +585,8 @@ fun Application.module() {
         org.ergoplatform.appkit.NetworkType.TESTNET
     }
 
-    val treasurySecret = env("P2P_TREASURY_SECRET")?.let { BigInteger(it, 16) } ?: BigInteger.valueOf(0x5151)
-    val treasuryTree = SigmaTrees.p2pkTree(
-        p2pgate.backend.util.Secp256k1.publicKeyCompressed(treasurySecret),
-    )
-    val treasuryHash = p2pgate.backend.util.Crypto.blake2b256(treasuryTree.bytes())
     val trees = ErgoContracts.compile(
         oracleNftId = ErgoContracts.DUMMY_ORACLE_NFT_ID,
-        treasuryScriptHash = treasuryHash,
         networkPrefix = networkPrefix,
     )
 
@@ -486,7 +599,14 @@ fun Application.module() {
         } else {
             ExplorerChainSource.TESTNET_BASE_URL
         }
-    val chain = ExplorerChainSource(explorerUrl)
+    // Chain-source selection: `P2P_CHAIN_SOURCE` = explorer (default) or node;
+    // `P2P_NODE_URL` is a comma-separated list of node base URLs with failover.
+    val chain: p2pgate.ergo.ChainSource = when (env("P2P_CHAIN_SOURCE") ?: "explorer") {
+        "node" -> p2pgate.ergo.NodeChainSource(
+            env("P2P_NODE_URL") ?: p2pgate.ergo.NodeChainSource.DEFAULT_BASE_URLS,
+        )
+        else -> ExplorerChainSource(explorerUrl)
+    }
 
     val vaultSecret = env("P2P_VAULT_SECRET")?.let { BigInteger(it, 16) } ?: BigInteger.valueOf(0x1111)
     val vaultSigner = EmbeddedVaultSigner(
@@ -514,7 +634,6 @@ fun Application.module() {
     val riskScorer = p2pgate.backend.aml.ConfigRiskScorer()
     val vaultManager = VaultManager(
         trees = trees,
-        treasuryTree = treasuryTree,
         signer = vaultSigner,
         chain = chain,
         submitter = NoOpTxSubmitter(),
@@ -532,7 +651,6 @@ fun Application.module() {
         infra = infra,
         freeCollateral = { pool.free(store) },
         bus = bus,
-        protocolFeeBps = config.protocolFeeBps,
         costFloorBps = config.costFloorBps,
         ttl = config.quoteTtl,
     )
@@ -557,6 +675,13 @@ fun Application.module() {
 
     module(app)
 
+    // Demo seeding (P2P_DEMO_QUOTES=true): three example quotes pinned to
+    // seller meeting locations, so the buyer map renders pins out of the box.
+    // The store is in-memory — seeding happens exactly once per server start.
+    if (env("P2P_DEMO_QUOTES") == "true") {
+        seedDemoQuotes(quotes, config.mixReadyCollateral) { log.info(it) }
+    }
+
     // Scheduler loops (the manual tick() methods stay thread-free for tests).
     var lastHeight = -1
     var staleTicks = 0
@@ -573,3 +698,44 @@ fun Application.module() {
         }
     }
 }
+
+/**
+ * Demo-mode quote seeding (`P2P_DEMO_QUOTES=true`): three example quotes at
+ * real seller meeting locations (WGS-84) so the buyer map renders pins. Each
+ * maxAmount is a share of the mix-ready pool, so the whole seed set passes the
+ * per-quote capacity rule whenever the pool is funded; an unfunded pool just
+ * rejects the seeds (logged, never fatal).
+ */
+internal fun seedDemoQuotes(quotes: QuotePublisher, mixReadyCollateral: Long, log: (String) -> Unit) {
+    data class Seed(
+        val city: String,
+        val spreadBps: Int,
+        val etaMinutes: Int,
+        val numer: Long,
+        val denom: Long,
+        val lat: Double,
+        val lon: Double,
+    )
+    val seeds = listOf(
+        Seed("Cairo", spreadBps = 150, etaMinutes = 45, numer = 3, denom = 10, lat = 30.044, lon = 31.235),
+        Seed("Nairobi", spreadBps = 200, etaMinutes = 90, numer = 1, denom = 4, lat = -1.292, lon = 36.821),
+        Seed("Mumbai", spreadBps = 120, etaMinutes = 30, numer = 1, denom = 5, lat = 19.076, lon = 72.877),
+    )
+    for (seed in seeds) {
+        val maxAmount = mixReadyCollateral * seed.numer / seed.denom
+        when (val outcome = quotes.publish(seed.spreadBps, seed.etaMinutes, maxAmount, lat = seed.lat, lon = seed.lon)) {
+            is QuotePublisher.PublishOutcome.Published ->
+                log("demo quote seeded: ${seed.city} (${outcome.quote.id}, max $maxAmount, ${seed.spreadBps} bps)")
+            is QuotePublisher.PublishOutcome.Rejected ->
+                log("demo quote ${seed.city} not seeded: ${outcome.reason}")
+        }
+    }
+}
+
+/**
+ * Runnable entry point: boots the Netty engine from `application.conf`
+ * (`ktor.deployment.port` 8080, `ktor.application.modules` → the no-arg
+ * [module] below). The scheduler loop swallows per-tick chain failures, so
+ * the demo serves without network access — the watcher just stays unhealthy.
+ */
+fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)

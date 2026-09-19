@@ -96,8 +96,11 @@ class ChainSpend(
     val outputs: List<ChainBox>,
     /**
      * Token ids carried by the spending tx's inputs (best-effort, as reported
-     * by the chain backend) — used to spot the oracle box among the inputs,
-     * which discriminates release (paths C/C′) from reclaim (path A).
+     * by the chain backend). Legacy release discriminator: releases used to
+     * carry the oracle box as a full input (its NFT among the input tokens);
+     * since the oracle box became a release DATA input this signal no longer
+     * fires on backends that report only spent inputs — the spend-height
+     * fallback discriminates release from reclaim instead.
      */
     val inputTokenIds: List<String> = emptyList(),
 )

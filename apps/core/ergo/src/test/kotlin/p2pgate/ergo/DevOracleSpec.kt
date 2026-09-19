@@ -11,18 +11,21 @@ import kotlin.test.assertTrue
 
 /**
  * The phase-1 dev oracle ([DevOracle]): NFT pinning of the compiled `oracle.es`
- * box, dev-mode attestations, the [OracleSigner] seam (input box + co-sign),
- * and the oracle box's self-reproduction proven by the offline prover.
+ * box, dev-mode attestations, the attestation box the release paths take as a
+ * DATA INPUT, and the oracle box's self-reproduction (its attestation-posting
+ * rotation) proven by the offline prover.
  *
- * ## The oracle.es box as the release input
+ * ## The oracle.es box as the release data input
  *
- * `oracle.es` pins its self-reproduction at `OUTPUTS(0)` (NFT id + amount,
- * value ≥ input, same tree); the vault contracts pay the seller at
- * `OUTPUTS(1)` on release paths, so the `oracle.es`-governed box co-signs a
- * vault release/contest in the same transaction (v2, 2026-09-17). The suite
- * pins both halves: the standalone rotation prover run passes, and a release
- * spending the `oracle.es` box as the oracle input is prover-accepted with
- * the reproduction output at index 0.
+ * The vault contracts read the attestation from `CONTEXT.dataInputs(0).R4` and
+ * authenticate it by the NFT on that box — the data input's script never
+ * executes, so no oracle signature rides in the release. The oracle's on-chain
+ * involvement is posting the attestation: an `oracle.es` rotation spend that
+ * recreates the singleton box with R4 = the 112-byte payload (its
+ * self-reproduction pins NFT + value at `OUTPUTS(0)`; registers are
+ * unconstrained). The suite pins both halves: the standalone rotation prover
+ * run passes, and a release carrying the attestation box as a data input is
+ * prover-accepted with the seller payout at `OUTPUTS(0)`.
  */
 class DevOracleSpec {
 
@@ -44,6 +47,20 @@ class DevOracleSpec {
     }
 
     @Test
+    fun `attestationBox exposes the NFT payload box the release takes as data input`() {
+        val terms = f.dealTerms()
+        val attestation = oracle.attest(terms, f.recipientRaw, ByteArray(32) { 5 }, 12_345L, 1_700_000_000L)
+        val box = oracle.attestationBox(attestation)
+        assertEquals(Base16.encode(oracle.oracleNftId), box.tokens[0].tokenId)
+        assertEquals(1L, box.tokens[0].amount)
+        assertEquals(ErgoValues.treeHex(oracle.tree), box.ergoTreeHex)
+        assertTrue(box.registerBytes(4)!!.contentEquals(attestation.encode()))
+        assertEquals(112, box.registerBytes(4)!!.size)
+        // Slots R5..R9 stay empty — the attestation box carries only R4.
+        assertTrue(box.registers.drop(1).all { it == null })
+    }
+
+    @Test
     fun `attest derives the funding-set fields from the deal terms`() {
         val terms = f.dealTerms()
         val att = oracle.attest(terms, f.recipientRaw, ByteArray(32) { 3 }, 45_678L, 1_700_000_000L)
@@ -53,24 +70,13 @@ class DevOracleSpec {
     }
 
     @Test
-    fun `signer exposes an NFT-carrying oracle es input and co-signs`() {
-        val signer = oracle.signer()
-        assertTrue(signer.oracleNftId.contentEquals(oracle.oracleNftId))
-        val input = signer.oracleInputBox()
-        assertEquals(Base16.encode(oracle.oracleNftId), input.tokens[0].tokenId)
-        // The release input is the oracle.es-governed box itself — its script
-        // composes with the vault's pinned OUTPUTS(0) (OUTPUTS.exists).
-        assertEquals(ErgoValues.treeHex(oracle.tree), input.ergoTreeHex)
-    }
-
-    @Test
     fun `oracle box self-reproduction passes the prover`() {
-        // Rotation spend of the oracle.es box into its reproduction
-        // (same tree, NFT preserved, value >=) — O1/O2 of the contracts suite,
-        // here proven by the full offline prover run.
+        // Attestation-posting rotation spend of the oracle.es box into its
+        // reproduction (same tree, NFT preserved, value >=) — O1/O2 of the
+        // contracts suite, here proven by the full offline prover run.
         val box = oracle.oracleChainBox()
-        val fee = oracle.feeInputBox()
-        val signer = ErgoTestFixtures.ProverSigner(f.oracleKeys.secret)
+        val fee = f.feeChainBox()
+        val signer = ErgoTestFixtures.ProverSigner(f.oracleKeys.secret, f.dealKeys.secret)
         val signed = TxAssembly.assemble(
             inputs = listOf(
                 TxAssembly.toErgoBox(box, oracle.tree),
@@ -91,7 +97,7 @@ class DevOracleSpec {
             minChangeNanoErg = 1_000_000L,
             currentHeight = 100,
             txTimestampMs = null,
-            changeAddress = f.p2pkAddress(oracle.pubKeyCompressed),
+            changeAddress = f.dealKeysAddress,
             networkType = f.networkType,
             signer = signer,
         )
@@ -101,8 +107,8 @@ class DevOracleSpec {
     @Test
     fun `oracle box rotation draining value below SELF value fails the prover`() {
         val box = oracle.oracleChainBox()
-        val fee = oracle.feeInputBox()
-        val signer = ErgoTestFixtures.ProverSigner(f.oracleKeys.secret)
+        val fee = f.feeChainBox()
+        val signer = ErgoTestFixtures.ProverSigner(f.oracleKeys.secret, f.dealKeys.secret)
         assertFailsWith<InterpreterException> {
             TxAssembly.assemble(
                 inputs = listOf(
@@ -126,7 +132,7 @@ class DevOracleSpec {
                 minChangeNanoErg = 1_000_000L,
                 currentHeight = 100,
                 txTimestampMs = null,
-                changeAddress = f.p2pkAddress(oracle.pubKeyCompressed),
+                changeAddress = f.dealKeysAddress,
                 networkType = f.networkType,
                 signer = signer,
             )
@@ -134,47 +140,49 @@ class DevOracleSpec {
     }
 
     @Test
-    fun `release with the oracle es box as oracle input prover-signs and recreates it at OUTPUTS 0`() {
-        // oracle.es pins its reproduction at OUTPUTS(0); the vault pays the
-        // seller at OUTPUTS(1) on release paths (v2, 2026-09-17), so the
-        // oracle.es-governed box is the release input, recreated by
-        // OperatorTxBuilder at output index 0.
+    fun `release with the attestation box as oracle data input prover-signs and pays seller at OUTPUTS 0`() {
+        // The release carries the oracle box as a DATA INPUT (no oracle
+        // signature — its script never executes); the seller payout sits at
+        // OUTPUTS(0), paid in full.
         val terms = f.dealTerms()
-        val builder = OperatorTxBuilder(f.trees, f.treasuryTree)
+        val builder = OperatorTxBuilder(f.trees)
         val attestation = oracle.attest(terms, f.recipientRaw, ByteArray(32) { 5 }, 12_345L, 1_700_000_000L)
-        val esBoxSigner = oracle.signer()
-        assertEquals(ErgoValues.treeHex(oracle.tree), esBoxSigner.oracleInputBox().ergoTreeHex)
-        val recording = RecordingOracleSigner(esBoxSigner)
+        val dataInput = oracle.attestationBox(attestation)
+        val recording = RecordingSigner(ErgoTestFixtures.ProverSigner(f.dealKeys.secret))
         val signed = builder.buildRelease(
             fundedBox = f.fundedChainBox(terms),
-            oracle = recording,
+            oracleDataInput = dataInput,
             attestation = attestation,
-            feeInputs = listOf(oracle.feeInputBox()),
+            feeInputs = listOf(f.feeChainBox()),
             currentHeight = 1500,
-            changeAddress = f.p2pkAddress(oracle.pubKeyCompressed),
+            changeAddress = f.dealKeysAddress,
+            signer = recording,
         )
         assertTrue(signed.id.isNotBlank())
 
         val tx = recording.lastUnsigned!!
-        // The oracle reproduction rides OUTPUTS(0) under the oracle.es tree,
-        // NFT preserved — exactly the position oracle.es pins.
-        val nftHex = Base16.encode(oracle.oracleNftId)
-        val repro = tx.outputs.withIndex().first { (_, out) ->
-            out.tokens.any { Base16.encode(it.id.getBytes()).equals(nftHex, ignoreCase = true) }
-        }
-        assertEquals(0, repro.index)
-        assertEquals(1L, repro.value.tokens.first { Base16.encode(it.id.getBytes()).equals(nftHex, ignoreCase = true) }.value)
-        assertEquals(ErgoValues.treeHex(oracle.tree), ErgoValues.treeHex(repro.value.ergoTree))
-        assertTrue(repro.value.value >= oracle.boxValueNanoErg)
+        val impl = tx as org.ergoplatform.appkit.impl.UnsignedTransactionImpl
+        // The oracle attestation box rides as the tx's data input (index 0),
+        // carrying the NFT (its tokens map decodes the token id to a base16 string).
+        val dataBoxes = impl.dataBoxes
+        assertEquals(1, dataBoxes.size)
+        assertEquals(Base16.encode(oracle.oracleNftId), dataBoxes[0].tokens().head()._1().lowercase())
+        // No context extension on the vault input — path C supplies no vars.
+        assertTrue(impl.tx.inputs().apply(0).extension().values().isEmpty)
+        // Seller payout at OUTPUTS(0) — the full collateral.
+        val sellerOut = tx.outputs[0] as org.ergoplatform.appkit.impl.OutBoxImpl
+        assertEquals(f.DEAL_AMOUNT, sellerOut.tokens[0].value)
+        assertEquals(
+            ErgoValues.treeHex(ErgoValues.p2pkTree(f.sellerKeys.pubKeyCompressed)),
+            ErgoValues.treeHex(sellerOut.ergoTree),
+        )
     }
 
-    /** Wraps an [OracleSigner] and records the unsigned transaction for assertions. */
-    private class RecordingOracleSigner(private val delegate: OracleSigner) : OracleSigner {
+    /** Wraps a [DealTxSigner] and records the unsigned transaction for assertions. */
+    private class RecordingSigner(private val delegate: DealTxSigner) : DealTxSigner {
         var lastUnsigned: UnsignedTransaction? = null
             private set
 
-        override val oracleNftId: ByteArray get() = delegate.oracleNftId
-        override fun oracleInputBox(): ChainBox = delegate.oracleInputBox()
         override fun sign(tx: UnsignedTransaction): SignedTransaction {
             lastUnsigned = tx
             return delegate.sign(tx)

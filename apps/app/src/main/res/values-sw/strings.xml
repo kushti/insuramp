@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Navigation shell -->
+    <string name="nav_quote">Nukuu</string>
+    <string name="nav_recover">Rejesha</string>
+    <string name="scan_qr_prompt">Changanua msimbo wa QR</string>
+
+    <!-- Quote screen -->
+    <string name="quote_title">Nunua USDT kwa pesa taslimu</string>
+    <string name="fiat_currency_label">Sarafu ya fiat</string>
+    <string name="fiat_inr">Rupia ya India</string>
+    <string name="fiat_usd">Dola ya Marekani</string>
+    <string name="fiat_ksh">Shilingi ya Kenya</string>
+    <string name="fiat_currency_option">%1$s — %2$s</string>
+    <string name="quote_amount_label">Unakabidhi (kiwango kidogo kabisa, k.m. senti)</string>
+    <string name="quote_address_label">Anwani yako ya kupokea USDT (Tron base58 au EIP-55)</string>
+    <string name="quote_best">Nukuu bora</string>
+    <string name="quote_view_list">Orodha</string>
+    <string name="quote_view_map">Ramani</string>
+    <string name="quote_refresh">Sasisha</string>
+    <string name="quote_refreshing">Inasasisha…</string>
+    <string name="quote_stale">Seva haifikiwi — tunaonyesha nukuu ya mwisho inayojulikana.</string>
+    <string name="quote_none">Hakuna nukuu iliyochapishwa sasa hivi — sasisha ili kujaribu tena.</string>
+    <string name="quote_unlocated">Muuzaji hakuchapisha eneo la nukuu hii — badili kwenda Orodha ili kuichagua.</string>
+    <string name="quote_creating">Inaunda dili…</string>
+    <string name="quote_eta">~dakika %1$d</string>
+    <string name="quote_available">Hadi USDT %1$d zinapatikana</string>
+    <string name="quote_collateral_line">Muuzaji amefunga dhamana ya kiasi hicho — unaweza kuidai ikiwa USDT zako hazijawahi kufika.</string>
+    <string name="quote_choose">Chagua</string>
+    <string name="quote_create_error">Dili halikuweza kuundwa: %1$s</string>
+    <string name="quote_marker_title">Hadi USDT %1$d · ~dakika %2$d</string>
+
+    <!-- Canonical protocol states → human labels -->
+    <string name="state_quoted">Dili limenukuliwa — kusubiri muuzaji afunge dhamana</string>
+    <string name="state_funded">Muuzaji amefunga dhamana kwa dili lako</string>
+    <string name="state_payment_pending">Kabidhi pesa taslimu kwa muuzaji</string>
+    <string name="state_payment_confirmed">USDT ziko njiani</string>
+    <string name="state_claim_opened">Dai limefunguliwa — rekodi kwenye mnyororo</string>
+    <string name="state_claimable">Dai linaiva (~saa 12)</string>
+    <string name="state_released">Dili limekamilika</string>
+    <string name="state_reclaimed">Muda umekwisha — muuzaji ameirudisha dhamana</string>
+    <string name="state_claimed">Dhamana imelipwa kwako</string>
+
+    <!-- Deal timeline rows with deal terms interpolated -->
+    <string name="timeline_hand_cash">Kabidhi %1$d %2$s kwa muuzaji</string>
+    <string name="timeline_wait_usdt">Subiri USDT %1$d</string>
+
+    <!-- Deal timeline screen -->
+    <string name="deal_title">Dili #%1$s</string>
+    <string name="deal_stale">Seva haifikiwi — usawazishaji wa mwisho unaweza kuwa wa zamani.</string>
+    <string name="deal_loading">Inapakia dili…</string>
+    <string name="deal_fiat_amount">%1$d %2$s</string>
+    <string name="deal_collateral_locked">Dhamana ya USDT %1$d imefungwa</string>
+    <string name="deal_timeout_running">Muda wa vault (RECLAIM_TIMEOUT) unaisha baada ya saa %1$d dakika %2$d</string>
+    <string name="deal_timeout_expired">Muda wa vault (RECLAIM_TIMEOUT) umekwisha</string>
+    <string name="deal_maturation_running">Dai linaiva baada ya saa %1$d dakika %2$d</string>
+    <string name="deal_maturation_expired">Muda wa kuiva kwa dai umekwisha</string>
+    <string name="deal_contested">Muuzaji ameambatisha ushahidi wa malipo — kusubiri muda uishe.</string>
+    <string name="deal_record_warning_title">Usiondoke bila rekodi — ndiyo ushahidi wako pekee.</string>
+    <string name="deal_record_warning_body">Kuondoka kabla ya rekodi iliyosainiwa na muuzaji kuthibitishwa kunamaanisha kuondoka bila rekodi iliyothhibitishwa — hakuna kitu kwenye mnyororo kinachothibitisha kuwa pesa taslimu zilibadilishana mikono.</string>
+    <string name="deal_record_verified">✓ Rekodi imethibitishwa na kuhifadhiwa — ni salama kuondoka kwenye mkutano.</string>
+    <string name="deal_claim_offer">Pesa taslimu zimekusanywa lakini hakuna USDT? Unaweza kudai dhamana ya USDT %1$d iliyofungwa.</string>
+    <string name="deal_claim_payout_note">Hulipa baada ya ~saa 12 (CLAIM_MATURATION).</string>
+    <string name="deal_stop_polling">Simamisha uchunguzi wa mandharinyuma</string>
+
+    <!-- Shared actions -->
+    <string name="action_start_claim">Anza dai</string>
+    <string name="handoff_scan_qr">Changanua QR ya makabidhiano ya muuzaji</string>
+
+    <!-- Handoff (meeting) screen -->
+    <string name="handoff_title">Mkutano — ushahidi wako wa pesa taslimu</string>
+    <string name="handoff_record_plain">Muuzaji amekusanya %1$d %2$s kwa dili #%3$s, %4$s</string>
+    <string name="handoff_watch_count">Kabidhi pesa taslimu na uangalie muuzaji akizihesabu. Muuzaji husaini tu baada ya kuhesabu.</string>
+    <string name="handoff_sig_a_label">Sahihi ya muuzaji — a (hex)</string>
+    <string name="handoff_sig_z_label">Sahihi ya muuzaji — z (hex)</string>
+    <string name="handoff_rejected">✗ %1$s. USICHUKULIE rekodi hii kama ushahidi.</string>
+    <string name="handoff_reject_not_handoff_qr">Hii si QR ya makabidhiano ya P2PGate</string>
+    <string name="handoff_reject_invalid">Rekodi hailingani na dili hili, imepitwa na wakati, au sahihi yake ni batili</string>
+    <string name="handoff_missing_seller_key">Ufunguo wa muuzaji bado haujaambatishwa kwenye dili hili, kwa hivyo programu haiwezi kuthibitisha rekodi. Usiondoke kwenye mkutano bila kutatua hili.</string>
+    <string name="handoff_waiting_signature">Inasubiri sahihi ya muuzaji…</string>
+    <string name="handoff_scan_to_begin">Changanua QR ya muuzaji ili kuanza.</string>
+    <string name="handoff_verified">✓ Rekodi imethibitishwa dhidi ya dili lako.</string>
+    <string name="handoff_saved_relayed">Imehifadhiwa na kutumwa kwa mwendeshaji.</string>
+    <string name="handoff_saved_relay_failed">Imehifadhiwa kwenye kifaa hiki — utumaji umeshindwa (%1$s), kujaribu tena kuna maana tu kwa hadhi ya muuzaji.</string>
+    <string name="handoff_saved_local">Imehifadhiwa kwenye kifaa hiki…</string>
+    <string name="handoff_safe_to_leave">Ni salama kuondoka kwenye mkutano.</string>
+    <string name="handoff_not_safe">Kuondoka sasa kunamaanisha kuondoka bila rekodi iliyothhibitishwa — rekodi iliyothhibitishwa ndiyo kipengee chako pekee cha mzozo.</string>
+
+    <!-- Claim screen -->
+    <string name="claim_title">Dai dhamana iliyofungwa ya muuzaji</string>
+    <string name="claim_intro">Pesa taslimu zimekusanywa lakini hakuna USDT? Dhamana ya muuzaji inakulipa. Hii ni njia ya kudai dhamana — si tiketi ya mzozo.</string>
+    <string name="claim_not_available">Dai hupatikana pesa taslimu zinapokusanywa (dili liko %1$s).</string>
+    <string name="claim_maturation_deadline">Tarehe ya kuiva kwa dai: %1$d (~saa 12, CLAIM_MATURATION).</string>
+    <string name="claim_contested">Muuzaji ameambatisha ushahidi wa orakuli — mkataba ndiye unaoamua; kusubiri muda uishe.</string>
+    <string name="claim_opening">Inafungua dai…</string>
+    <string name="claim_guide_title">Dai limefunguliwa — hatua zinazofuata</string>
+    <string name="claim_error">Dai halikuweza kufunguliwa: %1$s</string>
+
+    <!-- Recover screen -->
+    <string name="recover_title">Rejesha dili</string>
+    <string name="recover_instructions">Bandika kiungo cha dili ulichohifadhi (au id ya dili # tokeni).</string>
+    <string name="recover_input_label">Kiungo cha dili au id#token</string>
+    <string name="recover_recovering">Inarejesha…</string>
+    <string name="recover_restore">Rejesha dili</string>
+    <string name="recover_restored">Dili limerejeshwa.</string>
+    <string name="recover_error_invalid_link">Hicho hakionekani kama kiungo cha dili — hakikisha kina id ya dili na tokeni ya #.</string>
+    <string name="recover_error_failed">Urejeshaji umeshindwa: %1$s</string>
+</resources>

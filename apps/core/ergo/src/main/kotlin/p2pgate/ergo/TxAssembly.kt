@@ -39,10 +39,13 @@ internal object TxAssembly {
      * change), the context extension on the vault input, an offline state
      * context carrying only the preheader, and finally the [signer] call.
      * [changeTokens] rides the change output (fund transactions with surplus
-     * collateral); a change output is then mandatory.
+     * collateral); a change output is then mandatory. [dataInputs] are
+     * attached as read-only data inputs (the release paths' oracle
+     * attestation box); their scripts never execute.
      */
     fun assemble(
         inputs: List<ErgoBox>,
+        dataInputs: List<ErgoBox> = emptyList(),
         contextVars: Map<Int, EvaluatedValue<out SType>>,
         contextVarInputIndex: Int,
         candidates: List<ErgoBoxCandidate>,
@@ -76,7 +79,7 @@ internal object TxAssembly {
 
         val ext = ErgoBridge.contextExtension(contextVars)
         val unsignedTx: UnsignedErgoLikeTransaction =
-            ErgoBridge.unsignedTxWithExt(inputs, emptyList(), outputs, ext, contextVarInputIndex)
+            ErgoBridge.unsignedTxWithExt(inputs, dataInputs, outputs, ext, contextVarInputIndex)
 
         // The prover reads context variables from each input's ExtendedInputBox
         // extension — mirror the context extension there (empty elsewhere).
@@ -87,7 +90,7 @@ internal object TxAssembly {
         val unsigned = UnsignedTransactionImpl(
             unsignedTx,
             extendedInputs,
-            emptyList(),
+            dataInputs,
             changeAddressErgo,
             OfflineStateContext(preHeader),
             offlineContext(networkType),
@@ -115,7 +118,7 @@ internal object TxAssembly {
         )
     }
 
-    /** Fee/funding inputs are ordinary wallet boxes: their tree comes from the explorer-provided hex. */
+    /** Miner-fee/funding inputs are ordinary wallet boxes: their tree comes from the explorer-provided hex. */
     fun decodeTree(box: ChainBox): ErgoTree =
         JavaHelpers.decodeStringToErgoTree(box.ergoTreeHex)
 

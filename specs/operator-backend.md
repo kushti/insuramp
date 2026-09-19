@@ -1,14 +1,19 @@
 # Operator Backend — Implementation Spec
 
-*Implementation specification for the operator-side backend of the vault-insured cash→USDT on-ramp. Depends on: `specs/deal-protocol.md` (canonical deal state machine), `specs/vault-contract.md` (ErgoScript vault and its timings: `RECLAIM_TIMEOUT` 24h, `CLAIM_MATURATION` 12h, protocol fee 25 bps, hardcoded in-contract), `specs/oracle-integration.md` (payment-proof oracle for the USDT leg: phase-1 centralized NFT-authenticated oracle gating release, phase-2 Rosen-derived threshold). Covers the first asset leg only — cash→USDT on-ramp with USE collateral; the seller locks the vault and physically meets the buyer to collect the cash. Product context: `onramp-ux.md` §4 (operator dashboard); economics context: `onramp-business-model.md` §4 (capital dynamics) and §7 (regulatory posture). The reverse direction (USDT→cash) is out of scope and not specified.*
+*Implementation specification for the operator-side backend of the vault-insured cash→USDT on-ramp. Depends on: `specs/deal-protocol.md` (canonical deal state machine), `specs/vault-contract.md` (ErgoScript vault and its timings: `RECLAIM_TIMEOUT` 24h, `CLAIM_MATURATION` 12h — and, since the 2026-09-18 fee removal, no in-contract protocol fee on any path), `specs/oracle-integration.md` (payment-proof oracle for the USDT leg: phase-1 centralized NFT-authenticated oracle gating release, phase-2 Rosen-derived threshold). Covers the first asset leg only — cash→USDT on-ramp with USE collateral; the seller locks the vault and physically meets the buyer to collect the cash. Product context: `onramp-ux.md` §4 (operator dashboard); economics context: `onramp-business-model.md` §4 (capital dynamics) and §7 (regulatory posture). The reverse direction (USDT→cash) is out of scope and not specified.*
 
-**Implementation status (M3-B, 2026-09-17):** the backend has landed in `backend/`
-(Kotlin/Ktor pinned 3.0.3, 87 tests green across 10 suites): deal engine as sole
-transition authority, chain watcher, vault manager (fund/reclaim/release/contest),
-quote publisher with capacity + pause gates, buyer/dashboard `/v1` APIs +
-WebSockets, deal-scoped bearer auth, dispute inbox (contest/accept/investigate +
-escalation), fail-closed AML `RiskScorer` recording decisions only, infra monitor +
-auto-pause. Documented deviations from this spec:
+**Implementation status (M3-B, 2026-09-17; M4 seller-meeting additions same week):** the
+backend has landed in `backend/` (Kotlin/Ktor pinned 3.0.3, 93 tests green across 11
+suites): deal engine as sole transition authority, chain watcher, vault manager
+(fund/reclaim/release/contest), quote publisher with capacity + pause gates,
+buyer/dashboard `/v1` APIs + WebSockets, deal-scoped bearer auth, dispute inbox
+(contest/accept/investigate + escalation), fail-closed AML `RiskScorer` recording
+decisions only, infra monitor + auto-pause, plus the M4 seller-meeting pair
+(`POST /v1/dashboard/deals/{id}/handoff/sign` — Schnorr-signs the 52-byte record with the
+vault R5 key, driving `CashCollected` FUNDED → PAYMENT_PENDING; and
+`GET /v1/dashboard/deals/{id}/handoff/qr.png`, ZXing-rendered) and the static seller
+dashboard front-end served at `/dashboard/` (public shell, token-gated API — see
+`specs/seller-dashboard.md`). Documented deviations from this spec:
 - **Persistence:** in-memory `DealStore` behind the JDBC-shaped interface; a restart
   loses state. The PostgreSQL implementation is the documented follow-up.
 - **Broadcast:** the `TxSubmitter` seam; `NoOpTxSubmitter` is the default (txs are
@@ -17,10 +22,13 @@ auto-pause. Documented deviations from this spec:
   spends*; the reclaim scheduler solely owns timeout transitions for unspent boxes —
   it must build the reclaim tx in the same breath as the state change, and a
   watcher-driven `RECLAIMED` would strand the vault with no spend (§10).
-- **Dev oracle wiring:** release/contest txs are co-signed by the in-process dev
-  oracle signing the *whole* tx, so their miner-fee inputs are oracle-key boxes;
-  staged co-signing (operator wallet + oracle) is the production shape
-  (`specs/oracle-integration.md` §4.1).
+- **Oracle wiring:** release/contest txs attach the oracle's attestation box as a
+  **data input** (`OperatorTxBuilder.buildRelease/buildContest(oracleDataInput, signer)`
+  — operator wallet only, no oracle co-signature, no oracle-key fee inputs), resolved
+  via `OracleClient.attestationBoxFor(dealId)` with the in-process `DevOracle` in
+  dev/tests. The oracle service serializes attestation postings per pending release
+  (`specs/oracle-integration.md` §3.1); the operational consequence for this backend is
+  in §2.
 - **Handoff-record upload:** the buyer-authed `POST /v1/deals/{id}/handoff` accepts
   the seller-signed record (+ optional GPS reference) and drives the `CashCollected`
   transition (§9, buyer API).
@@ -37,7 +45,7 @@ The backend has three jobs, in priority order:
 
 One on-ramp-specific orchestration rule binds several modules: **reclaim is valid only from FUNDED and PAYMENT_CONFIRMED.** From PAYMENT_PENDING, reclaim is a theft path — cash has changed hands and no payment proof exists — and the protocol rejects it (`specs/deal-protocol.md` §1). From PAYMENT_CONFIRMED the release is preferred and normally immediate (oracle digest alone, no buyer action); the timeout reclaim remains only as the fallback for an attested-but-unreleased vault. On-chain, a FUNDED box cannot tell these states apart, so the reclaim automation must use *off-chain* deal state to exclude any deal that has progressed past FUNDED without a confirmed payment. This is a hard invariant of the vault manager and the dispute inbox, not an optimization.
 
-Technology: **Kotlin/Ktor service**, single deployable, PostgreSQL for deal state, an embedded wallet (or external node wallet) for vault transactions, web dashboard front end as API consumer (dashboard UI itself is out of scope for this spec).
+Technology: **Kotlin/Ktor service**, single deployable, PostgreSQL for deal state, an embedded wallet (or external node wallet) for vault transactions, web dashboard front end as API consumer (dashboard UI itself is out of scope for this spec — it has its own: `specs/seller-dashboard.md`).
 
 ## 2. Architecture
 
@@ -65,8 +73,9 @@ Module decomposition of the Ktor service. Modules communicate over an internal e
 ```
 
 - **Deal engine.** Owns the canonical state machine. All transitions are validated: only the transitions named in §1 are legal (including the reclaim gating rule); anything else is rejected and logged as an invariant violation. State is persisted transactionally (DB row = source of truth; the chain watcher can *cause* transitions but never holds state).
-- **Chain watcher.** Polls the Ergo explorer API (default) or a local node (optional, preferred for privacy) for the operator's vault boxes. Maps on-chain reality to the deal machine's events: vault box found → `VaultFunded` (→ `FUNDED`); box moved to `PAYMENT_PROVEN` (buyer opened a claim with the seller-signed handoff record) → `ClaimOpened` (→ `CLAIM_OPENED`); box spent via the release path (oracle digest alone) → `ReleaseObserved` (→ `RELEASED`); box spent via the timeout path → `ReclaimTimeoutElapsed` (→ `RECLAIMED`); box spent via the claim path → `ClaimPaid` (→ `CLAIMED`). (`PAYMENT_PENDING` is an off-chain transition driven by the buyer API's handoff-record upload — event `CashCollected(recordTimestamp=…)`; `PAYMENT_CONFIRMED` is an off-chain transition driven by the oracle client — event `PaymentConfirmed`; the FUNDED box is untouched in both. A `PaymentConfirmed` arriving while a claim is open sets the deal's contested flag rather than being rejected.) Confirmation-depth policy per `specs/oracle-integration.md`.
-- **Vault manager.** Builds and submits vault transactions: fund (create `FUNDED` box with deal parameters, R7 = the bare 32-byte `oracleNftId`), reclaim (timeout path after `RECLAIM_TIMEOUT`), release (path C: oracle digest of the seller's USDT transfer, alone — there is no receipt signature to collect), contest (path C′: the same digest from the PAYMENT_PROVEN box during a claim). Reclaim is **automated as one job**, but it is state-aware: the scheduler reclaims vaults past `RECLAIM_TIMEOUT` **only for deals in FUNDED or PAYMENT_CONFIRMED** — never PAYMENT_PENDING (§1) — which is also the privacy-preserving default path (routine reclaims leave no on-chain link between vaults).
+- **Chain watcher.** Polls the chain through the `ChainSource` interface — Ergo explorer API (default) or any node with the extra indexer (`P2P_CHAIN_SOURCE=node`, `P2P_NODE_URL`) — for the operator's vault boxes. Maps on-chain reality to the deal machine's events: vault box found → `VaultFunded` (→ `FUNDED`); box moved to `PAYMENT_PROVEN` (buyer opened a claim with the seller-signed handoff record) → `ClaimOpened` (→ `CLAIM_OPENED`); box spent via the release path (oracle digest alone) → `ReleaseObserved` (→ `RELEASED`); box spent via the timeout path → `ReclaimTimeoutElapsed` (→ `RECLAIMED`); box spent via the claim path → `ClaimPaid` (→ `CLAIMED`). (`PAYMENT_PENDING` is an off-chain transition driven by the buyer API's handoff-record upload — event `CashCollected(recordTimestamp=…)`; `PAYMENT_CONFIRMED` is an off-chain transition driven by the oracle client — event `PaymentConfirmed`; the FUNDED box is untouched in both. A `PaymentConfirmed` arriving while a claim is open sets the deal's contested flag rather than being rejected.) Confirmation-depth policy per `specs/oracle-integration.md`.
+- **Vault manager.** Builds and submits vault transactions: fund (create `FUNDED` box with deal parameters, R7 = the bare 32-byte `oracleNftId`), reclaim (timeout path after `RECLAIM_TIMEOUT`), release (path C: the oracle attestation box as data input — the digest alone, no receipt signature to collect, no oracle co-signature to stage), contest (path C′: the same data input from the PAYMENT_PROVEN box during a claim). Reclaim is **automated as one job**, but it is state-aware: the scheduler reclaims vaults past `RECLAIM_TIMEOUT` **only for deals in FUNDED or PAYMENT_CONFIRMED** — never PAYMENT_PENDING (§1) — which is also the privacy-preserving default path (routine reclaims leave no on-chain link between vaults).
+- **Oracle client.** No oracle co-signature exists anywhere in the tx path: the backend builds and signs release/contest txs with the operator wallet alone and only needs the oracle's **current attestation box** (`OracleClient.attestationBoxFor(dealId): ChainBox?`), which it attaches as the release's data input. **Serialization constraint (hard operational rule):** the attestation box is a singleton — the oracle spends it to post the next attestation, which invalidates any still-mempool release that referenced it. So `attestationBoxFor` returns *the previous deal's* box until its release confirms, and a new deal's attestation simply is not available until then; the vault manager must treat "attestation pending; previous release unconfirmed" as a queue condition and re-try, not as an error. Prompt release submission is therefore part of oracle liveness: a release left unconfirmed blocks every later attestation. The oracle service holds the posting side of the same rule (it re-checks by deal id / box id before posting; `specs/oracle-integration.md` §3.1).
 - **Quote publisher.** Maintains the operator's live quotes (spread, ETA promise, max deal size) and serves them to the buyer-facing API. Hard-gated by the infra monitor (§8): no quotes while verification is degraded.
 - **buyer-facing deal API.** Deal status feed, quote feed, handoff-record upload (`POST /v1/deals/{id}/handoff`, buyer-authed — the buyer relays the seller-signed record they obtained at the meeting), and an **oracle attestation proxy**: the buyer app never talks to the oracle directly; the backend proxies and caches confirmation status so the buyer's "USDT confirmed" indicator and the operator's are the same fact.
 - **Dispute inbox.** Claim tracking and evidence assembly (§7).
@@ -84,7 +93,7 @@ The dashboard's primary view is a kanban mapping one-to-one onto the canonical s
 | `FUNDED` | Vault box on-chain, USE locked, awaiting the meeting | locked collateral, timeout countdown (`RECLAIM_TIMEOUT` from funding height) | timeout reclaim — auto-job, but only while no handoff record exists (§1) |
 | `PAYMENT_PENDING` | Cash collected (seller-signed handoff record on file); the seller must send the USDT | record timestamp, freshness countdown, meeting status | **none** — reclaim from here is a theft path and is rejected; the buyer's answer is the claim |
 | `PAYMENT_CONFIRMED` | Oracle confirmed the seller's USDT transfer to the buyer (off-chain); release pending — no buyer action is required or awaited | oracle digest reference, timeout countdown | release via oracle digest alone (preferred, automatic), else timeout reclaim (attested but unreleased) |
-| `RELEASED` | Vault spent via the release path | release tx id, protocol fee deducted (25 bps), cycle duration (feeds utilization stats) | terminal — collateral returns to pool |
+| `RELEASED` | Vault spent via the release path | release tx id, cycle duration (feeds utilization stats) | terminal — collateral returns to the pool in full |
 | `RECLAIMED` | Vault spent via the timeout path (buyer no-show, or attested-but-unreleased fallback) | idle time regained | terminal |
 | `CLAIM_OPENED` | Buyer opened a claim with the seller-signed handoff record | evidence view (§7): handoff record vs oracle digest, contest deadline | contest (path C′), or accept (let it mature to CLAIMED) |
 | `CLAIMABLE` | Claim matured (`CLAIM_MATURATION` elapsed), payout imminent | — | last-chance contest only |
@@ -115,13 +124,31 @@ The trade-off to surface to the operator: privacy funding adds mixer latency to 
 
 ## 5. Quote publishing
 
-A quote is a triple: **spread**, **ETA promise**, **max deal size**. Semantics:
+A quote is a triple: **spread**, **ETA promise**, **max deal size** — plus an optional
+**seller location** (2026-09-19): a nullable `lat`/`lon` pair (complete pair or neither;
+lat ∈ [−90, 90], lon ∈ [−180, 180]; a half-pair is a rejection). When present it lets the
+buyer app render quotes on a map (List/Map toggle on the quote screen); absent, the quote
+is list-only. The feed is **multi-quote** (2026-09-19): several operators' quotes coexist,
+capacity is validated per publish against free collateral *minus the sum of the other
+active quotes' max amounts*, and quotes expire or are withdrawn (`POST
+/v1/dashboard/quotes/{id}/withdraw`). `P2P_DEMO_QUOTES=true` seeds three located example
+quotes (Cairo, Nairobi, Mumbai) on demo startup. Semantics:
 
-- **Spread** — the operator's margin over reference rate, in bps. Must internally exceed the protocol fee (25 bps, hardcoded in-contract) plus meeting logistics and ops costs; the publisher warns if spread < protocol fee + configured cost floor.
+- **Spread** — the operator's margin over reference rate, in bps (the seller's margin, not a
+  protocol fee — the in-contract protocol fee was removed 2026-09-18). Must internally
+  cover meeting logistics and ops costs; the publisher warns if spread < configured cost floor.
 - **ETA promise** — minutes from `FUNDED` (deal accepted, vault locked) to the cash-collection meeting. This is an operator-network property, not a chain property; the publisher derives the default from recent realized meeting times.
 - **Max deal size** — vault capacity (§4), period.
 
-The **insured badge** on the buyer side reads the actual vault collateral ("insured up to $X" = USE locked in that deal's vault, per `onramp-ux.md` §2.1 and §4). The badge is the vault: overstating capacity is self-defeating because the badge is verifiable on-chain and a quote that outruns collateral either fails to fund (deal stuck in `QUOTED` until the quote expires — `QuoteExpired`) or ships a smaller badge than promised. The backend enforces this structurally — it refuses to publish a quote whose max size exceeds mix-ready collateral — rather than trusting operator discipline.
+The buyer-side collateral line reads the actual vault collateral ("Up to X USDT
+available — the seller has locked that much collateral"; the buyer app dropped
+"insured" wording 2026-09-18 — `onramp-ux.md` §2.1 and §4). The line is the
+vault: overstating capacity is self-defeating because it is verifiable on-chain
+and a quote that outruns collateral either fails to fund (deal stuck in
+`QUOTED` until the quote expires — `QuoteExpired`) or ships a smaller
+collateral line than promised. The backend enforces this structurally — it
+refuses to publish a quote whose max size exceeds mix-ready collateral —
+rather than trusting operator discipline.
 
 Quotes are versioned and expire (default TTL aligned with, and shorter than, `RECLAIM_TIMEOUT`; a quote must never outlive the vault funded from it). Quote feed deltas are pushed over WebSocket to the buyer app; full snapshot on connect.
 
@@ -161,7 +188,7 @@ Monitored signals:
 | Wallet daemon health | vault manager heartbeat | signing/broadcast failing |
 | AML scorer reachability | §6 hook | unreachable (funding halts; existing deals unaffected) |
 
-**Auto-pause rule (per `onramp-ux.md` §4, verbatim intent): never sell insurance you can't currently verify.** When the oracle leg is degraded, the quote publisher withdraws all quotes (buyer feed shows no quotes, not stale quotes) and no new vaults are funded. In-flight deals are unaffected — USDT confirmations and release co-signatures queue and apply when the oracle recovers, and the buyer's claim path never depends on oracle liveness (it is gated on the seller-signed handoff record, not the oracle). Auto-pause events are recorded with cause and duration; they feed the operator's realized-uptime stats, since every paused hour is idle capital.
+**Auto-pause rule (per `onramp-ux.md` §4, verbatim intent): never sell insurance you can't currently verify.** When the oracle leg is degraded, the quote publisher withdraws all quotes (buyer feed shows no quotes, not stale quotes) and no new vaults are funded. In-flight deals are unaffected — USDT confirmations and release attestations queue and apply when the oracle recovers, and the buyer's claim path never depends on oracle liveness (it is gated on the seller-signed handoff record, not the oracle). Auto-pause events are recorded with cause and duration; they feed the operator's realized-uptime stats, since every paused hour is idle capital.
 
 The principle extends by analogy: stale explorer → pause new funding (can't confirm vault boxes); dead wallet daemon → full pause and page the operator.
 
@@ -169,13 +196,14 @@ The principle extends by analogy: stale explorer → pause new funding (can't co
 
 REST unless noted; JSON. All endpoints versioned under `/v1`. Sketches, not schemas.
 
-**buyer-facing deal API** (consumer: buyer PWA; auth: deal-scoped bearer token — random token in the deal link per `onramp-ux.md` §2.4, minted at `QUOTED`, expires at deal close):
+**buyer-facing deal API** (consumer: the buyer app — native Android, `specs/android-app.md`; the earlier "buyer PWA" sketch is superseded by that decision; auth: deal-scoped bearer token — random token in the deal link per `onramp-ux.md` §2.4, minted at `QUOTED`, expires at deal close):
 
 ```
-GET  /v1/quotes                      # quote feed snapshot (no auth)
-WS   /v1/quotes/stream               # quote deltas
+GET  /v1/quotes                      # quote feed snapshot: {quotes: [...]} (no auth; multi-quote since 2026-09-19)
+WS   /v1/quotes/stream               # full-snapshot pushes on publish/withdraw/expire
 POST /v1/deals                       # create deal from quote id + USDT receive address → {dealId, dealToken}
-GET  /v1/deals/{id}                  # status: canonical state, vault ref, insured amount, timers
+GET  /v1/deals/{id}                  # status: canonical state, vault ref, insured amount, timers,
+                                     # sellerPubKey (the vault R5 key the app verifies the handoff signature against)
 WS   /v1/deals/{id}/stream           # state-change push (replaces polling)
 GET  /v1/deals/{id}/attestation      # oracle attestation proxy (USDT payment confirmation + evidence pointer)
 POST /v1/deals/{id}/handoff          # upload the seller-signed handoff record (+ optional GPS ref):
@@ -194,28 +222,53 @@ UI vocabulary to drift.
 GET  /v1/lane                          # kanban: deals by canonical state (§3)
 GET  /v1/pool                          # collateral pool view (§4)
 POST /v1/vaults/{id}/reclaim           # manual reclaim trigger (state-aware; auto-job handles routine)
-GET  /v1/quotes/current ; PUT /v1/quotes/current     # quote publishing (§5)
+GET  /v1/dashboard/quotes ; PUT /v1/dashboard/quotes     # quote publishing (§5; optional lat/lon seller location; multi-quote)
+POST /v1/dashboard/quotes/{id}/withdraw                  # withdraw one quote
 POST /v1/aml/check                     # paste address → accept/reject (§6)
 GET  /v1/disputes ; POST /v1/disputes/{id}/{contest|accept|investigate}   # dispute inbox (§7)
 GET  /v1/infra                         # monitor signals + pause state (§8)
 WS   /v1/events                        # all deal/infra events (dashboard live view)
+
+# M4 seller-meeting pair (state gate: FUNDED signs and drives CashCollected → PAYMENT_PENDING;
+# any other state → 409 naming the state; see specs/seller-dashboard.md §4)
+POST /v1/dashboard/deals/{id}/handoff/sign   # → {dealId, state, recordHex, signatureA, signatureZ, sellerPubKey, qrPayload}
+GET  /v1/dashboard/deals/{id}/handoff/qr.png # image/png (409 unsigned, 404 unknown deal)
+
+# static seller dashboard front-end (public shell; the API above stays token-gated)
+GET  /dashboard ; /dashboard/app.js ; /dashboard/styles.css
 ```
+
+**Demo run recipe (M4, demo-backend mode):** `export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1`,
+then `./gradlew :backend:run` — in-memory `DealStore`, `NoOpTxSubmitter`, in-process
+`DevOracle`, mainnet chain-source defaults; `P2P_NETWORK=testnet` for testnet;
+`P2P_CHAIN_SOURCE=node` + `P2P_NODE_URL=…` to poll a node with the extra indexer instead
+of the explorer. Dashboard auth: set `P2P_OPERATOR_KEY` (bearer token for every dashboard
+endpoint and the `/v1/events` socket); **when it is unset the dashboard API is
+unauthenticated — demo-open mode, never deploy it so.** Explorer outages only degrade the
+`EXPLORER_SYNC` infra signal; the server keeps serving. Dashboard at
+`http://localhost:8080/dashboard`.
 
 ## 10. Open questions
 
 - ~~**Withheld-signature-plus-claim corner**~~ **— ELIMINATED in v2 (2026-09-13).** In the old design a buyer who both withheld the USDT-receipt signature and opened a without-cause claim blocked path C′ (digest **+ signature** required) and the claim matured and paid — a known residual, deliberately not contract-prevented. The v2 release paths are gated on the oracle attestation **alone**, so path C′ needs only the digest: an honest seller mechanically counters any false claim, and there is nothing for the buyer to withhold. No known residual remains on the contest path. The surrounding posture is unchanged for *other* fraud classes: oracle fraud stays ex-post provable (public attestation, per-deal bounds — `specs/oracle-integration.md` §5.3), and a verifying record for cash never collected is now strictly a seller-side matter (the record is seller-signed) — real-world recourse runs against the seller's deal identity, not a third party.
 - ~~**Third-party dispatch**~~ **— RESOLVED by removal (2026-09-17).** The old three-role design is gone: the seller meets the buyer and signs the handoff record with the seller key already in the deal terms. There is no dispatch, no reassignment, and no deal-scoped third-party key to re-mint. Reassignment questions reduce to the seller cancelling before funding (a `QuoteExpired`-style abort, no on-chain footprint).
-- **Chain watcher source of truth.** Explorer API is operationally easy but adds a third-party dependency into the deal loop and leaks the operator's vault set to the explorer. Node polling is private but heavier. Default explorer, or default node? [spec: node becomes mandatory at any serious volume] **Implementation settled the shape (M3-B, 2026-09-17):** the watcher polls through the `ChainSource` interface with the explorer client as the default (`P2P_NETWORK`-selectable, mainnet default) — a node adapter drops in behind the same interface. Timeout transitions for *unspent* boxes are owned by the reclaim scheduler, not the watcher (see the status note above); the watcher mirrors timeout facts only from observed spends. Default-explorer vs. default-node as a *deployment* choice remains operator policy.
+- **Chain watcher source of truth.** Explorer API is operationally easy but adds a third-party dependency into the deal loop and leaks the operator's vault set to the explorer. Node polling is private but heavier. Default explorer, or default node? [spec: node becomes mandatory at any serious volume] **Implementation settled the shape (M3-B, 2026-09-17):** the watcher polls through the `ChainSource` interface with the explorer client as the default (`P2P_NETWORK`-selectable, mainnet default). The node adapter has since landed (same day): `NodeChainSource` (`apps/core/ergo`) speaks the node's `/blockchain` extra-indexer API (`/blockchain/box/byId`, `/blockchain/transaction/byId`, `/blockchain/indexedHeight`, `/blockchain/box/unspent/byAddress`) with multi-URL failover (404 = absence, never fails over) and is selected via `P2P_CHAIN_SOURCE=node` + `P2P_NODE_URL` (comma-separated base URLs). Any public node running the extra indexer qualifies — no explorer dependency, no vault-set leak to a third party; the explorer client stays as the default and as a fallback implementation. Notable follow-ups the node API unlocks: `/blockchain/box/unspent/byTokenId` (oracle singleton lookup) and `/blockchain/box/unspent/byTemplateHash` (all-vault watching in one query). Timeout transitions for *unspent* boxes are owned by the reclaim scheduler, not the watcher (see the status note above); the watcher mirrors timeout facts only from observed spends. Default-explorer vs. default-node as a *deployment* choice remains operator policy.
 - **Oracle attestation proxy caching.** How stale may a cached attestation be before the buyer app must show "verification delayed" rather than the last-known state? Couples to the auto-pause thresholds in §8.
 - **Concurrent vaults per deal size.** One vault per deal at 100% collateral ratio (`onramp-insurance.md` §5) is capital-simple but operationally rigid. Splitting a large deal across several vaults improves reclaim granularity at the cost of more boxes, more fees, more watcher load. Worth speccing only if deal sizes outgrow single-vault liquidity.
-- **Fee accounting.** *(Reconciliation still open; the parameter question is resolved.)* The protocol fee (25 bps, `PROTOCOL_FEE_BPS`) is hardcoded in the contract scripts and deducted in-contract; the backend must reconcile the on-chain deduction against its own books. Changing the fee means redeploying the contracts.
+- ~~**Fee accounting**~~ **— RESOLVED by removal (2026-09-18).** The in-contract
+  protocol fee (25 bps, `PROTOCOL_FEE_BPS`) was removed: no treasury output on any
+  path, nothing deducted in-contract, so there is no on-chain fee to reconcile.
+  `QuotePublisher.protocolFeeBps` and the `P2P_TREASURY_SECRET` wiring are gone
+  with it. If a future revenue model reintroduces a protocol take, accounting for
+  it becomes an open question again.
 - **Privacy funding latency.** *(Still open.)* Pre-mixed reserve sizing: how much mix-ready USE to hold vs. mixer throughput? No data yet; the pool view should measure this from day one so the sizing rule can be evidence-based. [spec]
 
 ## Cross-references
 
 - Deal state machine: `specs/deal-protocol.md`
-- Vault contract, timings (`RECLAIM_TIMEOUT` 24h, `CLAIM_MATURATION` 12h), protocol fee (25 bps, hardcoded): `specs/vault-contract.md` (§2)
+- Vault contract, timings (`RECLAIM_TIMEOUT` 24h, `CLAIM_MATURATION` 12h): `specs/vault-contract.md` (§2)
 - Payment-proof oracle (USDT leg): `specs/oracle-integration.md`
 - Operator dashboard product design: `onramp-ux.md` §4
+- Dashboard front-end consuming this API (separate spec, M4): `specs/seller-dashboard.md`
 - Vault design, privacy funding, trust models: `onramp-insurance.md` §2, §3.1
 - Capital dynamics, regulatory posture: `onramp-business-model.md` §4, §7

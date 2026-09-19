@@ -44,11 +44,11 @@ Canonical states. Every component uses these names verbatim.
 | FUNDED | vault box created, collateral locked, waiting for the meeting | operator backend | FUNDED box |
 | PAYMENT_PENDING | cash collected (seller-signed handoff record exists); seller is obligated to send USDT | seller signs the handoff record at the meeting | FUNDED box |
 | PAYMENT_CONFIRMED | oracle observed the seller's USDT transfer to the buyer | oracle attestation (off-chain signal) | FUNDED box (still) |
-| RELEASED | payment-proof path spent; collateral to seller minus fee | seller submits tx (path C/C′, oracle digest alone) | box spent (path C/C′) |
-| RECLAIMED | timeout path spent; collateral back to seller minus fee | backend reclaim job | box spent (path A) |
+| RELEASED | payment-proof path spent; collateral to seller in full | seller submits tx (path C/C′, oracle digest alone) | box spent (path C/C′) |
+| RECLAIMED | timeout path spent; collateral back to seller in full | backend reclaim job | box spent (path A) |
 | CLAIM_OPENED | seller-signed handoff record on-chain; box is PAYMENT_PROVEN | Buyer app (path B tx) | PAYMENT_PROVEN box |
 | CLAIMABLE | `CLAIM_MATURATION` elapsed since `proofHeight` | automatic (height) | PAYMENT_PROVEN box |
-| CLAIMED | Buyer took collateral minus fee | Buyer app (path D tx) | box spent (path D) |
+| CLAIMED | Buyer took collateral in full | Buyer app (path D tx) | box spent (path D) |
 
 Rules:
 
@@ -205,10 +205,12 @@ gates path B and anchors maturation.
 Digest layout defined in `specs/oracle-integration.md` §2. The binding rule flips with the
 direction: the digest's `dealId`, `amount`, `srcChainId`, and `recipient` fields must equal
 the vault's R4/R9 values, where `recipient` is the **buyer's** USDT address (the seller
-pays the buyer). In phase 1 the attestation is realized as the oracle box being a full
-input to the **release** transaction (the oracle holds the NFT-bearing oracle box); in
-phase 2 as a k-of-n guard signature bundle over the same digest. The attestation is
-**solely sufficient** on the release paths — no buyer or seller signature accompanies it.
+pays the buyer). In phase 1 the attestation is realized as the oracle box being a **data
+input** to the **release** transaction (the oracle singleton carries the NFT and the
+payload in R4; the vault checks the NFT against R7 and the payload against R4/R9 —
+data-input scripts never execute, so no oracle signature is in the tx); in phase 2 as a
+k-of-n guard signature bundle over the same digest. The attestation is **solely
+sufficient** on the release paths — no buyer or seller signature accompanies it.
 
 ## 4. Failure and edge transitions
 

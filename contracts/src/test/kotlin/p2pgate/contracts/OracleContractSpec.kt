@@ -7,8 +7,10 @@ import kotlin.test.assertTrue
 /**
  * Oracle box progression (contracts/src/main/ergoscript/oracle.es): every spend must
  * carry proveDlog(oracleKey) and preserve the NFT (id + amount) and value into
- * OUTPUTS(0) — a FIXED position (v2, 2026-09-17), so the vault contracts can pin their
- * seller payout at OUTPUTS(1) on joint release spends (specs/vault-contract.md §8.4).
+ * OUTPUTS(0) — a FIXED position (v2, 2026-09-17), the shape of the oracle's
+ * attestation-posting rotation (R4 = payload is allowed; registers are
+ * unconstrained — specs/vault-contract.md §8.4). The vault contracts consume
+ * the posted box as a release DATA INPUT, where this script never executes.
  * The oracle box is SELF in all tests here.
  */
 class OracleContractSpec {

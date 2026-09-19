@@ -19,6 +19,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -27,7 +28,14 @@ import org.junit.jupiter.api.Test
 import p2pgate.backend.api.CreateDealOutcome
 import p2pgate.backend.api.module
 import p2pgate.backend.util.Hex
+import p2pgate.dealprotocol.HandoffRecord
+import p2pgate.dealprotocol.QrPayload
+import p2pgate.ergo.HandoffRecordVerifier
+import p2pgate.ergo.SchnorrVerifier
+import java.io.ByteArrayInputStream
 import java.time.Duration
+import java.time.Instant
+import javax.imageio.ImageIO
 
 /**
  * The `/v1` HTTP surface (`specs/operator-backend.md` §9) against a test
@@ -52,8 +60,8 @@ class ApiSpec {
         // routes, which evaluate `active()` against wall-clock now — a quote
         // published at T0 is already TTL-expired by the time the suite runs
         // in the afternoon.
-        env.quotes.publish(50, 60, maxAmount, java.time.Instant.now())
-        return env.store.currentQuote()!!.id
+        val outcome = env.quotes.publish(50, 60, maxAmount, java.time.Instant.now())
+        return (outcome as p2pgate.backend.quotes.QuotePublisher.PublishOutcome.Published).quote.id
     }
 
     private fun dealJson(env: TestEnv, quoteId: String) = """
@@ -66,11 +74,13 @@ class ApiSpec {
         val env = env()
         setup(env)
         val client = createClient { }
-        assertEquals("null", json.parseToJsonElement(client.get("/v1/quotes").bodyAsText()).jsonObject["quote"].toString())
+        assertEquals("[]", json.parseToJsonElement(client.get("/v1/quotes").bodyAsText()).jsonObject["quotes"].toString())
         val id = publishQuote(env)
         val body = json.parseToJsonElement(client.get("/v1/quotes").bodyAsText()).jsonObject
-        assertEquals(id, body["quote"]!!.jsonObject["id"]!!.jsonPrimitive.content)
-        assertEquals("50", body["quote"]!!.jsonObject["spreadBps"]!!.jsonPrimitive.content)
+        val quotes = body["quotes"]!!.jsonArray
+        assertEquals(1, quotes.size)
+        assertEquals(id, quotes[0].jsonObject["id"]!!.jsonPrimitive.content)
+        assertEquals("50", quotes[0].jsonObject["spreadBps"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -78,29 +88,116 @@ class ApiSpec {
         val env = TestEnv(operatorKey = "op-secret", mixReady = 100_000_000L)
         setup(env)
         val client = createClient { }
-        val put = client.put("/v1/quotes/current") {
+        val put = client.put("/v1/dashboard/quotes") {
             contentType(ContentType.Application.Json)
             setBody("""{"spreadBps":50,"etaMinutes":60,"maxAmount":500000000}""")
         }
         assertEquals(HttpStatusCode.Unauthorized, put.status) // no key
-        val forbidden = client.put("/v1/quotes/current") {
+        val forbidden = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer wrong")
             contentType(ContentType.Application.Json)
             setBody("""{"spreadBps":50,"etaMinutes":60,"maxAmount":50000000}""")
         }
         assertEquals(HttpStatusCode.Unauthorized, forbidden.status)
-        val overCapacity = client.put("/v1/quotes/current") {
+        val overCapacity = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer op-secret")
             contentType(ContentType.Application.Json)
             setBody("""{"spreadBps":50,"etaMinutes":60,"maxAmount":500000000}""")
         }
         assertEquals(HttpStatusCode.Conflict, overCapacity.status)
-        val ok = client.put("/v1/quotes/current") {
+        val ok = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer op-secret")
             contentType(ContentType.Application.Json)
             setBody("""{"spreadBps":50,"etaMinutes":60,"maxAmount":50000000}""")
         }
         assertEquals(HttpStatusCode.OK, ok.status)
+    }
+
+    @Test
+    fun `multiple published quotes round-trip through the feed`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        for (i in 1..3) {
+            val put = client.put("/v1/dashboard/quotes") {
+                header(HttpHeaders.Authorization, "Bearer op-secret")
+                contentType(ContentType.Application.Json)
+                setBody("""{"spreadBps":${50 + i},"etaMinutes":${30 * i},"maxAmount":100000000,"lat":30.044,"lon":31.235}""")
+            }
+            assertEquals(HttpStatusCode.OK, put.status)
+        }
+        // The public buyer feed lists all three.
+        val feed = json.parseToJsonElement(client.get("/v1/quotes").bodyAsText()).jsonObject["quotes"]!!
+            .jsonArray
+        assertEquals(3, feed.size)
+        assertEquals(listOf("51", "52", "53"), feed.map { it.jsonObject["spreadBps"]!!.jsonPrimitive.content })
+        assertEquals("30.044", feed[0].jsonObject["lat"]!!.jsonPrimitive.content)
+        // The dashboard view lists the same quotes (operator-authed).
+        val dashboard = client.get("/v1/dashboard/quotes") { header(HttpHeaders.Authorization, "Bearer op-secret") }
+        assertEquals(HttpStatusCode.OK, dashboard.status)
+        assertEquals(3, json.parseToJsonElement(dashboard.bodyAsText()).jsonObject["quotes"]!!
+            .jsonArray.size)
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/dashboard/quotes").status)
+    }
+
+    @Test
+    fun `quote withdraw endpoint removes one quote and keeps the rest`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        val first = publishQuote(env, maxAmount = 100_000_000L)
+        val second = publishQuote(env, maxAmount = 200_000_000L)
+
+        // Auth: the operator key is required.
+        assertEquals(HttpStatusCode.Unauthorized, client.post("/v1/dashboard/quotes/$first/withdraw").status)
+
+        // Unknown id: 404.
+        val missing = client.post("/v1/dashboard/quotes/quote-99/withdraw") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.NotFound, missing.status)
+
+        // Withdrawing the first leaves the second serving.
+        val ok = client.post("/v1/dashboard/quotes/$first/withdraw") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.OK, ok.status)
+        val feed = json.parseToJsonElement(client.get("/v1/quotes").bodyAsText()).jsonObject["quotes"]!!
+            .jsonArray
+        assertEquals(listOf(second), feed.map { it.jsonObject["id"]!!.jsonPrimitive.content })
+    }
+
+    @Test
+    fun `quote publish with location round-trips lat lon through the feed`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        val put = client.put("/v1/dashboard/quotes") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+            contentType(ContentType.Application.Json)
+            setBody("""{"spreadBps":50,"etaMinutes":60,"maxAmount":500000000,"lat":55.75,"lon":37.61}""")
+        }
+        assertEquals(HttpStatusCode.OK, put.status)
+        val body = json.parseToJsonElement(client.get("/v1/quotes").bodyAsText()).jsonObject
+        val quotes = body["quotes"]!!.jsonArray
+        assertEquals(1, quotes.size)
+        assertEquals("55.75", quotes[0].jsonObject["lat"]!!.jsonPrimitive.content)
+        assertEquals("37.61", quotes[0].jsonObject["lon"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `quote publish with a half location pair is a conflict`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        val latOnly = client.put("/v1/dashboard/quotes") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+            contentType(ContentType.Application.Json)
+            setBody("""{"spreadBps":50,"etaMinutes":60,"maxAmount":500000000,"lat":55.75}""")
+        }
+        assertEquals(HttpStatusCode.Conflict, latOnly.status)
+        assertTrue(latOnly.bodyAsText().contains("lat/lon pair"))
+        assertTrue(env.store.quotes().isEmpty())
     }
 
     @Test
@@ -111,7 +208,7 @@ class ApiSpec {
         val client = createClient { }
         env.infra.report(p2pgate.backend.infra.InfraSignal.ORACLE_LAG, false, "oracle down")
         val body = json.parseToJsonElement(client.get("/v1/quotes").bodyAsText()).jsonObject
-        assertEquals("null", body["quote"].toString())
+        assertEquals("[]", body["quotes"].toString())
     }
 
     // ----------------------------------------------------------------- deals
@@ -137,6 +234,9 @@ class ApiSpec {
         assertEquals(HttpStatusCode.OK, ok.status)
         val state = json.parseToJsonElement(ok.bodyAsText()).jsonObject["state"]!!.jsonPrimitive.content
         assertEquals("QUOTED", state) // canonical names verbatim
+        // The buyer app verifies the handoff record against this key (vault R5).
+        val sellerPubKey = json.parseToJsonElement(ok.bodyAsText()).jsonObject["sellerPubKey"]!!.jsonPrimitive.content
+        assertEquals(Hex.encode(Fx.seller.pubKeyCompressed), sellerPubKey)
     }
 
     @Test
@@ -298,12 +398,153 @@ class ApiSpec {
             p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
             T0,
         ) as CreateDealOutcome.Created
-        env.forceFund(outcome.deal)
+        // Fund "now": the HTTP endpoint reclaims against Instant.now(), and a
+        // fixed past timestamp would age past RECLAIM_TIMEOUT as wall time
+        // advances (the endpoint must answer 409 from the wall-clock guard,
+        // not fall through to the chain-height check).
+        env.forceFund(outcome.deal, at = Instant.now())
         val tooEarly = client.post("/v1/vaults/${outcome.deal.dealId}/reclaim") { header(HttpHeaders.Authorization, "Bearer op-secret") }
         assertEquals(HttpStatusCode.Conflict, tooEarly.status)
     }
 
+    // -------------------------------------------- seller-meeting handoff (M4)
     @Test
+    fun `dashboard handoff sign from funded signs stores and advances to payment pending`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        val id = publishQuote(env)
+        val outcome = env.app.createDeal(
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
+            T0,
+        ) as CreateDealOutcome.Created
+        val dealId = outcome.deal.dealId
+        env.forceFund(outcome.deal) // FUNDED — the meeting can happen
+
+        // Operator auth, same convention as the rest of the dashboard.
+        assertEquals(HttpStatusCode.Unauthorized, client.post("/v1/dashboard/deals/$dealId/handoff/sign").status)
+        val wrongKey = client.post("/v1/dashboard/deals/$dealId/handoff/sign") {
+            header(HttpHeaders.Authorization, "Bearer wrong")
+        }
+        assertEquals(HttpStatusCode.Unauthorized, wrongKey.status)
+
+        // The sign IS the cash-collection witness: 200, record on file, and
+        // the engine advances FUNDED → PAYMENT_PENDING.
+        val r = client.post("/v1/dashboard/deals/$dealId/handoff/sign") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.OK, r.status)
+        val body = json.parseToJsonElement(r.bodyAsText()).jsonObject
+        assertEquals(dealId, body["dealId"]!!.jsonPrimitive.content)
+        assertEquals("PAYMENT_PENDING", body["state"]!!.jsonPrimitive.content)
+        assertEquals(DealStateName.PAYMENT_PENDING, env.store.getDeal(dealId)!!.state.name)
+        assertEquals(Hex.encode(Fx.seller.pubKeyCompressed), body["sellerPubKey"]!!.jsonPrimitive.content)
+        val recordBytes = Hex.decode(body["recordHex"]!!.jsonPrimitive.content)
+        val a = Hex.decode(body["signatureA"]!!.jsonPrimitive.content)
+        val z = Hex.decode(body["signatureZ"]!!.jsonPrimitive.content)
+        assertEquals(HandoffRecord.ENCODED_SIZE, recordBytes.size)
+        assertEquals(33, a.size)
+        assertEquals(32, z.size)
+        assertEquals(Hex.encode(recordBytes), env.store.getDeal(dealId)!!.handoffRecordHex)
+
+        // The signature verifies against the deal's seller key under the
+        // t/3407 variant (:core:ergo's verifier), and fails under any other key.
+        assertTrue(SchnorrVerifier.verify(recordBytes, a, z, Fx.seller.pubKeyCompressed))
+        assertTrue(!SchnorrVerifier.verify(recordBytes, a, z, Fx.buyer.pubKeyCompressed))
+        // The buyer-facing deal DTO exposes exactly that key — the app pins it
+        // from the terms and unblocks the "safe to leave" verification.
+        val dealView = client.get("/v1/deals/$dealId") {
+            header(HttpHeaders.Authorization, "Bearer ${outcome.dealToken}")
+        }
+        assertEquals(HttpStatusCode.OK, dealView.status)
+        val dtoKey = json.parseToJsonElement(dealView.bodyAsText()).jsonObject["sellerPubKey"]!!.jsonPrimitive.content
+        assertEquals(Hex.encode(Fx.seller.pubKeyCompressed), dtoKey)
+        assertTrue(SchnorrVerifier.verify(recordBytes, a, z, Hex.decode(dtoKey)))
+        // Full buyer-app gate: record matches the terms and the timestamp is fresh.
+        assertTrue(
+            HandoffRecordVerifier.verify(
+                recordBytes, a, z, Fx.seller.pubKeyCompressed,
+                env.store.getDeal(dealId)!!.terms(), java.time.Instant.now(),
+            ),
+        )
+
+        // The QR payload is exactly what :core:dealprotocol's codec parses.
+        val decoded = QrPayload.decodeHandoff(body["qrPayload"]!!.jsonPrimitive.content)
+        assertTrue(decoded.encode().contentEquals(recordBytes))
+
+        // A second sign is refused — the record exists, the front-end re-displays.
+        val again = client.post("/v1/dashboard/deals/$dealId/handoff/sign") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.Conflict, again.status)
+        assertTrue(again.bodyAsText().contains("PAYMENT_PENDING"))
+    }
+
+    @Test
+    fun `dashboard handoff sign refuses a claim-opened deal`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        val id = publishQuote(env)
+        val outcome = env.app.createDeal(
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
+            T0,
+        ) as CreateDealOutcome.Created
+        val dealId = outcome.deal.dealId
+        env.forceFund(outcome.deal)
+        client.post("/v1/dashboard/deals/$dealId/handoff/sign") { header(HttpHeaders.Authorization, "Bearer op-secret") }
+        env.engine.apply(dealId, p2pgate.dealprotocol.DealEvent.ClaimOpened(T0.plusSeconds(600)), T0.plusSeconds(600))
+
+        val r = client.post("/v1/dashboard/deals/$dealId/handoff/sign") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.Conflict, r.status)
+        assertTrue(r.bodyAsText().contains("CLAIM_OPENED"))
+
+        val unknown = client.post("/v1/dashboard/deals/deadbeef/handoff/sign") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.NotFound, unknown.status)
+    }
+
+    @Test
+    fun `dashboard handoff qr png encodes the p2pgate payload and 409s while unsigned`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        val id = publishQuote(env)
+        val outcome = env.app.createDeal(
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed)),
+            T0,
+        ) as CreateDealOutcome.Created
+        val dealId = outcome.deal.dealId
+        env.forceFund(outcome.deal)
+
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/dashboard/deals/$dealId/handoff/qr.png").status)
+
+        // Unsigned deal: 409 (the deal exists; only the record does not).
+        val unsigned = client.get("/v1/dashboard/deals/$dealId/handoff/qr.png") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.Conflict, unsigned.status)
+
+        val unknown = client.get("/v1/dashboard/deals/deadbeef/handoff/qr.png") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.NotFound, unknown.status)
+
+        // Signing at the meeting puts the record on file; the QR follows it.
+        client.post("/v1/dashboard/deals/$dealId/handoff/sign") { header(HttpHeaders.Authorization, "Bearer op-secret") }
+        val png = client.get("/v1/dashboard/deals/$dealId/handoff/qr.png") {
+            header(HttpHeaders.Authorization, "Bearer op-secret")
+        }
+        assertEquals(HttpStatusCode.OK, png.status)
+        assertEquals(ContentType.Image.PNG, png.contentType()?.withoutParameters())
+        // The PNG decodes (ZXing) to the exact p2pgate://handoff payload of the
+        // record on file.
+        val record = HandoffRecord.decode(Hex.decode(env.store.getDeal(dealId)!!.handoffRecordHex!!))
+        assertEquals(QrPayload.encodeHandoff(record), decodeQr(png.body<ByteArray>()))
+    }    @Test
     fun `aml check endpoint is decision-only`() = testApplication {
         val env = env()
         setup(env)
@@ -393,4 +634,14 @@ class ApiSpec {
 
 private object DealStateName {
     const val PAYMENT_PENDING = "PAYMENT_PENDING"
+}
+
+/** Decodes a PNG's QR content with ZXing (round-trip driver for qr.png tests). */
+private fun decodeQr(png: ByteArray): String {
+    val image = ImageIO.read(ByteArrayInputStream(png))
+    val pixels = IntArray(image.width * image.height) { image.getRGB(it % image.width, it / image.width) }
+    val source = com.google.zxing.RGBLuminanceSource(image.width, image.height, pixels)
+    return com.google.zxing.qrcode.QRCodeReader()
+        .decode(com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source)))
+        .text
 }

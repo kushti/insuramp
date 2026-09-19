@@ -1,18 +1,19 @@
 // P2PGATE vault — FUNDED box (collateral locked, deal live). v2 (specs/vault-contract.md
 // §8.4): the claim is gated on ONE Schnorr signature (the seller's signature over the
 // P2PH handoff record — the cash-received acknowledgment signed at the meeting under
-// the R5 seller key); release is oracle-only (the trusted phase-1 oracle's co-signed
-// input plus the payment-proof digest — no buyer receipt signature anywhere).
+// the R5 seller key); release is oracle-only (the trusted phase-1 oracle's attestation
+// alone — no buyer receipt signature anywhere).
 //
 // Spending paths (see specs/vault-contract.md §3.3):
-//   A — reclaim: HEIGHT > timeoutHeight (R8), seller signs, paid minus fee
+//   A — reclaim: HEIGHT > timeoutHeight (R8), seller signs, paid in full
 //   B — open claim: the SELLER's Schnorr signature (R5 key) over the P2PH handoff
 //       record with freshness; spends into the PAYMENT_PROVEN box.
 //       No oracle input on this path
-//   C — release: oracle box as full input (NFT == R7, script requires
-//       proveDlog(oracleKey)) + payment-proof digest fields (context var 0, 112 B
-//       payload per specs/oracle-integration.md §2.2, describing the SELLER's USDT
-//       transfer to the buyer's address in R9) — nothing else; seller paid minus fee
+//   C — release: the oracle singleton box as a DATA INPUT (NFT == R7) whose R4
+//       carries the 112-byte payment-proof payload (specs/oracle-integration.md
+//       §2.2, describing the SELLER's USDT transfer to the buyer's address in R9)
+//       — nothing else; seller paid in full. A data input's script never
+//       executes, so no oracle signature rides in the release tx
 //
 // Registers:
 //   R4 Coll[Byte]              dealId (32 B)
@@ -33,17 +34,17 @@
 //                      (1) Coll[Byte] a_sig — Schnorr nonce point, 33 B
 //                      (2) Coll[Byte] z_sig — Schnorr response, 32 B
 //                      (3) Long        record timestamp in millis (msg bytes 48..52 * 1000)
-//   Path C (release):  (0) Coll[Byte] payment-proof payload (112 B)
+//   Path C (release):  none — the attestation payload rides in the oracle data
+//                      input's R4
 //
-// Path selection: the branch condition may only touch context variable 0, which both
-// non-reclaim paths supply — the proof reducer forces every val of every block it
-// enters, so a condition reaching for a variable the other path does not supply would
-// reject that path outright. Path B is recognized by its record carrying THIS deal's
-// dealId at bytes 5..37 (a path C payload cannot match: its dealId sits at bytes 1..33,
-// so bytes 5..37 are a dealId tail plus chain/token bytes); everything else — the
-// seller Schnorr signature, freshness, the PAYMENT_PROVEN output shape — is checked in
-// the branch body, which only evaluates when the discriminator matches. (SigmaProp || would
-// evaluate every branch during proof reduction, hence the Boolean if.)
+// Path selection: path A is recognized by HEIGHT alone; of the two remaining
+// paths, path B supplies context variable 0 and path C supplies NONE, so the
+// discriminator is `getVar(0).isDefined` — safe on an absent var (unlike `.get`,
+// which the proof reducer would force and reject). Everything else — the
+// record's dealId binding, freshness, the PAYMENT_PROVEN output shape — is
+// checked in the branch body, which only evaluates when the discriminator
+// matches. (SigmaProp || would evaluate every branch during proof reduction,
+// hence the Boolean if.)
 {
   val sellerKey = decodePoint(SELF.R5[Coll[Byte]].get)
   val collateral = SELF.tokens(0)._2
@@ -53,49 +54,28 @@
   val chainId = r9(0)
   val tokenIdF = r9(1)
   val recipient = r9.slice(2, 23)
-  // The protocol fee is a compile-time constant (%%FEE_BPS%% bps, §6) — every
-  // collateral-moving path charges it, so the treasury fee output is always
-  // required. NB: rounds down, so sub-400-unit collaterals yield fee 0 and
-  // can never satisfy the fee output (a box cannot carry a 0-amount token) —
-  // the practical minimum deal size.
-  val fee = collateral * %%FEE_BPS%%.toLong / 10000L
-
-  // Oracle authentication (path C only — on-ramp claims do not involve the oracle):
-  // the oracle box must be a full INPUT of this transaction, carrying the NFT pinned
-  // in R7 (specs/vault-contract.md §3.3). A data input is not sufficient.
-  val oracleOk = INPUTS.exists { (b: Box) => b.tokens.exists { (t: (Coll[Byte], Long)) => t._1 == SELF.R7[Coll[Byte]].get } }
-
-  val feeOutOk = OUTPUTS.exists { (o: Box) =>
-    blake2b256(o.propositionBytes) == %%TREASURY_SCRIPT_HASH%% &&
-    o.tokens(0)._1 == useTokenId &&
-    o.tokens(0)._2 == fee
-  }
-  // The fee is always charged (compile-time constant), so the treasury fee
-  // output is always required.
-  val feeOk = feeOutOk
-
-  // Path A pays the seller into OUTPUTS(0); path C shares the transaction with the
-  // oracle box, whose contract pins its own reproduction at OUTPUTS(0) (oracle.es),
-  // so the release payout goes to OUTPUTS(1).
-  val sellerPaidReclaim =
+  // Paths A and C pay the seller in full at OUTPUTS(0) (reclaim and release
+  // are payout-identical): release txs carry the oracle box as a data input —
+  // its script never executes — so the old joint-spend OUTPUTS(1) convention
+  // is gone.
+  val sellerPaid =
     OUTPUTS(0).propositionBytes == proveDlog(sellerKey).propBytes &&
     OUTPUTS(0).tokens(0)._1 == useTokenId &&
-    OUTPUTS(0).tokens(0)._2 == collateral - fee
-  val sellerPaidRelease =
-    OUTPUTS(1).propositionBytes == proveDlog(sellerKey).propBytes &&
-    OUTPUTS(1).tokens(0)._1 == useTokenId &&
-    OUTPUTS(1).tokens(0)._2 == collateral - fee
+    OUTPUTS(0).tokens(0)._2 == collateral
 
-  if (HEIGHT > timeoutH && sellerPaidReclaim && feeOk) {
+  if (HEIGHT > timeoutH && sellerPaid) {
     // Path A — reclaim after timeout; the seller discharges proveDlog(sellerKey).
     proveDlog(sellerKey)
-  } else if (getVar[Coll[Byte]](0).get.slice(5, 37) == SELF.R4[Coll[Byte]].get) {
+  } else if (getVar[Coll[Byte]](0).isDefined) {
     // Path B — open claim on the SELLER-signed handoff record (the cash-received
     // acknowledgment from the meeting); anyone may submit. Context vars 0..3.
     // NB: sigma-state 6 only typechecks byteArrayToBigInt when its
     // argument is a direct expression (no val references), so the conversions stay
     // fully inline.
     val msg = getVar[Coll[Byte]](0).get
+    // The discriminator is only var PRESENCE, so the record's dealId (bytes
+    // 5..37) must bind THIS deal — checked here, in the branch body.
+    val recordDealOk = msg.slice(5, 37) == SELF.R4[Coll[Byte]].get
     // Freshness is checked on a Long context var (record ts seconds * 1000), bound to
     // the signed record bytes by Coll equality; byteArrayToBigInt cannot do ordering
     // comparisons on a slice (sigma-state 6 assignType limitation).
@@ -130,20 +110,29 @@
       OUTPUTS(0).tokens(0)._1 == useTokenId &&
       OUTPUTS(0).tokens(0)._2 == collateral &&
       OUTPUTS(0).value == SELF.value
-    sigmaProp(freshOk && sellerSigOk && provenOutOk)
+    sigmaProp(recordDealOk && freshOk && sellerSigOk && provenOutOk)
   } else {
-    // Path C — fast close, oracle-only: the oracle-authenticated digest of the
-    // SELLER's USDT transfer (recipient = R9's buyer address). No receipt signature
-    // (v2 — the oracle is trusted, period). Context var 0. The payout sits at
-    // OUTPUTS(1): OUTPUTS(0) is the oracle box's pinned reproduction (oracle.es).
-    val payload = getVar[Coll[Byte]](0).get
+    // Path C — fast close, oracle-only: the oracle singleton box as a DATA
+    // INPUT, its R4 carrying the 112-byte attestation payload of the SELLER's
+    // USDT transfer (recipient = R9's buyer address). No receipt signature
+    // (v2 — the oracle is trusted, period) and no oracle signature: a data
+    // input's script never executes. NFT custody is the whole phase-1 trust
+    // root — ANY box carrying the pinned NFT id and a field-matching R4
+    // payload passes (documented as intended in VaultContractSpec test 20).
+    val attestationBox = CONTEXT.dataInputs(0)
+    val payload = attestationBox.R4[Coll[Byte]].get
+    // The data input must carry the oracle NFT pinned in R7.
+    val oracleNftOk = attestationBox.tokens(0)._1 == SELF.R7[Coll[Byte]].get
     // The attestation must match THIS vault's deal (fields pinned in R4/R9).
+    // The amount is compared as raw big-endian bytes (both sides carry the
+    // same 8-byte form) — byteArrayToBigInt on a val reference fails the
+    // sigma-state 6 typer.
     val fieldsOk =
       payload.slice(1, 33) == SELF.R4[Coll[Byte]].get &&
       payload(33) == chainId &&
       payload(34) == tokenIdF &&
       payload.slice(35, 56) == recipient &&
-      byteArrayToBigInt(getVar[Coll[Byte]](0).get.slice(56, 64)) == byteArrayToBigInt(SELF.R9[Coll[Byte]].get.slice(23, 31))
-    sigmaProp(oracleOk && fieldsOk && sellerPaidRelease && feeOk)
+      payload.slice(56, 64) == r9.slice(23, 31)
+    sigmaProp(oracleNftOk && fieldsOk && sellerPaid)
   }
 }

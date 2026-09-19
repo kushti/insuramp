@@ -25,8 +25,7 @@ fun interface DealTxSigner {
  *    PAYMENT_PROVEN box (registers copied, R7 the plain `Long` `proofHeight`,
  *    R8 = `blake2b256(a ‖ z ‖ record)`);
  *  - [buildClaimPayout] — vault path D: spends the PAYMENT_PROVEN box after
- *    maturation, paying `collateral − fee` to the buyer's payout address plus
- *    the §6 treasury fee output.
+ *    maturation, paying the full collateral to the buyer's payout address.
  *
  * Miner fees are funded from app-selected fee inputs (`ChainSource.getUnspentBoxes`);
  * change returns to the deal-key address. Transactions are built offline via
@@ -37,12 +36,8 @@ fun interface DealTxSigner {
 class ClaimTxBuilder(
     /** Compiled vault parameter set the boxes are expected to carry. */
     private val trees: ErgoContracts.VaultTrees,
-    /** The treasury proposition whose `blake2b256` equals the compiled `TREASURY_SCRIPT_HASH` (§6). */
-    private val treasuryTree: ErgoTree,
     /** Miner fee, nanoERG (default 0.001 ERG — the protocol minimum). */
     private val minerFeeNanoErg: Long = 1_000_000L,
-    /** ERG value of the treasury fee output. */
-    private val feeBoxValueNanoErg: Long = 100_000L,
     /** Change below this is rejected (dust protection); exact-zero change is allowed. */
     private val minChangeNanoErg: Long = 1_000_000L,
     /**
@@ -60,29 +55,9 @@ class ClaimTxBuilder(
 ) {
     private val networkType: NetworkType = trees.networkType
 
-    /** §6 fee split for a payout: [fee] to the treasury, [buyerPayout] to the buyer. */
-    data class FeeBreakdown(val fee: Long, val buyerPayout: Long)
-
-    /**
-     * The §6 fee math, exposed for display and tests:
-     * `fee = collateral * PROTOCOL_FEE_BPS / 10000` (rounding down, always
-     * charged — the fee is a compile-time contract constant), the buyer's
-     * payout is the remainder.
-     */
-    fun feeBreakdown(collateral: Long): FeeBreakdown {
-        require(collateral > 0) { "collateral must be positive, got $collateral" }
-        val fee = collateral * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        return FeeBreakdown(fee = fee, buyerPayout = collateral - fee)
-    }
-
     init {
         require(minerFeeNanoErg >= MIN_MINER_FEE_NANO_ERG) {
             "miner fee $minerFeeNanoErg below protocol minimum $MIN_MINER_FEE_NANO_ERG"
-        }
-        require(feeBoxValueNanoErg > 0) { "fee box value must be positive" }
-        val treasuryHash = SchnorrVerifier.blake2b256(treasuryTree.bytes())
-        require(treasuryHash.contentEquals(trees.treasuryScriptHash)) {
-            "treasuryTree hash does not match the compiled TREASURY_SCRIPT_HASH — fee outputs would be rejected"
         }
     }
 
@@ -171,9 +146,8 @@ class ClaimTxBuilder(
 
     /**
      * Claim payout (path D). Spends the PAYMENT_PROVEN box once
-     * `HEIGHT > proofHeight + CLAIM_MATURATION`; output 0 pays
-     * `collateral − fee` to [buyerPayoutAddress], plus the treasury fee output
-     * per §6.
+     * `HEIGHT > proofHeight + CLAIM_MATURATION`; output 0 pays the full
+     * collateral to [buyerPayoutAddress].
      */
     fun buildClaimPayout(
         provenBox: ChainBox,
@@ -198,16 +172,13 @@ class ClaimTxBuilder(
         }
 
         val useToken = provenBox.tokens.first()
-        val collateral = useToken.amount
-        val breakdown = feeBreakdown(collateral)
-        require(breakdown.buyerPayout > 0) {
-            "protocol fee leaves no buyer payout (collateral $collateral, fee ${breakdown.fee}) — the payout tx would carry a zero-amount token"
+        val buyerAmount = useToken.amount
+        require(buyerAmount > 0) {
+            "collateral $buyerAmount — the payout tx would carry a zero-amount token"
         }
-        val fee = breakdown.fee
-        val buyerAmount = breakdown.buyerPayout
 
         val buyerTree = payoutTree(buyerPayoutAddress)
-        val candidates = mutableListOf(
+        val candidates = listOf(
             TxAssembly.candidate(
                 value = provenBox.value,
                 tree = buyerTree,
@@ -216,15 +187,6 @@ class ClaimTxBuilder(
                 creationHeight = currentHeight,
             ),
         )
-        if (fee > 0) {
-            candidates += TxAssembly.candidate(
-                value = feeBoxValueNanoErg,
-                tree = treasuryTree,
-                tokens = listOf(ChainToken(useToken.tokenId, fee)),
-                registers = emptyList(),
-                creationHeight = currentHeight,
-            )
-        }
 
         val inputs = listOf(TxAssembly.toErgoBox(provenBox, trees.provenTree)) + feeInputs.map { TxAssembly.toErgoBox(it, TxAssembly.decodeTree(it)) }
         return TxAssembly.assemble(

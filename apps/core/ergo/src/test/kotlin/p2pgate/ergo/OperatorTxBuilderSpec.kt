@@ -18,39 +18,25 @@ import kotlin.test.assertTrue
  * Every successful build is prover-verified against the compiled scripts by
  * the offline prover (the ClaimTxBuilderSpec pattern) — a passing build proves
  * the tx satisfies the vault contract, not just the builder's own math. The
- * release/contest path uses [DevOracle] as the [OracleSigner]; the oracle
- * input is the `oracle.es`-governed box itself (joint spend proven by the
- * DevOracleSpec rotation + release tests).
+ * release/contest path takes the oracle attestation box as a DATA INPUT
+ * ([DevOracle.attestationBox]) and signs with a plain [DealTxSigner] — no
+ * oracle co-signature exists (the data input's script never executes).
  */
 class OperatorTxBuilderSpec {
 
     private val f = ErgoTestFixtures
-    private val builder = OperatorTxBuilder(f.trees, f.treasuryTree)
-    private val claimBuilder = ClaimTxBuilder(f.trees, f.treasuryTree)
+    private val builder = OperatorTxBuilder(f.trees)
+    private val claimBuilder = ClaimTxBuilder(f.trees)
     private val oracle = f.devOracle()
-    private val oracleAddress: String = f.p2pkAddress(oracle.pubKeyCompressed)
-
-    // ---------------------------------------------------------------- helpers
-
-    /** Wraps an [OracleSigner] and records the unsigned transaction for assertions. */
-    private class RecordingOracleSigner(private val delegate: OracleSigner) : OracleSigner {
-        var lastUnsigned: UnsignedTransaction? = null
-            private set
-
-        override val oracleNftId: ByteArray get() = delegate.oracleNftId
-        override fun oracleInputBox(): ChainBox = delegate.oracleInputBox()
-        override fun sign(tx: UnsignedTransaction): SignedTransaction {
-            lastUnsigned = tx
-            return delegate.sign(tx)
-        }
-    }
 
     private fun rawExtension(tx: UnsignedTransaction): scala.collection.Map<Any, sigma.ast.EvaluatedValue<out sigma.ast.SType>> =
         (tx as UnsignedTransactionImpl).tx.inputs().apply(0).extension().values()
 
-    private fun contextVarBytes(tx: UnsignedTransaction, id: Int): ByteArray {
-        val v = rawExtension(tx).apply(id.toByte()).value()
-        return JavaHelpers.collToByteArray(v as sigma.Coll<Any>)
+    /** Base16 token id of the tx's first (only) data input's first token — the oracle NFT. */
+    private fun dataInputNftId(tx: UnsignedTransaction): String {
+        val dataBoxes = (tx as UnsignedTransactionImpl).dataBoxes
+        assertEquals(1, dataBoxes.size)
+        return dataBoxes[0].tokens().head()._1().lowercase()
     }
 
     private fun outBytes(out: OutBoxImpl, r: Int): ByteArray =
@@ -183,7 +169,7 @@ class OperatorTxBuilderSpec {
     // ---------------------------------------------------------------- reclaim (path A)
 
     @Test
-    fun `reclaim after timeout pays the seller minus fee and prover-signs`() {
+    fun `reclaim after timeout pays the seller in full and prover-signs`() {
         val terms = f.dealTerms()
         val signer = ErgoTestFixtures.RecordingSigner(
             ErgoTestFixtures.ProverSigner(f.sellerKeys.secret, f.dealKeys.secret),
@@ -197,49 +183,17 @@ class OperatorTxBuilderSpec {
         )
         val tx = signer.lastUnsigned!!
         val sellerOut = tx.outputs[0] as OutBoxImpl
-        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        assertEquals(f.DEAL_AMOUNT - fee, sellerOut.tokens[0].value)
+        assertEquals(f.DEAL_AMOUNT, sellerOut.tokens[0].value)
         assertEquals(f.useTokenIdHex, Base16.encode(sellerOut.tokens[0].id.getBytes()))
         assertEquals(
             ErgoValues.treeHex(ErgoValues.p2pkTree(f.sellerKeys.pubKeyCompressed)),
             ErgoValues.treeHex(sellerOut.ergoTree),
         )
         assertEquals(f.BOX_VALUE_NANO_ERG, sellerOut.value)
-        val feeOut = tx.outputs[1] as OutBoxImpl
-        assertEquals(fee, feeOut.tokens[0].value)
-        assertEquals(f.treasuryTree.bytesHex(), feeOut.ergoTree.bytesHex())
-        // Exact balance: vault + fee input = seller + fee box + change + miner fee.
+        // Exact balance: vault + fee input = seller + change + miner fee.
         val inSum = tx.inputs.sumOf { it.value }
         val outSum = tx.outputs.sumOf { it.value }
         assertEquals(inSum, outSum + 1_000_000L)
-    }
-
-    @Test
-    fun `reclaim rounds the protocol fee down`() {
-        // The §6 formula rounds down: a collateral of DEAL_AMOUNT + 1 yields the
-        // same fee as DEAL_AMOUNT (1_250_000 at 25 bps), the seller takes the odd
-        // unit, and the prover still verifies against the always-fee contract.
-        val terms = f.dealTerms()
-        val signer = ErgoTestFixtures.RecordingSigner(
-            ErgoTestFixtures.ProverSigner(f.sellerKeys.secret, f.dealKeys.secret),
-        )
-        val collateral = f.DEAL_AMOUNT + 1
-        builder.buildReclaim(
-            fundedBox = f.fundedChainBox(
-                terms,
-                timeoutHeight = 1500,
-                tokens = listOf(ChainToken(f.useTokenIdHex, collateral)),
-            ),
-            feeInputs = listOf(f.feeChainBox()),
-            currentHeight = 1501,
-            changeAddress = f.dealKeysAddress,
-            signer = signer,
-        )
-        val tx = signer.lastUnsigned!!
-        val fee = collateral * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        assertEquals(1_250_000L, fee)
-        assertEquals(collateral - fee, tx.outputs[0].tokens[0].value)
-        assertEquals(fee, tx.outputs[1].tokens[0].value)
     }
 
     @Test
@@ -272,77 +226,62 @@ class OperatorTxBuilderSpec {
 
     // ---------------------------------------------------------------- release (path C)
 
+    private val releaseSigner = ErgoTestFixtures.ProverSigner(f.dealKeys.secret)
+
     private fun releaseTx(
         terms: p2pgate.dealprotocol.DealTerms,
         attestation: PaymentAttestation,
-        oracleSigner: OracleSigner = oracle.signer(),
+        dataInput: ChainBox? = null,
         currentHeight: Int = 1500,
     ): SignedTransaction = builder.buildRelease(
         fundedBox = f.fundedChainBox(terms),
-        oracle = oracleSigner,
+        oracleDataInput = dataInput ?: oracle.attestationBox(attestation),
         attestation = attestation,
-        feeInputs = listOf(oracle.feeInputBox()),
+        feeInputs = listOf(f.feeChainBox()),
         currentHeight = currentHeight,
-        changeAddress = oracleAddress,
+        changeAddress = f.dealKeysAddress,
+        signer = releaseSigner,
     )
 
     @Test
-    fun `release with oracle co-sign and valid attestation prover-signs`() {
+    fun `release with the oracle data input and valid attestation prover-signs`() {
         val terms = f.dealTerms()
-        val recording = RecordingOracleSigner(oracle.signer())
         val attestation = honestAttestation(terms)
-        val signed = releaseTx(terms, attestation = attestation, oracleSigner = recording)
+        val recording = ErgoTestFixtures.RecordingSigner(releaseSigner)
+        val signed = builder.buildRelease(
+            fundedBox = f.fundedChainBox(terms),
+            oracleDataInput = oracle.attestationBox(attestation),
+            attestation = attestation,
+            feeInputs = listOf(f.feeChainBox()),
+            currentHeight = 1500,
+            changeAddress = f.dealKeysAddress,
+            signer = recording,
+        )
 
-        // The prover run passed (the vault's path C gate + the oracle input).
+        // The prover run passed (the vault's path C gate with the data input).
         assertTrue(signed.id.isNotBlank())
-
         val tx = recording.lastUnsigned!!
-        // Context var 0 is the exact 112-byte payload.
-        assertTrue(contextVarBytes(tx, 0).contentEquals(attestation.encode()))
 
-        // OUTPUTS(0): the oracle input recreated under the oracle.es tree
-        // (NFT preserved, value >=) — oracle.es pins the reproduction at index 0.
-        val repro = tx.outputs[0] as OutBoxImpl
-        assertEquals(1, repro.tokens.size)
-        assertEquals(Base16.encode(oracle.oracleNftId), Base16.encode(repro.tokens[0].id.getBytes()))
-        assertEquals(1L, repro.tokens[0].value)
-        assertEquals(ErgoValues.treeHex(oracle.tree), ErgoValues.treeHex(repro.ergoTree))
-        assertEquals(oracle.boxValueNanoErg, repro.value)
+        // The oracle box rides as the tx's DATA INPUT carrying the NFT (its R4
+        // is the attestation — the build-time mirror required exact equality).
+        assertEquals(Base16.encode(oracle.oracleNftId), dataInputNftId(tx))
 
-        // OUTPUTS(1): seller paid collateral minus the protocol fee (always
-        // charged — a compile-time constant) at the R5 seller key.
-        val sellerOut = tx.outputs[1] as OutBoxImpl
-        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        assertEquals(f.DEAL_AMOUNT - fee, sellerOut.tokens[0].value)
+        // No context vars on the vault input — path C supplies none.
+        assertTrue(rawExtension(tx).isEmpty)
+
+        // OUTPUTS(0): seller paid the full collateral at the R5 seller key.
+        val sellerOut = tx.outputs[0] as OutBoxImpl
+        assertEquals(f.DEAL_AMOUNT, sellerOut.tokens[0].value)
         assertEquals(
             ErgoValues.treeHex(ErgoValues.p2pkTree(f.sellerKeys.pubKeyCompressed)),
             ErgoValues.treeHex(sellerOut.ergoTree),
         )
-        // OUTPUTS(2): the treasury fee output.
-        val feeOut = tx.outputs[2] as OutBoxImpl
-        assertEquals(fee, feeOut.tokens[0].value)
-        assertEquals(f.treasuryTree.bytesHex(), feeOut.ergoTree.bytesHex())
 
-        // Token conservation: USE split seller(+fee) exactly, NFT into the recreation.
+        // Token conservation: USE pays out in full; the NFT rides the
+        // untouched data input (no reproduction output on release anymore).
         val inTokens = tx.inputs.flatMap { it.tokens }.groupBy { Base16.encode(it.id.getBytes()) }.mapValues { e -> e.value.sumOf { it.value } }
         val outTokens = tx.outputs.flatMap { it.tokens }.groupBy { Base16.encode(it.id.getBytes()) }.mapValues { e -> e.value.sumOf { it.value } }
         assertEquals(inTokens, outTokens)
-    }
-
-    @Test
-    fun `release deducts the protocol fee into the treasury output`() {
-        val terms = f.dealTerms()
-        val recording = RecordingOracleSigner(oracle.signer())
-        releaseTx(terms, attestation = honestAttestation(terms), oracleSigner = recording)
-        val tx = recording.lastUnsigned!!
-        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        // OUTPUTS(0) is the oracle reproduction; seller payout at OUTPUTS(1),
-        // treasury fee output at OUTPUTS(2).
-        val sellerOut = tx.outputs[1] as OutBoxImpl
-        assertEquals(f.DEAL_AMOUNT - fee, sellerOut.tokens[0].value)
-        val feeOut = tx.outputs[2] as OutBoxImpl
-        assertEquals(fee, feeOut.tokens[0].value)
-        assertEquals(f.treasuryTree.bytesHex(), feeOut.ergoTree.bytesHex())
     }
 
     @Test
@@ -386,35 +325,50 @@ class OperatorTxBuilderSpec {
     }
 
     @Test
-    fun `release rejects a foreign oracle box with a different NFT`() {
+    fun `release rejects an oracle data input carrying a different NFT`() {
         val terms = f.dealTerms()
+        val attestation = honestAttestation(terms)
         val foreignNft = ByteArray(32) { (it * 11 + 2).toByte() }
-        val foreignSigner = object : OracleSigner {
-            override val oracleNftId: ByteArray get() = foreignNft
-            override fun oracleInputBox(): ChainBox = ChainBox(
-                boxId = "e3".repeat(32), transactionId = "e4".repeat(32), index = 0,
-                value = oracle.boxValueNanoErg, creationHeight = 0,
-                ergoTreeHex = ErgoValues.treeHex(ErgoValues.p2pkTree(oracle.pubKeyCompressed)),
-                address = "", tokens = listOf(ChainToken(Base16.encode(foreignNft), 1L)), registers = List(6) { null },
-            )
-
-            override fun sign(tx: UnsignedTransaction): SignedTransaction = oracle.signer().sign(tx)
-        }
+        val foreignDataInput = ChainBox(
+            boxId = "e3".repeat(32), transactionId = "e4".repeat(32), index = 0,
+            value = oracle.boxValueNanoErg, creationHeight = 0,
+            ergoTreeHex = ErgoValues.treeHex(oracle.tree),
+            address = "", tokens = listOf(ChainToken(Base16.encode(foreignNft), 1L)),
+            registers = listOf(p2pgate.ergo.ChainRegister.CollBytes(attestation.encode()), null, null, null, null, null),
+        )
         assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = honestAttestation(terms), oracleSigner = foreignSigner)
+            releaseTx(terms, attestation = attestation, dataInput = foreignDataInput)
         }
     }
 
     @Test
-    fun `release rejects an oracle input carrying no NFT at all`() {
+    fun `release rejects an oracle data input carrying no NFT at all`() {
         val terms = f.dealTerms()
-        val noNftSigner = object : OracleSigner {
-            override val oracleNftId: ByteArray get() = oracle.oracleNftId
-            override fun oracleInputBox(): ChainBox = oracle.feeInputBox() // plain ERG box
-            override fun sign(tx: UnsignedTransaction): SignedTransaction = oracle.signer().sign(tx)
-        }
         assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = honestAttestation(terms), oracleSigner = noNftSigner)
+            // A plain ERG fee box as the data input: no NFT to pin.
+            releaseTx(terms, attestation = honestAttestation(terms), dataInput = f.feeChainBox())
+        }
+    }
+
+    @Test
+    fun `release rejects an oracle data input without the R4 payload`() {
+        val terms = f.dealTerms()
+        val attestation = honestAttestation(terms)
+        // The at-rest oracle box (no registers) — the attestation was never posted.
+        assertFailsWith<IllegalArgumentException> {
+            releaseTx(terms, attestation = attestation, dataInput = oracle.oracleChainBox())
+        }
+    }
+
+    @Test
+    fun `release rejects an oracle data input whose R4 mismatches the attestation`() {
+        val terms = f.dealTerms()
+        val attestation = honestAttestation(terms)
+        // R4 carries a different deal's payload — the exact-equality mirror fails
+        // before any field check.
+        val otherDataInput = oracle.attestationBox(tampered(terms, dealId = ByteArray(32) { 9 }))
+        assertFailsWith<IllegalArgumentException> {
+            releaseTx(terms, attestation = attestation, dataInput = otherDataInput)
         }
     }
 
@@ -424,11 +378,12 @@ class OperatorTxBuilderSpec {
         assertFailsWith<IllegalArgumentException> {
             builder.buildRelease(
                 fundedBox = f.provenChainBox(terms),
-                oracle = oracle.signer(),
+                oracleDataInput = oracle.attestationBox(honestAttestation(terms)),
                 attestation = honestAttestation(terms),
-                feeInputs = listOf(oracle.feeInputBox()),
+                feeInputs = listOf(f.feeChainBox()),
                 currentHeight = 1500,
-                changeAddress = oracleAddress,
+                changeAddress = f.dealKeysAddress,
+                signer = releaseSigner,
             )
         }
     }
@@ -455,36 +410,34 @@ class OperatorTxBuilderSpec {
         )
 
         // 2) The honest seller counters from the PAYMENT_PROVEN box with the
-        //    oracle digest alone (OperatorTxBuilder, path C′).
+        //    oracle attestation alone (OperatorTxBuilder, path C′).
         val proven = f.provenChainBox(
             terms,
             proofHeight = 1500,
             recordId = SchnorrVerifier.blake2b256(sig.a, sig.z, record.encode()),
         )
-        val recording = RecordingOracleSigner(oracle.signer())
+        val attestation = honestAttestation(terms)
+        val recording = ErgoTestFixtures.RecordingSigner(releaseSigner)
         val signed = builder.buildContest(
             provenBox = proven,
-            oracle = recording,
-            attestation = honestAttestation(terms),
-            feeInputs = listOf(oracle.feeInputBox()),
+            oracleDataInput = oracle.attestationBox(attestation),
+            attestation = attestation,
+            feeInputs = listOf(f.feeChainBox()),
             currentHeight = 1501, // within maturation — C′ beats path D
-            changeAddress = oracleAddress,
+            changeAddress = f.dealKeysAddress,
+            signer = recording,
         )
         assertTrue(signed.id.isNotBlank())
 
         val tx = recording.lastUnsigned!!
-        assertTrue(contextVarBytes(tx, 0).contentEquals(honestAttestation(terms).encode()))
-        // OUTPUTS(0) is the oracle reproduction; seller payout at OUTPUTS(1),
-        // collateral minus the always-on protocol fee.
-        val sellerOut = tx.outputs[1] as OutBoxImpl
-        val fee = f.DEAL_AMOUNT * ContractParams.PROTOCOL_FEE_BPS / ContractParams.FEE_DENOMINATOR
-        assertEquals(f.DEAL_AMOUNT - fee, sellerOut.tokens[0].value)
+        assertEquals(Base16.encode(oracle.oracleNftId), dataInputNftId(tx))
+        // Seller payout at OUTPUTS(0) — the full collateral.
+        val sellerOut = tx.outputs[0] as OutBoxImpl
+        assertEquals(f.DEAL_AMOUNT, sellerOut.tokens[0].value)
         assertEquals(
             ErgoValues.treeHex(ErgoValues.p2pkTree(f.sellerKeys.pubKeyCompressed)),
             ErgoValues.treeHex(sellerOut.ergoTree),
         )
-        val repro = tx.outputs[0] as OutBoxImpl
-        assertEquals(Base16.encode(oracle.oracleNftId), Base16.encode(repro.tokens[0].id.getBytes()))
     }
 
     @Test
@@ -493,11 +446,12 @@ class OperatorTxBuilderSpec {
         assertFailsWith<IllegalArgumentException> {
             builder.buildContest(
                 provenBox = f.fundedChainBox(terms),
-                oracle = oracle.signer(),
+                oracleDataInput = oracle.attestationBox(honestAttestation(terms)),
                 attestation = honestAttestation(terms),
-                feeInputs = listOf(oracle.feeInputBox()),
+                feeInputs = listOf(f.feeChainBox()),
                 currentHeight = 1500,
-                changeAddress = oracleAddress,
+                changeAddress = f.dealKeysAddress,
+                signer = releaseSigner,
             )
         }
     }

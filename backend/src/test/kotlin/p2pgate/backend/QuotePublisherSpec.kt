@@ -1,6 +1,7 @@
 package p2pgate.backend
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -20,7 +21,26 @@ class QuotePublisherSpec {
         assertEquals(1L, (first as QuotePublisher.PublishOutcome.Published).quote.version)
         val second = env.quotes.publish(40, 45, 400_000_000L, T0.plusSeconds(60))
         assertEquals(2L, (second as QuotePublisher.PublishOutcome.Published).quote.version)
-        assertEquals(400_000_000L, env.quotes.active(T0.plusSeconds(60))!!.maxAmount)
+        val active = env.quotes.active(T0.plusSeconds(60))
+        assertEquals(2, active.size)
+        assertEquals(listOf("quote-1", "quote-2"), active.map { it.id })
+    }
+
+    @Test
+    fun `several quotes coexist with their own terms and locations`() {
+        val env = env()
+        env.quotes.publish(50, 60, 200_000_000L, T0, lat = 30.044, lon = 31.235)
+        env.quotes.publish(80, 90, 300_000_000L, T0, lat = -1.292, lon = 36.821)
+        env.quotes.publish(120, 30, 100_000_000L, T0)
+        val active = env.quotes.active(T0)
+        assertEquals(3, active.size)
+        assertEquals(listOf(50, 80, 120), active.map { it.spreadBps })
+        assertEquals(30.044, active[0].lat)
+        assertEquals(36.821, active[1].lon)
+        assertNull(active[2].lat)
+        // Deal creation resolves a quote by id.
+        assertEquals(80, env.quotes.activeQuote("quote-2", T0)!!.spreadBps)
+        assertNull(env.quotes.activeQuote("quote-99", T0))
     }
 
     @Test
@@ -29,7 +49,34 @@ class QuotePublisherSpec {
         val outcome = env.quotes.publish(50, 60, 500_000_000L, T0)
         val rejected = assertInstanceOf(QuotePublisher.PublishOutcome.Rejected::class.java, outcome)
         assertTrue(rejected.reason.contains("exceeds free collateral"))
-        assertNull(env.quotes.active(T0))
+        assertTrue(env.quotes.active(T0).isEmpty())
+    }
+
+    @Test
+    fun `capacity accounts for the other active quotes`() {
+        val env = env(mixReady = 1_000_000_000L)
+        env.quotes.publish(50, 60, 600_000_000L, T0)
+        // The second quote competes with the 600M the first one already promises.
+        val over = env.quotes.publish(50, 60, 600_000_000L, T0.plusSeconds(10))
+        val rejected = assertInstanceOf(QuotePublisher.PublishOutcome.Rejected::class.java, over)
+        assertTrue(rejected.reason.contains("exceeds free collateral"))
+        assertTrue(rejected.reason.contains("reserved"))
+        val ok = env.quotes.publish(50, 60, 400_000_000L, T0.plusSeconds(10))
+        assertInstanceOf(QuotePublisher.PublishOutcome.Published::class.java, ok)
+        assertEquals(2, env.quotes.active(T0.plusSeconds(10)).size)
+    }
+
+    @Test
+    fun `withdrawing one quote frees its capacity for the next publish`() {
+        val env = env(mixReady = 1_000_000_000L)
+        env.quotes.publish(50, 60, 600_000_000L, T0)
+        assertTrue(env.quotes.withdraw("quote-1", "seller left", T0.plusSeconds(5)))
+        assertFalse(env.quotes.withdraw("quote-1", null, T0.plusSeconds(6))) // already gone
+        assertFalse(env.quotes.withdraw("quote-99", null, T0.plusSeconds(6)))
+        assertTrue(env.quotes.active(T0.plusSeconds(6)).isEmpty())
+        val ok = env.quotes.publish(50, 60, 600_000_000L, T0.plusSeconds(10))
+        assertInstanceOf(QuotePublisher.PublishOutcome.Published::class.java, ok)
+        assertTrue(env.store.events().any { it.kind == "QUOTE_WITHDRAWN" && it.detail.contains("quote-1") })
     }
 
     @Test
@@ -38,8 +85,8 @@ class QuotePublisherSpec {
         env.quotes.publish(50, 60, 500_000_000L, T0)
         env.infra.report(p2pgate.backend.infra.InfraSignal.EXPLORER_SYNC, false, "tip stale")
         assertTrue(env.infra.paused)
-        assertNull(env.quotes.active(T0.plusSeconds(10)))
-        assertNull(env.store.currentQuote())
+        assertTrue(env.quotes.active(T0.plusSeconds(10)).isEmpty())
+        assertTrue(env.store.quotes().isEmpty())
         assertTrue(env.events.filterIsInstance<BackendEvent.QuoteWithdrawn>().isNotEmpty())
         // Publishing while paused is refused.
         val outcome = env.quotes.publish(50, 60, 100_000_000L, T0.plusSeconds(20))
@@ -51,10 +98,26 @@ class QuotePublisherSpec {
         val env = env()
         env.quotes.publish(50, 60, 500_000_000L, T0)
         val ttl = Duration.ofMinutes(30)
-        assertEquals(T0.plus(ttl), env.quotes.active(T0)!!.expiresAt)
-        assertNull(env.quotes.active(T0.plus(ttl).plusSeconds(1)))
+        assertEquals(T0.plus(ttl), env.quotes.active(T0).single().expiresAt)
+        assertTrue(env.quotes.active(T0.plus(ttl).plusSeconds(1)).isEmpty())
         env.quotes.tick(T0.plus(ttl).plusSeconds(1))
-        assertNull(env.store.currentQuote())
+        assertTrue(env.store.quotes().isEmpty())
+    }
+
+    @Test
+    fun `expiry prunes one quote and keeps the others`() {
+        val env = env()
+        env.quotes.publish(50, 60, 200_000_000L, T0)
+        env.quotes.publish(50, 60, 200_000_000L, T0.plus(Duration.ofMinutes(20)))
+        val ttl = Duration.ofMinutes(30)
+        // At T0+40m the first quote (T0+30m) has lapsed, the second (T0+50m) has not.
+        val active = env.quotes.active(T0.plus(Duration.ofMinutes(40)))
+        assertEquals(listOf("quote-2"), active.map { it.id })
+        // The prune is persisted and evented (the WS stream pushes a fresh snapshot).
+        assertEquals(listOf("quote-2"), env.store.quotes().map { it.id })
+        val withdrawn = env.events.filterIsInstance<BackendEvent.QuoteWithdrawn>()
+        assertTrue(withdrawn.any { it.quoteId == "quote-1" && it.cause == "ttl expired" })
+        assertEquals(T0.plus(Duration.ofMinutes(50)), active.single().expiresAt)
     }
 
     @Test
@@ -68,20 +131,90 @@ class QuotePublisherSpec {
     }
 
     @Test
-    fun `spread below protocol fee plus cost floor publishes with a warning`() {
-        val env = env()
-        val outcome = env.quotes.publish(10, 60, 500_000_000L, T0) // fee floor 25
+    fun `spread below the cost floor publishes with a warning`() {
+        val env = TestEnv()
+        val quotes = QuotePublisher(env.store, env.infra, { 1_000_000_000L }, env.bus, costFloorBps = 50)
+        val outcome = quotes.publish(10, 60, 500_000_000L, T0) // below the 50 bps floor
         assertInstanceOf(QuotePublisher.PublishOutcome.Published::class.java, outcome)
         assertTrue(env.events.filterIsInstance<BackendEvent.QuoteWarning>().isNotEmpty())
+    }
+
+    @Test
+    fun `publish with a location carries it through the record and the event`() {
+        val env = env()
+        val outcome = env.quotes.publish(50, 60, 500_000_000L, T0, lat = 55.75, lon = 37.61)
+        val quote = (outcome as QuotePublisher.PublishOutcome.Published).quote
+        assertEquals(55.75, quote.lat)
+        assertEquals(37.61, quote.lon)
+        assertEquals(55.75, env.store.getQuote(quote.id)!!.lat)
+        val event = env.events.filterIsInstance<BackendEvent.QuotePublished>().last()
+        assertEquals(55.75, event.quote.lat)
+        assertEquals(37.61, event.quote.lon)
+    }
+
+    @Test
+    fun `a half location pair is rejected`() {
+        val env = env()
+        val latOnly = env.quotes.publish(50, 60, 500_000_000L, T0, lat = 55.75)
+        assertInstanceOf(QuotePublisher.PublishOutcome.Rejected::class.java, latOnly)
+        val lonOnly = env.quotes.publish(50, 60, 500_000_000L, T0, lon = 37.61)
+        assertInstanceOf(QuotePublisher.PublishOutcome.Rejected::class.java, lonOnly)
+        assertTrue(env.store.quotes().isEmpty())
+    }
+
+    @Test
+    fun `an out of range location is rejected`() {
+        val env = env()
+        val badLat = env.quotes.publish(50, 60, 500_000_000L, T0, lat = 91.0, lon = 0.0)
+        assertTrue((badLat as QuotePublisher.PublishOutcome.Rejected).reason.contains("out of range"))
+        val badLon = env.quotes.publish(50, 60, 500_000_000L, T0, lat = -90.0, lon = -180.5)
+        assertInstanceOf(QuotePublisher.PublishOutcome.Rejected::class.java, badLon)
+        assertTrue(env.store.quotes().isEmpty())
+    }
+
+    @Test
+    fun `publish without a location leaves the quote locationless`() {
+        val env = env()
+        val outcome = env.quotes.publish(50, 60, 500_000_000L, T0)
+        val quote = (outcome as QuotePublisher.PublishOutcome.Published).quote
+        assertNull(quote.lat)
+        assertNull(quote.lon)
     }
 
     @Test
     fun `withdraw clears the feed with a cause`() {
         val env = env()
         env.quotes.publish(50, 60, 500_000_000L, T0)
+        env.quotes.publish(40, 45, 100_000_000L, T0)
         env.quotes.withdraw("operator maintenance", T0.plusSeconds(10))
-        assertNull(env.store.currentQuote())
+        assertTrue(env.store.quotes().isEmpty())
         assertTrue(env.store.events().any { it.kind == "QUOTE_WITHDRAWN" })
+    }
+
+    @Test
+    fun `demo seeding publishes three located quotes within capacity`() {
+        val env = env()
+        val logs = mutableListOf<String>()
+        p2pgate.backend.api.seedDemoQuotes(env.quotes, 1_000_000_000L) { logs += it }
+        val active = env.quotes.active(java.time.Instant.now())
+        assertEquals(3, active.size)
+        assertEquals(30.044 to 31.235, active[0].lat!! to active[0].lon!!)   // Cairo
+        assertEquals(-1.292 to 36.821, active[1].lat!! to active[1].lon!!)  // Nairobi
+        assertEquals(19.076 to 72.877, active[2].lat!! to active[2].lon!!)  // Mumbai
+        // 30% + 25% + 20% of the pool — capacity honesty holds across the feed.
+        assertEquals(750_000_000L, active.sumOf { it.maxAmount })
+        assertEquals(3, logs.size)
+        assertTrue(logs.all { it.startsWith("demo quote seeded") })
+    }
+
+    @Test
+    fun `demo seeding against an empty pool rejects the seeds without failing`() {
+        val env = env(mixReady = 0L)
+        val logs = mutableListOf<String>()
+        p2pgate.backend.api.seedDemoQuotes(env.quotes, 0L) { logs += it }
+        assertTrue(env.quotes.active(java.time.Instant.now()).isEmpty())
+        assertEquals(3, logs.size)
+        assertTrue(logs.all { it.contains("not seeded") })
     }
 
     @Test

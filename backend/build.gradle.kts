@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm") version "2.0.21"
     kotlin("plugin.serialization") version "2.0.21"
+    application
 }
 
 group = "org.p2pgate"
@@ -8,6 +9,10 @@ version = "0.1.0"
 
 kotlin {
     jvmToolchain(17)
+}
+
+application {
+    mainClass = "p2pgate.backend.api.ServerKt"
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
@@ -41,6 +46,10 @@ dependencies {
     implementation("org.ergoplatform:ergo-appkit_2.13:6.0.1")
     implementation("org.scorexfoundation:sigma-state_2.13:6.0.6")
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
+    // Seller-meeting QR rendering (specs/seller-dashboard.md §4): `core` only —
+    // the PNG raster is done via javax.imageio (see backend/util/QrCodes.kt).
+    implementation("com.google.zxing:core:3.5.3")
 
     runtimeOnly("org.slf4j:slf4j-simple:2.0.16")
 

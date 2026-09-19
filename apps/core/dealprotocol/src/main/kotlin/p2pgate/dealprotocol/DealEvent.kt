@@ -39,14 +39,14 @@ sealed interface DealEvent {
     data object PaymentConfirmed : DealEvent
 
     /**
-     * Path C / C′ spend observed: box spent, collateral to seller minus fee.
+     * Path C / C′ spend observed: box spent, full collateral to the seller.
      * In v2 the spend is gated on the oracle attestation alone — the oracle is
      * trusted, period (`specs/vault-contract.md` §3.3, §4.2).
      */
     data object ReleaseObserved : DealEvent
 
     /**
-     * Path A spend observed (reclaim): the box paid the seller back minus fee.
+     * Path A spend observed (reclaim): the box paid the seller back in full.
      * [at] must be ≥ `fundedTimestamp` + [ProtocolConstants.RECLAIM_TIMEOUT].
      */
     data class ReclaimTimeoutElapsed(val at: Instant) : DealEvent
@@ -65,7 +65,7 @@ sealed interface DealEvent {
      */
     data class ClaimMatured(val at: Instant) : DealEvent
 
-    /** Path D spend observed: buyer took the collateral minus fee. */
+    /** Path D spend observed: buyer took the full collateral. */
     data object ClaimPaid : DealEvent
 
     /**

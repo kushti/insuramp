@@ -20,7 +20,6 @@ import p2pgate.ergo.ChainSource
 import p2pgate.ergo.DealTxSigner
 import p2pgate.ergo.ErgoContracts
 import p2pgate.ergo.OperatorTxBuilder
-import sigma.ast.ErgoTree
 import java.math.BigInteger
 import java.time.Duration
 import java.time.Instant
@@ -48,6 +47,14 @@ interface VaultSigner {
 
     /** Signs seller-side txs (fund/reclaim). */
     fun signer(): DealTxSigner
+
+    /**
+     * Signs a 52-byte P2PH handoff record under the seller key pinned as R5 of
+     * every funded vault (the ergoforum.org/t/3407 Schnorr variant, verified
+     * in-script by path B). The dashboard's meeting endpoints get signatures,
+     * not the secret — the key stays behind this seam.
+     */
+    fun signHandoff(record: ByteArray): p2pgate.backend.util.Schnorr.Signature
 }
 
 /**
@@ -124,6 +131,9 @@ class EmbeddedVaultSigner(
             }
     }
 
+    override fun signHandoff(record: ByteArray): p2pgate.backend.util.Schnorr.Signature =
+        p2pgate.backend.util.Schnorr.sign(secret, record, publicKeyCompressed)
+
     /** Cold-client parameters (same block as `DevOracle.coldParameters`). */
     private object DevOracleCold {
         fun parameters(networkType: org.ergoplatform.appkit.NetworkType) =
@@ -151,7 +161,6 @@ class EmbeddedVaultSigner(
  */
 class VaultManager(
     private val trees: ErgoContracts.VaultTrees,
-    treasuryTree: ErgoTree,
     val signer: VaultSigner,
     private val chain: ChainSource,
     private val submitter: TxSubmitter,
@@ -162,7 +171,7 @@ class VaultManager(
     private val oracle: OracleClient,
     private val riskScorer: p2pgate.backend.aml.RiskScorer,
     private val reclaimTimeoutBlocks: Int = ContractParams.RECLAIM_TIMEOUT_BLOCKS,
-    private val builder: OperatorTxBuilder = OperatorTxBuilder(trees, treasuryTree),
+    private val builder: OperatorTxBuilder = OperatorTxBuilder(trees),
 ) {
     sealed interface Outcome {
         data class Submitted(val kind: TxKind, val txId: String, val boxId: String? = null) : Outcome
@@ -253,8 +262,9 @@ class VaultManager(
 
     /**
      * Automatic release on payment confirmation (path C). The oracle
-     * attestation alone gates the spend (v2); the tx carries the oracle box
-     * as a full input and the 112-byte attestation as context var 0.
+     * attestation alone gates the spend (v2): the tx carries the oracle box
+     * as a DATA INPUT (its R4 the 112-byte attestation, its tokens the
+     * pinned NFT) and is operator-wallet-only — no oracle signature exists.
      */
     fun releaseIfConfirmed(dealId: String, at: Instant = Instant.now()): Outcome {
         val deal = store.getDeal(dealId) ?: return Rejected("unknown deal $dealId")
@@ -266,17 +276,23 @@ class VaultManager(
         } catch (e: p2pgate.backend.oracle.OracleUnavailableException) {
             return Rejected("oracle unavailable: ${e.message}")
         } ?: return Rejected("no attestation on file")
+        val oracleDataInput = try {
+            oracle.attestationBoxFor(dealId)
+        } catch (e: p2pgate.backend.oracle.OracleUnavailableException) {
+            return Rejected("oracle unavailable: ${e.message}")
+        } ?: return Rejected("no attestation box on file")
         val fundedBox = chain.getBox(deal.vaultBoxId ?: return Rejected("deal has no vault box"))
             ?.takeIf { it.spentTransactionId == null }
             ?: return Rejected("vault box spent or unknown")
         val currentHeight = chain.getCurrentHeight()
         val tx = builder.buildRelease(
             fundedBox = fundedBox,
-            oracle = oracle.signer,
+            oracleDataInput = oracleDataInput,
             attestation = attestation,
-            feeInputs = oracle.feeInputs(),
+            feeInputs = signer.feeInputs(),
             currentHeight = currentHeight,
             changeAddress = signer.changeAddress,
+            signer = signer.signer(),
         )
         val outcome = submit(dealId, TxKind.RELEASE, tx, at)
         if (outcome is Outcome.Submitted) {
@@ -286,10 +302,10 @@ class VaultManager(
     }
 
     /**
-     * Contest (path C′) from the dispute inbox: the same oracle digest, spent
-     * from the PAYMENT_PROVEN box. Mechanical whenever the digest exists — an
-     * honest seller always counters a false claim (v2: no withheld-signature
-     * corner).
+     * Contest (path C′) from the dispute inbox: the same oracle attestation,
+     * spent from the PAYMENT_PROVEN box. Mechanical whenever the attestation
+     * exists — an honest seller always counters a false claim (v2: no
+     * withheld-signature corner). Operator-wallet-only, oracle box as data input.
      */
     fun contestDeal(dealId: String, at: Instant = Instant.now()): Outcome {
         val deal = store.getDeal(dealId) ?: return Rejected("unknown deal $dealId")
@@ -301,16 +317,22 @@ class VaultManager(
         } catch (e: p2pgate.backend.oracle.OracleUnavailableException) {
             return Rejected("oracle unavailable: ${e.message}")
         } ?: return Rejected("no attestation on file — contest is mechanical only when the digest exists")
+        val oracleDataInput = try {
+            oracle.attestationBoxFor(dealId)
+        } catch (e: p2pgate.backend.oracle.OracleUnavailableException) {
+            return Rejected("oracle unavailable: ${e.message}")
+        } ?: return Rejected("no attestation box on file")
         val provenBoxId = deal.provenBoxId ?: return Rejected("no PAYMENT_PROVEN box tracked for this deal")
         val provenBox = chain.getBox(provenBoxId)?.takeIf { it.spentTransactionId == null }
             ?: return Rejected("PAYMENT_PROVEN box spent or unknown")
         val tx = builder.buildContest(
             provenBox = provenBox,
-            oracle = oracle.signer,
+            oracleDataInput = oracleDataInput,
             attestation = attestation,
-            feeInputs = oracle.feeInputs(),
+            feeInputs = signer.feeInputs(),
             currentHeight = chain.getCurrentHeight(),
             changeAddress = signer.changeAddress,
+            signer = signer.signer(),
         )
         val outcome = submit(dealId, TxKind.CONTEST, tx, at)
         if (outcome is Outcome.Submitted) {
@@ -386,8 +408,9 @@ class VaultManager(
             infra.report(p2pgate.backend.infra.InfraSignal.WALLET_HEALTH, false, "broadcast failed: ${e.message}")
             return Rejected("broadcast failed: ${e.message}")
         }
-        // The first output of an operator tx is always the vault/oracle box of
-        // interest; appkit exposes the post-tx boxes via getOutputsToSpend.
+        // The fund tx's first output is the FUNDED box of interest (release and
+        // contest pay the seller first — no box to capture); appkit exposes the
+        // post-tx boxes via getOutputsToSpend.
         val boxId = tx.outputsToSpend.firstOrNull()?.id?.toString()
         if (boxId != null) onBox(boxId)
         store.appendEvent(StoredEvent(dealId, kind.name, txId, at))

@@ -64,14 +64,24 @@ class DealStoreSpec {
     }
 
     @Test
-    fun `quote save clear current`() {
+    fun `quotes are stored keyed by id`() {
         val store = InMemoryDealStore()
-        assertNull(store.currentQuote())
-        val q = p2pgate.backend.store.QuoteRecord("q1", 1, 50, 60, 1_000, T0, T0.plusSeconds(1800))
-        store.saveQuote(q)
-        assertEquals(q, store.currentQuote())
-        store.clearQuote()
-        assertNull(store.currentQuote())
+        assertTrue(store.quotes().isEmpty())
+        val q1 = p2pgate.backend.store.QuoteRecord("q1", 1, 50, 60, 1_000, T0, T0.plusSeconds(1800))
+        val q2 = p2pgate.backend.store.QuoteRecord("q2", 2, 40, 45, 2_000, T0, T0.plusSeconds(1800))
+        store.saveQuote(q1)
+        store.saveQuote(q2)
+        assertEquals(q1, store.getQuote("q1"))
+        assertEquals(listOf(q1, q2), store.quotes())
+        // saveQuote upserts by id.
+        val q1v2 = q1.copy(version = 3)
+        store.saveQuote(q1v2)
+        assertEquals(q1v2, store.getQuote("q1"))
+        assertEquals(q1v2, store.removeQuote("q1"))
+        assertNull(store.removeQuote("q1"))
+        assertEquals(listOf(q2), store.quotes())
+        store.clearQuotes()
+        assertTrue(store.quotes().isEmpty())
     }
 
     @Test

@@ -13,10 +13,9 @@ import java.math.BigInteger
 
 /**
  * Shared fixtures for the `:apps:core:ergo` suite: deterministic deal-scoped
- * keys, a compiled vault parameter set whose TREASURY_SCRIPT_HASH matches a
- * real treasury tree (the [ClaimTxBuilder] integrity check), and
- * `ChainSource`-shaped vault/fee boxes with register-exact contents
- * (`specs/vault-contract.md` §3.1/§4.1 layouts).
+ * keys, the compiled vault parameter set, and `ChainSource`-shaped vault/fee
+ * boxes with register-exact contents (`specs/vault-contract.md` §3.1/§4.1
+ * layouts).
  */
 object ErgoTestFixtures {
 
@@ -25,14 +24,10 @@ object ErgoTestFixtures {
     val sellerKeys = TestKeys.of(0x1111)
     val buyerKeys = TestKeys.of(0x2222)
     val dealKeys = TestKeys.of(0x4444)   // the buyer's deal key (fee inputs, change)
-    val treasuryKeys = TestKeys.of(0x5555)
     val oracleKeys = TestKeys.of(0x9999) // the phase-1 dev oracle key (M3)
 
-    val treasuryTree = ErgoValues.p2pkTree(treasuryKeys.pubKeyCompressed)
-    val treasuryHash = SchnorrVerifier.blake2b256(treasuryTree.bytes())
-
-    /** Compiled vault trees with a real (deterministic) treasury pin. */
-    val trees: ErgoContracts.VaultTrees = ErgoContracts.compile(treasuryScriptHash = treasuryHash)
+    /** Compiled vault trees. */
+    val trees: ErgoContracts.VaultTrees = ErgoContracts.compile()
 
     val useTokenIdHex: String = Base16.encode(ByteArray(32) { (it * 7 + 3).toByte() })
     const val DEAL_AMOUNT: Long = 500_000_000L      // 500 USDT, 6 decimals

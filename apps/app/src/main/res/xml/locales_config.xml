@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The supported app languages: Play Store APK splitting/filtering and the
+     system per-app-language settings (API 33+) read this list. Must match
+     p2pgate.app.locale.SUPPORTED_LOCALES. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="hi" />
+    <locale android:name="sw" />
+    <locale android:name="ar" />
+</locale-config>

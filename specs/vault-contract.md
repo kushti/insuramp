@@ -11,9 +11,10 @@ BTC and XMR legs are extension notes (§8.1/§8.2), not full specs.
 **Scope note:** the v2 revision (§8.4) has landed — the `.es` contracts on disk
 implement it: R7 holds the bare 32-byte `oracleNftId`, path B is gated on ONE Schnorr
 signature (the seller half of the handoff record, under the seller key in R5), and
-paths C/C′ are oracle-only (oracle box as full input + digest field checks — there is
-no buyer receipt signature anywhere in v2). §7 documents the implemented contract
-mechanics.*
+paths C/C′ are oracle-only (the oracle attestation box as a **data input** + digest
+field checks — there is no buyer receipt signature anywhere in v2, and no oracle
+signature in release transactions: data-input scripts never execute). §7 documents
+the implemented contract mechanics.*
 
 ## 1. Design summary
 
@@ -24,10 +25,10 @@ acts last, so it locks the collateral).
 
 | Path | Condition | Pays |
 |---|---|---|
-| A — Reclaim | `RECLAIM_TIMEOUT` elapsed, no claim opened | seller (minus fee) |
+| A — Reclaim | `RECLAIM_TIMEOUT` elapsed, no claim opened | seller (in full — the in-contract protocol fee was removed 2026-09-18, §6/§8.4) |
 | B — Open claim | the **seller-signed handoff record**: one Schnorr signature from `sellerPubKey` (R5) over the cash-received record (§5) | moves box FUNDED → PAYMENT_PROVEN |
-| C — Release | **oracle-only**: the oracle box as a full input, co-signing a digest of the **seller's** USDT transfer to the buyer (recipient = R9), digest fields checked against R4/R9 — nothing else (from FUNDED, and from PAYMENT_PROVEN as path C′; the digest is supplied in-tx either way — path B carried the handoff record, not the digest) | seller, immediately (minus fee) |
-| D — Claim | PAYMENT_PROVEN + `CLAIM_MATURATION` elapsed | Buyer (minus fee) |
+| C — Release | **oracle-only**: the oracle's attestation box as a **data input** (`CONTEXT.dataInputs(0)`) — its NFT == R7 and its R4 payload is the digest of the **seller's** USDT transfer to the buyer (recipient = R9), digest fields checked against R4/R9 — nothing else, and **no oracle signature is in the transaction** (from FUNDED, and from PAYMENT_PROVEN as path C′; the digest rides in the data input's R4 either way — path B carried the handoff record, not the digest) | seller, immediately (in full — no protocol fee since 2026-09-18, §6/§8.4) |
+| D — Claim | PAYMENT_PROVEN + `CLAIM_MATURATION` elapsed | Buyer (in full — no protocol fee since 2026-09-18, §6/§8.4) |
 
 Two box states are required because the maturation delay must be anchored to an on-chain
 event (the moment the claim — the handoff record — lands). ErgoScript cannot timestamp a
@@ -47,7 +48,7 @@ the *claim* on the oracle (proof the buyer paid) and the *release* on the buyer'
 the *release* on the oracle digest alone (proof the seller's USDT arrived). In v2 the
 buyer's deal key signs nothing on the claim/release paths — it only authorizes the
 maturation payout on path D — and the seller's own signature alone never releases the
-vault (self-attestation protects nobody); only the trusted oracle's co-signature does
+vault (self-attestation protects nobody); only the trusted oracle's attestation does
 (§9 states what that costs).
 
 ## 2. Parameters (canonical values)
@@ -60,8 +61,13 @@ All other docs and code reference these names; the numbers live only here.
 | `CLAIM_MATURATION` | 12h ≈ 360 blocks [approx] | gives the seller time to counter a claim with the oracle digest (path C′) |
 | `HANDOFF_RECORD_MAX_AGE` | 4h [spec] | freshness bound on the handoff-record timestamp (renamed from `DELIVERY_MSG_MAX_AGE` in v2 — same value and role) |
 | `BTC_DEADLINE` | ~6h ≈ 180 blocks [approx] | BTC leg only (§8.1) |
-| `PROTOCOL_FEE_BPS` | 25, compile-time constant baked into both contract scripts (2026-09-17 hardcode) | `onramp-business-model.md` §2 |
 | Hash function | `blake2b256` | ErgoTree has `blake2b256`/`sha256` only — no Keccak-256 |
+
+The in-contract protocol fee (`PROTOCOL_FEE_BPS`, 25 bps, a compile-time
+constant since 2026-09-17) was **removed on 2026-09-18** (owner decision,
+§8.4): it is no longer a parameter and no longer appears in either script.
+Every collateral-moving path pays the recipient in full; only the miner fee
+remains (unchanged, outside the contract's token math).
 
 Block counts assume the ~2-minute Ergo block target [approx]; contracts use heights, and the
 operator backend converts wall-clock times to heights conservatively.
@@ -83,7 +89,7 @@ operator backend converts wall-clock times to heights conservatively.
 | R5 | `Coll[Byte]` | `sellerPubKey` — 33 B compressed secp256k1 point; the contract `decodePoint`s it (sigma 6 cannot lift `GroupElement` constants embedded as `Coll[Byte]` elsewhere, so keys are stored raw) |
 | R6 | `Coll[Byte]` | `buyerPubKey` — 33 B compressed point, same encoding as R5 |
 | R7 | `Coll[Byte]` | `oracleNftId` — 32 B, the bare token id of the oracle box authenticating payment proofs on the release paths (phase 1; phase 2: the guard-set box's NFT — same register, same role). Path B does not read R7 at all: the claim verifies the handoff record against R5's `sellerPubKey` |
-| R8 | `Long` | `timeoutHeight` — plain Long (the fee stopped being a per-box register field on 2026-09-17: `PROTOCOL_FEE_BPS` is a compile-time constant, so no packed ints) |
+| R8 | `Long` | `timeoutHeight` — plain Long (the fee stopped being a per-box register field on 2026-09-17; the 2026-09-18 fee removal retired the last fee-shaped register, §8.4) |
 | R9 | `Coll[Byte]` | source-chain binding, 31 B: `srcChainId(1) \| tokenId(1) \| recipientAddr(21) \| expectedAmount(8, big-endian)` — pinned at funding so the oracle digest fields (layout: `specs/oracle-integration.md` §2.2) can be checked against them. **On-ramp semantics:** `recipientAddr` is the *buyer's* USDT address (the seller pays the buyer) |
 | R10 | — | **does not exist** — Ergo boxes have registers R4–R9 only. `dealId` (R4) already binds the handoff-record signer via the deal terms (`specs/deal-protocol.md` §3.1) |
 
@@ -92,13 +98,17 @@ operator backend converts wall-clock times to heights conservatively.
 Path selection uses a Boolean `if` on `HEIGHT`, not `SigmaProp ||`: the proof reducer
 evaluates every `val` of every block it enters, so `||` over SigmaProp branches would force
 context-variable material of paths that are not being spent. All `getVar`-dependent
-material lives inside the branch that consumes it.
+material lives inside the branch that consumes it. In `vault_funded.es` the selection is:
+`HEIGHT > timeoutHeight` → path A (seller reclaim); else `getVar[Coll[Byte]](0)` defined →
+path B (buyer claim with the handoff record); else → path C (seller release via the oracle
+data input — release txs supply no context vars, so var 0's absence *is* the discriminator).
 
 **Path A — reclaim (timeout).** Conditions:
 - `HEIGHT > timeoutHeight`
 - `proveDlog(sellerPubKey)` — the seller signs the spending transaction
-- outputs: one output paying all USE tokens minus the `PROTOCOL_FEE_BPS` cut to an address derived from
-  `sellerPubKey`; one fee output (§6) — always required, the fee is always charged.
+- outputs: one output paying **all** USE tokens to an address derived from
+  `sellerPubKey` — the seller is paid in full (the in-contract protocol fee was
+  removed 2026-09-18; §6).
 
 This is the default routine path: buyer no-show, or the seller already paid and the buyer
 ghosted (the buyer keeps the USDT, so the reclaim harms no one). The seller reclaims to a
@@ -110,14 +120,24 @@ operational deterrence, as in the off-ramp design.
 
 **Oracle authentication (shared by paths C and C′ — release only; claims do not involve the
 oracle in this direction).** The spending transaction must include the **oracle box as a
-full input**: a box whose tokens contain `oracleNftId` (== R7) and whose script requires
-`proveDlog(oracleKey)`. The oracle co-signs the transaction only after confirming the
-seller's USDT transfer to the R9 recipient (the buyer's address;
-`specs/oracle-integration.md` §3.1); its signature on the whole transaction binds the
-attestation (the digest supplied in-tx as a context variable). A data input is **not**
-sufficient — the oracle
-must be a signing input, so no one can attach a stale or foreign attestation without the
-oracle's live consent.
+data input** (`CONTEXT.dataInputs(0)`): a box whose tokens contain `oracleNftId` (== R7,
+or the compile-time `%%ORACLE_NFT_ID%%` pin in the proven contract) and whose R4 carries
+the 112-byte payment-proof payload (`specs/oracle-integration.md` §2.2). The contract
+checks the data input's token id and the payload's `dealId`/`srcChainId`/`tokenId`/
+`recipient`/`amount` against R4/R9. **Data-input scripts never execute, so no oracle
+signature exists in the release transaction** — the oracle's job is *publishing* the
+attestation (spending its singleton and re-creating it with the payload in R4), not
+signing buyer/seller spends; it signs only its own box's rotation spends. Authenticity
+therefore reduces to **NFT custody**: any box carrying the oracle NFT with a matching R4
+payload releases the vault — a foreign-script box included, since its script never runs
+(test 20 pins this honestly; §9 states what that costs).
+**Operational serialization constraint (hard rule, shapes the oracle service):** the
+attestation box is a **singleton** — posting the attestation for deal Y *spends* the box
+holding deal X's attestation, which invalidates any still-mempool release that references
+it as a data input. A deal's release must therefore **confirm on-chain before the oracle
+posts the next attestation**; the oracle service serializes postings per pending release
+and waits out mempool-pending releases (re-check by deal id / box id before posting —
+`specs/oracle-integration.md` §3.1, `specs/operator-backend.md` §2).
 
 Phase-2 upgrade note: this check — and only this check — is replaced by a GuardSign-style
 guard-set box (NFT data input holding `Coll[Coll[Byte]]` guard keys + threshold) with
@@ -155,12 +175,12 @@ raises the alarm off-chain.
 **Path C — release (oracle-only, direct from FUNDED).** The routine fast close: the seller
 collects the cash and signs the handoff record, the seller sends the USDT, the
 oracle confirms the transfer, and the operator backend spends the FUNDED box in a single
-transaction carrying the oracle's attestation:
+transaction carrying the oracle's attestation box as a data input:
 - oracle authentication as above, with the digest field checks against R4/R9
   (`recipientAddr` = the buyer's USDT address) — and **nothing else** (v2: the buyer's
   receipt signature and its freshness binding are gone; the oracle is trusted, §9).
 
-Outputs: USE minus fee to the seller, fee output (§6). Routine deals therefore need
+Outputs: **all** USE to the seller, in full (no protocol fee since 2026-09-18, §6). Routine deals therefore need
 exactly two on-chain transactions — fund and release — and never touch the PAYMENT_PROVEN
 state. The two-step route via PAYMENT_PROVEN (path B, then §4 path C′) remains available
 as the dispute-recovery route.
@@ -174,17 +194,18 @@ as the dispute-recovery route.
 | R4 | `Coll[Byte]` | `dealId` (copied) |
 | R5 | `Coll[Byte]` | `sellerPubKey` — 33 B compressed point |
 | R6 | `Coll[Byte]` | `buyerPubKey` — 33 B compressed point |
-| R7 | `Long` | `proofHeight` — plain Long (the fee left the registers on 2026-09-17, see §2 `PROTOCOL_FEE_BPS`) |
+| R7 | `Long` | `proofHeight` — plain Long (the fee left the registers on 2026-09-17, §8.4) |
 | R8 | `Coll[Byte]` | handoff-record id bytes (`blake2b256` of `a_sig \| z_sig \| record` — for the dashboard's evidence view; the single seller half, §8.4) |
 
 ### 4.2 Spending paths
 
 **Path C′ — release from PAYMENT_PROVEN (oracle-only).** This box carries the *handoff
 record*, not the payment proof (path B was a claim — the seller had not paid), so the
-oracle digest must be supplied **in this transaction**:
-- oracle authentication as §3.3 (oracle box as full input), with the digest field checks
-  against R4/R9 — and **nothing else** (v2: no receipt signature, no freshness vars);
-- outputs: USE minus fee to the seller, fee output (§6).
+attestation must be supplied **in this transaction**, as a data input:
+- oracle authentication as §3.3 (oracle box as data input, payload in its R4), with the digest field checks
+  against R4/R9 — and **nothing else** (v2: no receipt signature, no freshness vars, no
+  oracle signature in the tx);
+- outputs: **all** USE to the seller, in full (no protocol fee since 2026-09-18, §6).
 
 This is how an honest seller resolves **any** claim on a deal it actually fulfilled:
 present the oracle digest, alone. Because the release direction needs no buyer signature,
@@ -196,7 +217,7 @@ compromised — accepted, see §9).
 **Path D — claim (buyer payout).** Conditions:
 - `HEIGHT > proofHeight + CLAIM_MATURATION`;
 - `proveDlog(buyerPubKey)`;
-- outputs: USE minus fee to the buyer's deal-key address, fee output (§6).
+- outputs: **all** USE to the buyer's deal-key address, in full (no protocol fee since 2026-09-18, §6).
 
 The maturation delay exists so an honest seller that *did* deliver can still present the
 oracle digest (path C′ is strictly faster and cheaper for the seller than letting the
@@ -221,7 +242,7 @@ encoding is always positive (see `contracts/src/test/kotlin/p2pgate/contracts/Sc
 **Path B verifies this scheme once:** against `sellerPubKey` (R5), over the
 handoff record, freshness-bounded as below. One signature opens the claim — there is no
 second half (v2). The release paths (C/C′) verify no Schnorr signature at all: the
-oracle's co-signed input plus the digest field checks are the whole gate.
+NFT-carrying data input plus the digest field checks are the whole gate.
 
 Context variables:
 
@@ -233,7 +254,7 @@ Context variables:
 | 2 | `Coll[Byte]` | `z_sig` — response, 32 B big-endian |
 | 3 | `Long` | record timestamp in millis (msg bytes 48..52 as seconds × 1000) |
 | **Paths C/C′ (release)** | | |
-| 0 | `Coll[Byte]` | payment-proof payload, 112 B (`specs/oracle-integration.md` §2.2) |
+| — | — | release txs supply **no context vars** (2026-09-17 data-input rework): the digest rides in the oracle data input's R4, so path selection can use `getVar[Coll[Byte]](0)` itself as the path-B/C discriminator — defined → claim (path B), undefined → release via oracle data input (path C) |
 
 **Freshness** (path B only — the release paths carry no signed message and no freshness
 check in v2) is checked against `CONTEXT.preHeader.timestamp` on the `Long` context var,
@@ -256,8 +277,8 @@ and the var is bound to the *signed* record bytes by `longToByteArray(tsMs / 100
 
 - **Signature usage:** path B is the only in-script Schnorr verification — one invocation
   against `sellerPubKey` over the handoff record (v2). The release paths verify no
-  Schnorr signature; the oracle is authenticated by NFT + its input signature (§3.3),
-  not by in-script Schnorr.
+  Schnorr signature; the oracle is authenticated by the NFT-carrying data input (§3.3),
+  not by in-script Schnorr and not by any signature in the release tx.
 - **Phase 2:** the oracle threshold is `k` invocations of the same check over
   the payment-proof digest against the guard-set box's key list, with strictly increasing
   key indices for distinctness — the GuardSign/Lock pattern
@@ -265,25 +286,23 @@ and the var is bound to the *signed* record bytes by `longToByteArray(tsMs / 100
 
 Reference for Schnorr-in-ErgoScript: ergoforum.org/t/3407 (see `onramp-insurance.md` §6).
 
-## 6. Protocol fee output
+## 6. Protocol fee — removed (2026-09-18)
 
-Every path that moves collateral out (A, C/C′, D) deducts the protocol fee
-(`PROTOCOL_FEE_BPS`, §2 — a compile-time constant baked into both scripts) of the USE amount
-into a treasury output:
+Every path that moves collateral out (A, C/C′, D) pays the recipient **in
+full**. The in-contract protocol fee — `PROTOCOL_FEE_BPS` (25 bps, a
+compile-time constant since 2026-09-17) deducted into a treasury output
+(`TREASURY_SCRIPT_HASH`) on every collateral-moving path — was removed on
+2026-09-18 by owner decision (§8.4): no fee output exists in either script,
+and `PROTOCOL_FEE_BPS`/`%%FEE_BPS%%`/`TREASURY_SCRIPT_HASH` are deleted from
+the contracts and the tx builders. What remains:
 
-- fee output script = `TREASURY_SCRIPT_HASH` (compile-time constant; governance rotates it
-  by deploying new vault contract versions, per `onramp-business-model.md` §2);
-- `fee = dealAmount * PROTOCOL_FEE_BPS / 10000`; rounding down; the fee output is required
-  on every collateral-moving path (no fee-free mode);
-- hard minimum deal size: `fee` rounds down to 0 below 400 USE base units, and a
-  zero-amount token output is unbuildable — so ~400 units is the in-protocol floor;
-- on path D the fee comes out of the **buyer's** payout; on A/C/C′ out of the **seller's**
-  payout — same economic effect per `onramp-business-model.md` §1.
-
-Note (honest economics): on path A for a ghosted deal the fee is deadweight for the
-operator. Acceptable while `PROTOCOL_FEE_BPS` is 25 and deal sizes are small; flagged as an
-open question whether timeout-reclaims of *unstarted* deals should be fee-exempt (would
-require a contract change — the fee is no longer a parameter).
+- the **miner fee** is unchanged — it is paid in ERG by the spending
+  transaction itself and was never part of the contract's token math;
+- the removal also retired the fee-imposed floor: the old rule that `fee`
+  rounds down to 0 below ~400 USE base units (a zero-amount token output being
+  unbuildable) no longer bounds deal size;
+- protocol-level revenue is now undefined/deferred — see the amended
+  `onramp-business-model.md` §2; this spec asserts no replacement economics.
 
 ## 7. Testing strategy (Kotlin / sigma-state)
 
@@ -293,13 +312,15 @@ against sigma-state 6.0.6 directly. The v2 revision (§8.4) is implemented, and 
 below documents the implemented suite in
 `contracts/src/test/kotlin/p2pgate/contracts/VaultContractSpec.kt` (plus
 `OracleContractSpec.kt` for the oracle box's own progression); run it with
-`./gradlew :contracts:test` (JDK 17; see `AGENTS.md`). Status: tests 1–44 pass (35 has
-five parts, 35a–35e) and O1–O8 pass; 45 is `@Disabled` pending the phase-2 guard-set
-box. Test matrix:
+`./gradlew :contracts:test` (JDK 17; see `AGENTS.md`). Status: tests 1–34 and
+36–44 pass and O1–O8 pass; the suite is now 44 tests (the old 35a–35e fee
+section was deleted with the 2026-09-18 fee removal, §8.4 — test 35's number
+retired with it; 36–45 keep their numbers) and test 45 is `@Disabled` pending
+the phase-2 guard-set box. Test matrix:
 
 **FUNDED box**
 1. Reclaim before `timeoutHeight` — fails.
-2. Reclaim after `timeoutHeight` by seller key — passes; tokens minus fee to seller.
+2. Reclaim after `timeoutHeight` by seller key — passes; all tokens to the seller (in full).
 3. Reclaim by wrong key — fails.
 4. Open claim with a valid seller-signed handoff record — passes; PAYMENT_PROVEN box
    created with `proofHeight = HEIGHT` and the record id in R8.
@@ -316,47 +337,48 @@ box. Test matrix:
 10. In-window record paired with a stale `tsMs` var (reverse of 9) — fails.
 11. Open claim with a record bound to a different `dealId` — fails.
 12. Open claim draining tokens to a non-PAYMENT_PROVEN output — fails.
-13. Open claim with an oracle box among the inputs fails (path B involves no oracle:
+13. Open claim with an oracle box as a **full input** fails (path B involves no oracle:
     oracle.es demands its reproduction at `OUTPUTS(0)`, which the PAYMENT_PROVEN output
     occupies, so no path-B tx can both open the claim and satisfy the oracle's script).
 14. PAYMENT_PROVEN output with wrong `proofHeight` R7 (plain Long) — fails.
 15. PAYMENT_PROVEN output carrying a wrong R8 record id (everything else honest) — fails.
-16. Release from FUNDED (path C) oracle-only: oracle box as full input (NFT == R7)
-    + digest fields vs R4/R9, nothing else — passes; seller paid minus fee.
-17. Release from FUNDED without the oracle box among inputs — fails.
-18. Release from FUNDED with the oracle box as a mere data input (no oracle signature;
-    a stale/foreign attestation must not be attachable without the oracle's live
-    consent) — fails.
-19. Release from FUNDED with an oracle box carrying a different NFT — fails.
-20. Release from FUNDED with a foreign-script box carrying the oracle NFT: the vault's
-    NFT check accepts it at the vault-script level, but on-chain rejection comes from
-    the foreign box's own script refusing to be spent without its key (two-leg test) —
-    the full transaction can never validate.
+16. Release from FUNDED (path C) oracle-only: oracle box as **data input** (NFT == R7)
+    + R4 payload fields vs R4/R9, no context vars, no oracle signature in the tx — passes;
+    seller paid in full.
+17. Release from FUNDED without the oracle box (no data input) — fails.
+18. Release from FUNDED with the oracle box as a **full input but not a data input** — fails
+    (path C never reads INPUTS, so `dataInputs(0)` throws; and as a full input the
+    oracle's own script would demand its signature and pin its reproduction at
+    OUTPUTS(0) — the vault payout slot — so the joint spend can never validate either).
+19. Release from FUNDED with a data input carrying a different NFT — fails.
+20. Release from FUNDED with a **foreign-script box** carrying the oracle NFT and a valid
+    R4 payload — **passes**: the vault's NFT + field checks accept it and the foreign
+    script never executes (the box is a data input, so no on-chain rejection ever comes).
+    NFT custody alone is the phase-1 authenticity anchor — documented as an honest
+    semantic, not a hole to be patched (§9).
 21. Release from FUNDED paying collateral to an address that is not the seller's — fails.
 22. Release from FUNDED with digest `amount` ≠ `R9.expectedAmount` — fails.
 23. Release from FUNDED with digest `recipientAddr` ≠ R9's recipient — fails.
 24. Release from FUNDED with digest `dealId` ≠ R4 — fails.
 25. Digest `srcTxId` is **not** bound on-chain — passes (documents the checked-field
     set: only `dealId`, `chainId`, `tokenId`, `recipientAddr`, `amount` are pinned
-    against R4/R9; `srcTxId`/`srcHeight`/`srcTime` ride along for audit, and the
-    oracle's co-signature is the trust root for those bytes).
+    against R4/R9; `srcTxId`/`srcHeight`/`srcTime` ride along for audit, and
+    NFT custody of the attestation box is the trust root for those bytes).
 
 **PAYMENT_PROVEN box**
 26. Release (path C′) oracle-only — passes; seller paid immediately.
-27. Release without the oracle box among inputs — fails.
-28. Release with the oracle box as a mere data input — fails.
+27. Release without the oracle data input — fails.
+28. Release with the oracle box as a **full input but not a data input** — fails (mirror of
+    test 18 for path C′: an oracle box among the INPUTS does not satisfy the data-input
+    check, and its own script would conflict with the payout slot).
 29. Release with digest `amount` ≠ `R9.expectedAmount` — fails.
 30. Release with digest `dealId` ≠ R4 — fails.
 31. Oracle-only C′ counters a live claim (the v2 residual fix): a claim opened with a
     VALID record (path B) is resolved by the digest alone — passes; no buyer receipt
     signature exists to withhold.
 32. Claim before maturation — fails.
-33. Claim after maturation by buyer key — passes; buyer paid minus fee.
+33. Claim after maturation by buyer key — passes; buyer paid in full.
 34. Claim by wrong key — fails.
-35. Fee arithmetic with the hardcoded `PROTOCOL_FEE_BPS` (25): rounding down (incl.
-    collateral = dealAmount+1), missing/wrong fee output on each collateral-moving path,
-    release-path fee coverage, and the claim fee deducted from the **buyer's** payout —
-    fails/passes as specified (35a–35e).
 
 **Cross-deal replay**
 36. Oracle digest from deal X applied to vault of deal Y — fails.
@@ -374,8 +396,8 @@ box. Test matrix:
 **R7 oracleNftId (path B / path C)**
 42. Handoff record signed by a fresh random key (not the R5 seller key) — path B fails
    (the pinned R5 credential, not any carried key, is authoritative).
-43. R7 carrying a wrong `oracleNftId` — path C fails (the NFT check compares the input
-    box's token id against R7).
+43. R7 carrying a wrong `oracleNftId` — path C fails (the NFT check compares the data
+    input's token id against R7).
 44. Open claim with a wrong R7 `oracleNftId` — path B **passes** (R7 pins the release
     path's oracle NFT only; path B reads R5, not R7, so a vault whose R7 names a
     different oracle NFT is still claimable with a valid record — a deployment error,
@@ -389,8 +411,8 @@ O4. Spend with no oracle signature — fails.
 O5. Rotation output missing the NFT — fails.
 O6. Rotation output carrying a different token id — fails.
 O7. Rotation with the NFT reproduced at `OUTPUTS(1)` instead of `OUTPUTS(0)` — fails (the
-    reproduction position is pinned: on joint release spends the oracle box owns
-    `OUTPUTS(0)` and the vault pays the seller at `OUTPUTS(1)` — §8.4).
+    reproduction position is pinned on the oracle's own spends: every rotation spend —
+    i.e. every attestation posting — re-creates the singleton at `OUTPUTS(0)`; §8.4).
 O8. Rotation draining value below `SELF.value` — fails.
 
 **Phase-2 readiness**
@@ -440,7 +462,8 @@ For the record, the four items as they originally landed:
    **seller's** USDT transfer with `recipientAddr` = the buyer's address (R9 semantics per
    §3.2), and C′ takes the oracle box as a full input too (the PAYMENT_PROVEN box carries
    the handoff record, not the digest — unlike the off-ramp reading where the proof was
-   already on-chain). V2 dropped the buyer receipt signature that this item had kept.
+   already on-chain; the 2026-09-17 data-input rework since changed the full-input
+   mechanic, §8.4). V2 dropped the buyer receipt signature that this item had kept.
    Implementation note that still stands: the PAYMENT_PROVEN box has no spare register
    for the oracle NFT id (R7 carries `proofHeight`, R9 the
    copied funding binding), so `vault_payment_proven.es` pins `%%ORACLE_NFT_ID%%` at
@@ -451,7 +474,8 @@ For the record, the four items as they originally landed:
    checked in-script against the carried context variables (test 15). V2's id covers the
    single seller half: `blake2b256(a_sig | z_sig | record)`.
 
-Unchanged by the revision: paths A and D, the fee logic (§6), freshness mechanics,
+Unchanged by the revision: paths A and D, the fee logic (§6 — itself removed
+2026-09-18, §8.4), freshness mechanics,
 both height registers (R8 `timeoutHeight`, proven R7 `proofHeight` — plain Longs since
 the 2026-09-17 fee hardcode), the oracle box contract itself, and all sigma-6
 constraints (§5).
@@ -469,11 +493,15 @@ it. The changes, and why:
    artifact, no claim. Output-0 PAYMENT_PROVEN construction is unchanged (registers
    copied, `proofHeight`, R8 = `blake2b256(a_sig | z_sig | record)`). No oracle
    input on path B (tests 4–15, 37–42, 44).
-2. **Paths C/C′ are oracle-only**: the oracle box as a full input (NFT check vs R7 /
-   the compile-time pin, script requires `proveDlog(oracleKey)`) plus the
-   digest field checks vs R4/R9 — and nothing else. The buyer's receipt signature, the
-   `P2PG` delivery message, the signature context vars, and their freshness binding are
-   gone (tests 16–31, 36, 43).
+2. **Paths C/C′ are oracle-only**: the oracle box as a **data input**
+   (`CONTEXT.dataInputs(0)`; NFT check vs R7 / the compile-time pin, R4 payload checked
+   against R4/R9) — and nothing else. **No oracle signature exists in the release
+   transaction**: data-input scripts never execute, so the oracle's role is *publishing*
+   the attestation (spending its singleton and re-creating it with the payload in R4 —
+   the classic oracle-pool datapoint pattern), never co-signing buyer/seller txs. The
+   buyer's receipt signature, the `P2PG` delivery message, the signature context vars,
+   and their freshness binding are gone (tests 16–31, 36, 43; the honest NFT-custody
+   semantic is pinned by test 20).
 3. **The withheld-receipt residual is eliminated**: an honest seller can now counter ANY
    claim with the digest alone (test 31), so path D only pays out when the seller
    genuinely did not deliver (or the oracle is compromised — accepted, §9).
@@ -483,19 +511,39 @@ it. The changes, and why:
    there is no "oracle never sufficient alone" hedge anywhere in v2.
 
 Unchanged by v2: path A, path D's shape (only the maturation constant moved), the fee
-logic (§6), path-B freshness mechanics, USE collateral, and all sigma-6 constraints (§5).
+logic (§6 — itself removed 2026-09-18, §8.4), path-B freshness mechanics, USE collateral,
+and all sigma-6 constraints (§5).
 
-Post-v2 contract simplifications (2026-09-17, milestone M3): the joint-spend output layout
-is fixed. `oracle.es` pins its NFT self-reproduction at `OUTPUTS(0)` (same tree, NFT id +
-amount preserved, `value ≥ SELF.value`), and the vault contracts moved the release-path
-seller payout from `OUTPUTS(0)` to `OUTPUTS(1)` (paths C/C′ only — reclaim, open-claim,
-and claim payouts stay at `OUTPUTS(0)`, as those transactions carry no oracle box). An
-earlier `OUTPUTS.exists` formulation made the reproduction position-free; the owner
-chose a fixed position to keep both scripts trivially small (`OracleContractSpec` test 7
-pins the inversion). The `oracle.es`-governed box is the release/contest input, exercised
-end-to-end in `:apps:core:ergo` (`OperatorTxBuilder` + `DevOracle`, prover-verified).
+Post-v2 contract simplifications (2026-09-17, milestone M3), **since superseded — kept
+for the record**: the joint-spend output layout fixed `oracle.es`'s NFT self-reproduction
+at `OUTPUTS(0)` (same tree, NFT id + amount preserved, `value ≥ SELF.value`) and moved
+the vault contracts' release-path seller payout to `OUTPUTS(1)` — necessary only while
+release txs *spent* the oracle box, which the rework below retired the same day.
 
-Second 2026-09-17 simplification: the fee left the registers. `feeBps` was packed with
+Third 2026-09-17 rework (same day): the **data-input model**. Release txs no longer
+spend the oracle box at all — they reference it as a **data input** (`CONTEXT.dataInputs(0)`),
+so the vault pays the seller at `OUTPUTS(0)` again on paths C/C′ (reclaim, open-claim, and
+claim payouts were always at `OUTPUTS(0)`), release txs carry **no context vars** (var 0's
+absence is the path-B/C discriminator, §3.3/§5), and **no oracle signature exists in any
+buyer/seller transaction**. `oracle.es` itself is unchanged — `proveDlog` + reproduction
+pinned at `OUTPUTS(0)` — but its spend now happens only on the oracle's own rotation
+spends, when the oracle posts a new attestation by spending its singleton and re-creating
+it with the payload in R4 (`OracleContractSpec` test 7 pins the reproduction position).
+Code seams: `OperatorTxBuilder.buildRelease/buildContest(oracleDataInput: ChainBox,
+signer: DealTxSigner)` — operator-wallet-only, no oracle co-signature, no oracle-key fee
+inputs; `TxAssembly.assemble(..., dataInputs)`; `OracleSigner`, `DevOracle.signer()` and
+`releaseInputBox()` are deleted; `DevOracle.attestationBox(attestation)` builds the
+data-input box; backend `OracleClient.attestationBoxFor(dealId): ChainBox?` replaces the
+signer/feeInputs seam (the backend's old dev whole-tx co-signing deviation is gone with
+it). **Operational serialization constraint:** the attestation box is a singleton, so
+posting attestation for deal Y spends the box holding deal X's attestation and thereby
+invalidates any still-mempool release referencing it — a deal's release must confirm
+on-chain before the next attestation posts, and the oracle service serializes postings
+per pending release (`specs/oracle-integration.md` §3.1, `specs/operator-backend.md` §2).
+The `oracle.es`-governed box is the release/contest **data input**, exercised end-to-end
+in `:apps:core:ergo` (`OperatorTxBuilder` + `DevOracle`, prover-verified).
+
+Also 2026-09-17 (same milestone): the fee left the registers. `feeBps` was packed with
 `timeoutHeight`/`proofHeight` into FUNDED R8 / proven R7; it is now the compile-time
 `PROTOCOL_FEE_BPS` (25, §2) substituted into both scripts — both registers are plain
 `Long` heights, `TxAssembly.packInts` is deleted, and the treasury fee output is required
@@ -503,19 +551,40 @@ on every collateral-moving path (no fee-free mode). Same day, the courier role w
 removed entirely (seller-signed handoff record under R5, R7 = bare `oracleNftId`) — see
 `specs/deal-protocol.md` §3.2 and the trust-model note in §9.
 
+**2026-09-18: the in-contract protocol fee was removed entirely** (owner
+decision). `PROTOCOL_FEE_BPS` (25 bps, in-contract since 2026-09-17) and the
+treasury fee output are gone from both vault scripts: every collateral-moving
+path (A, C/C′, D) pays the recipient **in full** — on path D the buyer
+receives the whole collateral, on A/C/C′ the seller does. Rationale, stated
+plainly: the fee added contract surface (a `TREASURY_SCRIPT_HASH` pin, fee
+arithmetic, a required third output) and a ~400-base-unit hard minimum deal
+size for a revenue line the launch does not need; protocol-level revenue is
+deferred instead of hardcoded (see the amended `onramp-business-model.md` §2
+— undefined/deferred, no replacement economics asserted). **The miner fee is
+unchanged** — it is paid in ERG by the spending transaction and never was
+part of the contract's token math. Code consequences: `ContractParams` no
+longer carries the fee, the tx builders emit no treasury output, the backend
+dropped `QuotePublisher.protocolFeeBps` and the `P2P_TREASURY_SECRET`
+wiring, and the old §7 fee tests (35a–35e) are deleted — `VaultContractSpec`
+is now 44 tests (1 `@Disabled`: test 45). Both height registers stay plain
+`Long`s.
+
 ## 9. Trust model (stated honestly)
 
 - **Phase 1 (launch): the release direction fully trusts a single centralized oracle.**
   Authenticated by NFT, but trust is trust: on paths C and C′ the oracle's attestation
   **alone** is sufficient to move collateral (v2 — there is no receipt signature behind
-  it). A malicious or compromised oracle can co-sign a digest of a payment that never
-  happened and release the vault to a confederate seller, and **there is no on-chain
-  defense; that is accepted** (owner decision, §8.4). Mitigations are operational, not
-  cryptographic: oracle operator ≠ marketplace operator, every attestation publicly
-  auditable against source-chain data (the digest's `srcTxId` is carried for exactly
-  this, though it is not checked in-script — test 25), deal-size caps while centralized
-  (`specs/oracle-integration.md` §5.3). Do not describe phase 1 with "cost-to-attack"
-  language — there is no threshold to attack.
+  it), and with the data-input model the authenticity anchor is **NFT custody alone**:
+  data-input scripts never execute, so any box carrying the oracle NFT with a matching
+  R4 payload releases the vault — a foreign-script box included (test 20 pins this
+  honestly). A malicious or compromised oracle can publish an attestation for a payment
+  that never happened and release the vault to a confederate seller, and **there is no
+  on-chain defense; that is accepted** (owner decision, §8.4). Mitigations are
+  operational, not cryptographic: oracle operator ≠ marketplace operator, every
+  attestation publicly auditable against source-chain data (the digest's `srcTxId` is
+  carried for exactly this, though it is not checked in-script — test 25), deal-size
+  caps while centralized (`specs/oracle-integration.md` §5.3). Do not describe phase 1
+  with "cost-to-attack" language — there is no threshold to attack.
 - **Phase 2:** the k-of-n guard threshold (Rosen GuardSign/Lock pattern) restores the
   intended posture: not trustless, but cost-to-attack (slashable guard collateral +
   future fee income) exceeding extractable value per deal (`onramp-business-model.md` §3).
@@ -541,4 +610,4 @@ removed entirely (seller-signed handoff record under R5, R7 = bare `oracleNftId`
 - Deal protocol (wire formats, state machine): `specs/deal-protocol.md`
 - Oracle side (phases, digest format): `specs/oracle-integration.md`
 - Product flows these states render: `onramp-ux.md` §2
-- Fee economics: `onramp-business-model.md` §2–§3
+- Economics (the 2026-09-18 fee removal; capital dynamics): `onramp-business-model.md` §2–§3
