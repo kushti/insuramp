@@ -179,17 +179,21 @@ class VaultManager(
     }
 
     /**
-     * Builds, signs and submits the fund tx (creates the FUNDED box).
+     * Builds, signs and submits the fund tx (creates the FUNDED box). Called
+     * by the operator's offer accept (`POST /v1/dashboard/deals/{id}/accept`) —
+     * a deal is an offer until then; nothing auto-funds.
      * Hard gates, in order: infra healthy (§8 halts funding), deal still
-     * QUOTED, AML accept on file for the current receive address — with the
-     * address-swap re-check: if the address seen now differs from the scored
-     * one, the scorer runs again, fail-closed (an unreachable scorer means no
-     * funding). The deal becomes FUNDED only when the chain watcher observes
-     * the box (the backend mirrors, never invents).
+     * QUOTED and not abandoned (a declined/expired offer never funds), AML
+     * accept on file for the current receive address — with the address-swap
+     * re-check: if the address seen now differs from the scored one, the
+     * scorer runs again, fail-closed (an unreachable scorer means no funding).
+     * The deal becomes FUNDED only when the chain watcher observes the box
+     * (the backend mirrors, never invents).
      */
     fun fundDeal(dealId: String, at: Instant = Instant.now()): Outcome {
         val deal = store.getDeal(dealId) ?: return Rejected("unknown deal $dealId")
         if (!infra.healthy()) return Rejected("funding halted: infra paused")
+        if (deal.abandoned) return Rejected("offer is closed (declined or expired)")
         if (deal.state != DealState.QUOTED) return Rejected("deal is ${deal.state}, expected QUOTED")
 
         val recheck = ensureAmlCurrent(deal, at)

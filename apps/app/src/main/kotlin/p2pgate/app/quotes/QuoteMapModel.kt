@@ -7,6 +7,7 @@ data class QuoteMarker(
     val quoteId: String,
     val lat: Double,
     val lon: Double,
+    val minAmount: Long,
     val maxAmount: Long,
     val etaMinutes: Int,
 )
@@ -33,7 +34,7 @@ fun quoteMapModel(quotes: List<QuoteDto>): QuoteMapModel {
         val lat = q.lat
         val lon = q.lon
         if (lat == null || lon == null) null
-        else QuoteMarker(q.id, lat, lon, q.maxAmount, q.etaMinutes)
+        else QuoteMarker(q.id, lat, lon, q.minAmount, q.maxAmount, q.etaMinutes)
     }
     return QuoteMapModel(markers, unlocatedCount = quotes.size - markers.size)
 }

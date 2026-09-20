@@ -215,6 +215,7 @@ async function refreshQuote() {
 
 // ------------------------------------------------------------------ vault lane
 function deadlineFor(card) {
+  if (card.offerExpiresAtEpochMs) return { label: "offer expires in", at: card.offerExpiresAtEpochMs };
   if (card.reclaimDeadlineEpochMs) return { label: "reclaim in", at: card.reclaimDeadlineEpochMs };
   if (card.claimMaturesAtEpochMs) return { label: "claim matures in", at: card.claimMaturesAtEpochMs };
   return null;
@@ -251,12 +252,27 @@ function renderCard(card, column) {
   el.innerHTML =
     '<div class="card-top"><strong>' + fmtAmount(card.amount) + "</strong>" +
     '<span class="muted mono">' + shortId(card.dealId) + "</span></div>" +
+    '<div class="muted">fiat leg: ' + escapeHtml(card.fiatCurrency || "?") + "</div>" +
     (dl ? '<div class="countdown" data-deadline="' + dl.at + '">' + dl.label + " " + fmtCountdown(dl.at) + "</div>"
         : '<div class="countdown none">no countdown</div>') +
     '<div class="exit">' + escapeHtml(card.exitPath) + "</div>";
 
   const actions = document.createElement("div");
   actions.className = "card-actions";
+
+  // Seller agreement: a QUOTED deal is an offer — accept funds the vault,
+  // decline closes it (no on-chain footprint either way until accepted).
+  if (column === "QUOTED") {
+    const accept = document.createElement("button");
+    accept.textContent = "Accept & fund the vault";
+    accept.addEventListener("click", () => offerAction(card.dealId, "accept", accept));
+    actions.appendChild(accept);
+    const decline = document.createElement("button");
+    decline.className = "secondary";
+    decline.textContent = "Decline";
+    decline.addEventListener("click", () => offerAction(card.dealId, "decline", decline));
+    actions.appendChild(decline);
+  }
 
   // Meeting entry: FUNDED to sign, PAYMENT_PENDING to re-show the QR.
   if (column === "FUNDED" || column === "PAYMENT_PENDING") {
@@ -297,6 +313,17 @@ async function reclaim(dealId, btn) {
     await api("/vaults/" + encodeURIComponent(dealId) + "/reclaim", { method: "POST" });
   } catch (e) {
     alert(e.message); // backend's reason, verbatim
+  }
+  btn.disabled = false;
+  refreshLane();
+}
+
+async function offerAction(dealId, action, btn) {
+  btn.disabled = true;
+  try {
+    await api("/dashboard/deals/" + encodeURIComponent(dealId) + "/" + action, { method: "POST" });
+  } catch (e) {
+    alert(e.message); // backend's reason, verbatim (409 carries the state/gate)
   }
   btn.disabled = false;
   refreshLane();
@@ -397,6 +424,8 @@ function renderQuote() {
       '<div class="stat-grid">' +
       stat("spread", q.spreadBps + " bps") +
       stat("ETA", q.etaMinutes + " min") +
+      stat("fiat", q.fiatCurrency) +
+      stat("min amount", fmtAmount(q.minAmount)) +
       stat("max amount", fmtAmount(q.maxAmount)) +
       stat("expires in", fmtCountdown(q.expiresAtEpochMs)) +
       (q.lat != null ? stat("location", q.lat.toFixed(3) + ", " + q.lon.toFixed(3)) : "") +

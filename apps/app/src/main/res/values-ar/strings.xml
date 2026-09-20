@@ -11,9 +11,10 @@
     <string name="fiat_inr">الروبية الهندية</string>
     <string name="fiat_usd">الدولار الأمريكي</string>
     <string name="fiat_ksh">الشلن الكيني</string>
+    <string name="fiat_rub">الروبل الروسي</string>
     <string name="fiat_currency_option">%1$s — %2$s</string>
-    <string name="quote_amount_label">المبلغ الذي تسلّمه (بأصغر وحدة، مثل القروش/السنتات)</string>
-    <string name="quote_address_label">عنوان استلام USDT الخاص بك (Tron base58 أو EIP-55)</string>
+    <string name="quote_amount_label">المبلغ الذي تسلّمه (وحدات كاملة، بدون كسور)</string>
+    <string name="quote_address_label">عنوان استلام USDT الخاص بك (شبكة Tron)</string>
     <string name="quote_best">أفضل العروض</string>
     <string name="quote_view_list">قائمة</string>
     <string name="quote_view_map">خريطة</string>
@@ -21,14 +22,16 @@
     <string name="quote_refreshing">جارٍ التحديث…</string>
     <string name="quote_stale">الخادم غير متاح — يتم عرض آخر عرض معروف.</string>
     <string name="quote_none">لا يوجد عرض منشور حاليًا — حدّث لإعادة المحاولة.</string>
+    <string name="quote_none_for_currency">لا توجد عروض بعملة %1$s حاليًا — جرّب عملة أخرى أو حدّث.</string>
     <string name="quote_unlocated">لم ينشر البائع موقعًا لهذا العرض — بدّل إلى القائمة لاختياره.</string>
     <string name="quote_creating">جارٍ إنشاء الصفقة…</string>
     <string name="quote_eta">~%1$d دقيقة</string>
-    <string name="quote_available">حتى %1$d USDT متاحة</string>
-    <string name="quote_collateral_line">لقد جمّد البائع ضمانًا بهذا المقدار — يمكنك المطالبة به إذا لم تصلك USDT أبدًا.</string>
-    <string name="quote_choose">اختيار</string>
+    <string name="quote_amount_range">%1$d – %2$d USDT لكل صفقة</string>
+    <string name="quote_collateral_line">جمّد البائع ضمانًا لتغطية هذه الصفقات — يمكنك المطالبة به إذا لم تصلك USDT أبدًا.</string>
+    <string name="offer_action">اعرض النقد</string>
     <string name="quote_create_error">تعذّر إنشاء الصفقة: %1$s</string>
-    <string name="quote_marker_title">حتى %1$d USDT · ~%2$d دقيقة</string>
+    <string name="quote_amount_out_of_range">يجب أن يكون المبلغ بين %1$d و%2$d لهذا العرض.</string>
+    <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d دقيقة</string>
 
     <!-- Canonical protocol states → human labels -->
     <string name="state_quoted">تم عرض سعر الصفقة — بانتظار تجميد البائع للضمان</string>
@@ -62,6 +65,15 @@
     <string name="deal_claim_offer">استُلم النقد ولم تصل USDT؟ يمكنك المطالبة بالضمان المجمّد البالغ %1$d USDT.</string>
     <string name="deal_claim_payout_note">يُدفع بعد ~12 ساعة (CLAIM_MATURATION).</string>
     <string name="deal_stop_polling">إيقاف الاستعلام في الخلفية</string>
+
+    <!-- Offer step -->
+    <string name="offer_pending">أُرسل العرض — أمام البائع ~%1$d دقيقة لقبوله بتجميد الخزنة.</string>
+    <string name="offer_pending_unknown">أُرسل العرض — بانتظار قبول البائع بتجميد الخزنة.</string>
+    <string name="offer_pending_note">لا شيء مجمّد على السلسلة بعد — العرض ليس صفقة حتى يموّل البائع الخزنة.</string>
+    <string name="offer_countdown_running">ينتهي العرض خلال %1$d ساعة و%2$d دقيقة</string>
+    <string name="offer_countdown_expired">انتهى العرض</string>
+    <string name="offer_not_taken">لم يقبل البائع هذا العرض</string>
+    <string name="offer_back_to_quotes">العودة إلى العروض</string>
 
     <!-- Shared actions -->
     <string name="action_start_claim">بدء المطالبة</string>
@@ -105,4 +117,8 @@
     <string name="recover_restored">تم استرجاع الصفقة.</string>
     <string name="recover_error_invalid_link">هذا لا يبدو رابط صفقة — تحقق من وجود معرّف الصفقة والرمز بعد #.</string>
     <string name="recover_error_failed">فشل الاسترجاع: %1$s</string>
+
+    <!-- Welcome screen -->
+    <string name="welcome_text">مرحبًا بك في Insuramp! تطبيق تحويل النقد إلى عملات رقمية — غير احتفاظي، بدون KYC، آمن ومؤمَّن!</string>
+    <string name="welcome_get_started">ابدأ</string>
 </resources>

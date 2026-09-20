@@ -19,12 +19,22 @@ data class QuotesUiState(
     /** Last fetch failed — show the stale-data marker (§6.6). */
     val stale: Boolean = false,
     val viewMode: QuoteViewMode = QuoteViewMode.LIST,
-) {
-    val mapModel: QuoteMapModel get() = quoteMapModel(quotes)
-}
+)
 
 /** List-view order: best first — lowest ETA at the top, stable on ties. */
 fun bestFirst(quotes: List<QuoteDto>): List<QuoteDto> = quotes.sortedBy { it.etaMinutes }
+
+/**
+ * Currency scoping: only quotes serving the selected fiat currency are shown
+ * (list and map alike). Exact match on the 3-letter code — the dropdown codes
+ * are fixed, so no case folding is needed.
+ */
+fun quotesForCurrency(quotes: List<QuoteDto>, fiatCurrency: String): List<QuoteDto> =
+    quotes.filter { it.fiatCurrency == fiatCurrency }
+
+/** The seller's per-deal limits: an amount must sit inside [minAmount, maxAmount] (bounds inclusive). */
+fun amountInRange(amount: Long, minAmount: Long, maxAmount: Long): Boolean =
+    amount in minAmount..maxAmount
 
 class QuotesViewModel(private val backend: BackendClient) : ViewModel() {
 

@@ -15,6 +15,7 @@ class AppLocaleSpec {
         assertEquals("hi", resolveSupportedTag("hi"))
         assertEquals("sw", resolveSupportedTag("sw"))
         assertEquals("ar", resolveSupportedTag("ar"))
+        assertEquals("ru", resolveSupportedTag("ru"))
         assertEquals("en", resolveSupportedTag("en"))
         assertEquals("en", resolveSupportedTag("fr"))
         assertEquals("en", resolveSupportedTag("zh"))
@@ -23,10 +24,10 @@ class AppLocaleSpec {
     }
 
     @Test
-    fun `supported locales are the four launch languages in native names`() {
-        assertEquals(listOf("en", "hi", "sw", "ar"), SUPPORTED_LOCALES.map { it.tag })
+    fun `supported locales are the five languages in native names`() {
+        assertEquals(listOf("en", "hi", "sw", "ar", "ru"), SUPPORTED_LOCALES.map { it.tag })
         assertEquals(
-            listOf("English", "हिन्दी", "Kiswahili", "العربية"),
+            listOf("English", "हिन्दी", "Kiswahili", "العربية", "Русский"),
             SUPPORTED_LOCALES.map { it.nativeName },
         )
     }
@@ -36,14 +37,16 @@ class AppLocaleSpec {
         assertEquals("USD", defaultCurrencyFor("en"))
         assertEquals("INR", defaultCurrencyFor("hi"))
         assertEquals("KSH", defaultCurrencyFor("sw"))
-        // EGP is not offered at launch — Arabic falls back to USD.
+        // EGP is not offered — Arabic falls back to USD.
         assertEquals("USD", defaultCurrencyFor("ar"))
+        assertEquals("RUB", defaultCurrencyFor("ru"))
         assertEquals("USD", defaultCurrencyFor("xx"))
     }
 
     @Test
     fun `explicit currency pick wins over the locale default`() {
         assertEquals("INR", initialCurrency(explicit = null, supportedLocaleTag = "hi"))
+        assertEquals("RUB", initialCurrency(explicit = null, supportedLocaleTag = "ru"))
         assertEquals("USD", initialCurrency(explicit = null, supportedLocaleTag = "ar"))
         assertEquals("INR", initialCurrency(explicit = "INR", supportedLocaleTag = "en"))
         // Switching language after a manual pick must not move the currency.

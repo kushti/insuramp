@@ -14,9 +14,10 @@
     <string name="fiat_inr">Indian Rupee</string>
     <string name="fiat_usd">US Dollar</string>
     <string name="fiat_ksh">Kenyan Shilling</string>
+    <string name="fiat_rub">Russian Ruble</string>
     <string name="fiat_currency_option">%1$s — %2$s</string>
-    <string name="quote_amount_label">You hand (smallest unit, e.g. piastres/cents)</string>
-    <string name="quote_address_label">Your USDT receive address (Tron base58 or EIP-55)</string>
+    <string name="quote_amount_label">You hand (whole units, no decimals)</string>
+    <string name="quote_address_label">Your USDT receive address (Tron network)</string>
     <string name="quote_best">Best quotes</string>
     <string name="quote_view_list">List</string>
     <string name="quote_view_map">Map</string>
@@ -24,14 +25,16 @@
     <string name="quote_refreshing">Refreshing…</string>
     <string name="quote_stale">Backend unreachable — showing the last known quote.</string>
     <string name="quote_none">No quote published right now — refresh to retry.</string>
+    <string name="quote_none_for_currency">No quotes for %1$s right now — try another currency or refresh.</string>
     <string name="quote_unlocated">The seller didn\'t publish a location for this quote — switch to List to choose it.</string>
     <string name="quote_creating">Creating deal…</string>
     <string name="quote_eta">~%1$d min</string>
-    <string name="quote_available">Up to %1$d USDT available</string>
-    <string name="quote_collateral_line">The seller has locked that much collateral — you can claim it if your USDT never arrives.</string>
-    <string name="quote_choose">Choose</string>
+    <string name="quote_amount_range">%1$d – %2$d USDT per deal</string>
+    <string name="quote_collateral_line">The seller has locked collateral to cover these deals — you can claim it if your USDT never arrives.</string>
+    <string name="offer_action">Offer cash</string>
     <string name="quote_create_error">Could not create the deal: %1$s</string>
-    <string name="quote_marker_title">Up to %1$d USDT · ~%2$d min</string>
+    <string name="quote_amount_out_of_range">Amount must be between %1$d and %2$d for this quote.</string>
+    <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d min</string>
 
     <!-- Canonical protocol states (specs/deal-protocol.md §1) → human labels.
          The canonical name itself is never translated and stays visible in
@@ -67,6 +70,15 @@
     <string name="deal_claim_offer">Cash collected but no USDT? You can claim the %1$d USDT locked collateral.</string>
     <string name="deal_claim_payout_note">Pays out after ~12h (CLAIM_MATURATION).</string>
     <string name="deal_stop_polling">Stop background polling</string>
+
+    <!-- Offer step (QUOTED = pending offer; nothing is on-chain yet) -->
+    <string name="offer_pending">Offer sent — the seller has up to ~%1$d minutes to accept by locking the vault.</string>
+    <string name="offer_pending_unknown">Offer sent — waiting for the seller to accept by locking the vault.</string>
+    <string name="offer_pending_note">Nothing is locked on-chain yet — the offer is not a deal until the seller funds the vault.</string>
+    <string name="offer_countdown_running">Offer expires in %1$dh %2$dm</string>
+    <string name="offer_countdown_expired">Offer expired</string>
+    <string name="offer_not_taken">The seller didn\'t take this offer</string>
+    <string name="offer_back_to_quotes">Back to quotes</string>
 
     <!-- Shared actions -->
     <string name="action_start_claim">Start claim</string>
@@ -110,4 +122,8 @@
     <string name="recover_restored">Deal restored.</string>
     <string name="recover_error_invalid_link">That does not look like a deal link — check that it has the deal id and the # token.</string>
     <string name="recover_error_failed">Recovery failed: %1$s</string>
+
+    <!-- Welcome screen (once after install; owner\'s verbatim copy, do not reword) -->
+    <string name="welcome_text">Welcome to Insuramp! Non-custodial, non-KYC, secure, insured cash-to-crypto app!</string>
+    <string name="welcome_get_started">Get started</string>
 </resources>

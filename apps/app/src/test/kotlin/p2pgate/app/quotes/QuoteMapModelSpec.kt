@@ -12,11 +12,14 @@ class QuoteMapModelSpec {
         id: String = "q1",
         lat: Double? = null,
         lon: Double? = null,
+        fiatCurrency: String = "INR",
     ) = QuoteDto(
         id = id,
         version = 1L,
         spreadBps = 50,
         etaMinutes = 30,
+        fiatCurrency = fiatCurrency,
+        minAmount = 100L,
         maxAmount = 1_000_000L,
         createdAtEpochMs = 1_000L,
         expiresAtEpochMs = 2_000L,
@@ -89,5 +92,17 @@ class QuoteMapModelSpec {
         assertEquals(1, model.unlocatedCount)
         assertTrue(model.hasUnlocated)
         assertEquals("a", model.firstLocated?.quoteId)
+    }
+
+    @Test
+    fun `map model over a currency-filtered feed pins only that currency`() {
+        val feed = listOf(
+            quote(id = "inr-loc", lat = 19.0760, lon = 72.8777, fiatCurrency = "INR"),
+            quote(id = "kes-loc", lat = -1.2921, lon = 36.8219, fiatCurrency = "KSH"),
+            quote(id = "inr-noloc", fiatCurrency = "INR"),
+        )
+        val model = quoteMapModel(quotesForCurrency(feed, "INR"))
+        assertEquals(listOf("inr-loc"), model.markers.map { it.quoteId })
+        assertEquals(1, model.unlocatedCount)
     }
 }

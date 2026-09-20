@@ -45,6 +45,24 @@ fun stateLabelRes(state: DealState): Int = when (state) {
 @Composable
 fun stateLabel(state: DealState): String = stringResource(stateLabelRes(state))
 
+/**
+ * True when the deal closed without ever being funded: any terminal state
+ * reached FROM QUOTED (declined or expired offer — the seller never locked
+ * the vault). An unparseable terminal state is treated the same way.
+ */
+fun offerNotTaken(state: DealState?, terminal: Boolean): Boolean =
+    terminal && (state == null || state == DealState.QUOTED)
+
+/** Remaining time to a deadline as whole hours + minutes; null once expired. */
+data class CountdownParts(val hours: Long, val minutes: Long)
+
+fun countdownParts(nowEpochMs: Long, deadlineEpochMs: Long): CountdownParts? {
+    val remaining = deadlineEpochMs - nowEpochMs
+    if (remaining <= 0) return null
+    val totalMinutes = remaining / 60_000L
+    return CountdownParts(hours = totalMinutes / 60, minutes = totalMinutes % 60)
+}
+
 object DealTimeline {
 
     private val happyPath: List<DealState> = listOf(
@@ -78,7 +96,13 @@ object DealTimeline {
         }
         val index = happyPath.indexOf(state)
         if (index < 0) {
-            // QUOTED, terminal-without-claim, or unknown: nothing active yet.
+            // QUOTED = the pending offer (its own active row, happy path below
+            // it still pending); terminal-without-claim or unknown: nothing
+            // active yet.
+            if (state == DealState.QUOTED) {
+                return listOf(TimelineRow(DealState.QUOTED, stateLabelRes(DealState.QUOTED), RowStatus.ACTIVE)) +
+                    happyPath.map { TimelineRow(it, stateLabelRes(it), RowStatus.PENDING) }
+            }
             return happyPath.map { TimelineRow(it, stateLabelRes(it), RowStatus.PENDING) }
         }
         return happyPath.mapIndexed { i, s ->

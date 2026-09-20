@@ -18,7 +18,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -29,8 +28,6 @@ import p2pgate.app.AppContainer
 import p2pgate.app.R
 import p2pgate.app.work.DealPollWorker
 import p2pgate.dealprotocol.DealState
-import java.time.Duration
-import java.time.Instant
 
 /**
  * The deal timeline (`onramp-ux.md` §2.2) — the core screen. One vertical
@@ -44,6 +41,7 @@ fun DealTimelineScreen(
     container: AppContainer,
     onOpenHandoff: () -> Unit,
     onOpenClaim: () -> Unit,
+    onBackToQuotes: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val viewModel: DealViewModel = viewModel(key = "deal-$dealId") {
@@ -105,10 +103,14 @@ fun DealTimelineScreen(
                         )
                     }
                 }
-                Text(
-                    stringResource(R.string.deal_collateral_locked, snapshot.insuredAmount),
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                // Collateral is locked only from FUNDED on — a pending offer
+                // (QUOTED) has nothing on-chain yet.
+                if (snapshot.state != "QUOTED") {
+                    Text(
+                        stringResource(R.string.deal_collateral_locked, snapshot.insuredAmount),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 snapshot.reclaimDeadlineEpochMs?.let { deadline ->
                     Countdown(
                         deadline,
@@ -134,6 +136,48 @@ fun DealTimelineScreen(
         }
 
         val state = ui?.canonicalState
+
+        // QUOTED is the pending offer: nothing is on-chain, nothing for the
+        // buyer to do — show the acceptance window (the quote's expiry) and
+        // say so plainly.
+        if (state == DealState.QUOTED && !snapshot.terminal) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val expiry = snapshot.offerExpiresAtEpochMs
+                    if (expiry != null) {
+                        val minutesLeft = ((expiry - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1)
+                        Text(stringResource(R.string.offer_pending, minutesLeft), fontWeight = FontWeight.Bold)
+                        Countdown(
+                            expiry,
+                            runningRes = R.string.offer_countdown_running,
+                            expiredRes = R.string.offer_countdown_expired,
+                        )
+                    } else {
+                        Text(stringResource(R.string.offer_pending_unknown), fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        stringResource(R.string.offer_pending_note),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+
+        // Declined or expired unfunded: the offer was never taken.
+        if (offerNotTaken(state, snapshot.terminal)) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.offer_not_taken), fontWeight = FontWeight.Bold)
+                    Button(onClick = onBackToQuotes, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.offer_back_to_quotes))
+                    }
+                }
+            }
+        }
+
         if (state == DealState.PAYMENT_PENDING && snapshot.verifiedRecordHex == null) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
@@ -214,10 +258,9 @@ private fun TimelineRowView(
 
 @Composable
 private fun Countdown(deadlineEpochMs: Long, @StringRes runningRes: Int, @StringRes expiredRes: Int) {
-    val now = remember { Instant.now() }
-    val remaining = Duration.between(now, Instant.ofEpochMilli(deadlineEpochMs))
+    val parts = countdownParts(System.currentTimeMillis(), deadlineEpochMs)
     Text(
-        if (remaining.isNegative) stringResource(expiredRes)
-        else stringResource(runningRes, remaining.toHours(), remaining.toMinutes() % 60),
+        if (parts == null) stringResource(expiredRes)
+        else stringResource(runningRes, parts.hours, parts.minutes),
     )
 }

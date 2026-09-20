@@ -76,7 +76,7 @@ Module decomposition of the Ktor service. Modules communicate over an internal e
 - **Chain watcher.** Polls the chain through the `ChainSource` interface — Ergo explorer API (default) or any node with the extra indexer (`P2P_CHAIN_SOURCE=node`, `P2P_NODE_URL`) — for the operator's vault boxes. Maps on-chain reality to the deal machine's events: vault box found → `VaultFunded` (→ `FUNDED`); box moved to `PAYMENT_PROVEN` (buyer opened a claim with the seller-signed handoff record) → `ClaimOpened` (→ `CLAIM_OPENED`); box spent via the release path (oracle digest alone) → `ReleaseObserved` (→ `RELEASED`); box spent via the timeout path → `ReclaimTimeoutElapsed` (→ `RECLAIMED`); box spent via the claim path → `ClaimPaid` (→ `CLAIMED`). (`PAYMENT_PENDING` is an off-chain transition driven by the buyer API's handoff-record upload — event `CashCollected(recordTimestamp=…)`; `PAYMENT_CONFIRMED` is an off-chain transition driven by the oracle client — event `PaymentConfirmed`; the FUNDED box is untouched in both. A `PaymentConfirmed` arriving while a claim is open sets the deal's contested flag rather than being rejected.) Confirmation-depth policy per `specs/oracle-integration.md`.
 - **Vault manager.** Builds and submits vault transactions: fund (create `FUNDED` box with deal parameters, R7 = the bare 32-byte `oracleNftId`), reclaim (timeout path after `RECLAIM_TIMEOUT`), release (path C: the oracle attestation box as data input — the digest alone, no receipt signature to collect, no oracle co-signature to stage), contest (path C′: the same data input from the PAYMENT_PROVEN box during a claim). Reclaim is **automated as one job**, but it is state-aware: the scheduler reclaims vaults past `RECLAIM_TIMEOUT` **only for deals in FUNDED or PAYMENT_CONFIRMED** — never PAYMENT_PENDING (§1) — which is also the privacy-preserving default path (routine reclaims leave no on-chain link between vaults).
 - **Oracle client.** No oracle co-signature exists anywhere in the tx path: the backend builds and signs release/contest txs with the operator wallet alone and only needs the oracle's **current attestation box** (`OracleClient.attestationBoxFor(dealId): ChainBox?`), which it attaches as the release's data input. **Serialization constraint (hard operational rule):** the attestation box is a singleton — the oracle spends it to post the next attestation, which invalidates any still-mempool release that referenced it. So `attestationBoxFor` returns *the previous deal's* box until its release confirms, and a new deal's attestation simply is not available until then; the vault manager must treat "attestation pending; previous release unconfirmed" as a queue condition and re-try, not as an error. Prompt release submission is therefore part of oracle liveness: a release left unconfirmed blocks every later attestation. The oracle service holds the posting side of the same rule (it re-checks by deal id / box id before posting; `specs/oracle-integration.md` §3.1).
-- **Quote publisher.** Maintains the operator's live quotes (spread, ETA promise, max deal size) and serves them to the buyer-facing API. Hard-gated by the infra monitor (§8): no quotes while verification is degraded.
+- **Quote publisher.** Maintains the operator's live quotes (spread, ETA promise, min/max deal size, fiat currency) and serves them to the buyer-facing API. Hard-gated by the infra monitor (§8): no quotes while verification is degraded.
 - **buyer-facing deal API.** Deal status feed, quote feed, handoff-record upload (`POST /v1/deals/{id}/handoff`, buyer-authed — the buyer relays the seller-signed record they obtained at the meeting), and an **oracle attestation proxy**: the buyer app never talks to the oracle directly; the backend proxies and caches confirmation status so the buyer's "USDT confirmed" indicator and the operator's are the same fact.
 - **Dispute inbox.** Claim tracking and evidence assembly (§7).
 - **Infra monitor.** Health of oracle, explorer/node, wallet daemon; drives auto-pause (§8).
@@ -124,21 +124,26 @@ The trade-off to surface to the operator: privacy funding adds mixer latency to 
 
 ## 5. Quote publishing
 
-A quote is a triple: **spread**, **ETA promise**, **max deal size** — plus an optional
-**seller location** (2026-09-19): a nullable `lat`/`lon` pair (complete pair or neither;
+A quote is: **spread**, **ETA promise**, **min/max deal size**, **fiat currency**, plus
+an optional **seller location**. The currency is part of the quote (2026-09-20): a
+3-letter code (uppercase-normalized at publish; malformed codes rejected), the buyer app
+shows only quotes matching its selected currency, and deal creation rejects a
+currency/quote mismatch. The min/max range (2026-09-19) lets sellers refuse too-small
+deals; the location is a nullable `lat`/`lon` pair (complete pair or neither;
 lat ∈ [−90, 90], lon ∈ [−180, 180]; a half-pair is a rejection). When present it lets the
 buyer app render quotes on a map (List/Map toggle on the quote screen); absent, the quote
 is list-only. The feed is **multi-quote** (2026-09-19): several operators' quotes coexist,
 capacity is validated per publish against free collateral *minus the sum of the other
 active quotes' max amounts*, and quotes expire or are withdrawn (`POST
-/v1/dashboard/quotes/{id}/withdraw`). `P2P_DEMO_QUOTES=true` seeds three located example
-quotes (Cairo, Nairobi, Mumbai) on demo startup. Semantics:
+/v1/dashboard/quotes/{id}/withdraw`). `P2P_DEMO_QUOTES=true` seeds one located quote per
+app currency (Cairo USD, Nairobi KSH, Mumbai INR, Moscow RUB) on demo startup.
+Semantics:
 
 - **Spread** — the operator's margin over reference rate, in bps (the seller's margin, not a
   protocol fee — the in-contract protocol fee was removed 2026-09-18). Must internally
   cover meeting logistics and ops costs; the publisher warns if spread < configured cost floor.
 - **ETA promise** — minutes from `FUNDED` (deal accepted, vault locked) to the cash-collection meeting. This is an operator-network property, not a chain property; the publisher derives the default from recent realized meeting times.
-- **Max deal size** — vault capacity (§4), period.
+- **Deal size range** — max is vault capacity (§4), period; min is the operator's floor for refusing deals too small to be worth a meeting (publish validation: `0 < min ≤ max ≤ capacity`).
 
 The buyer-side collateral line reads the actual vault collateral ("Up to X USDT
 available — the seller has locked that much collateral"; the buyer app dropped
@@ -201,7 +206,9 @@ REST unless noted; JSON. All endpoints versioned under `/v1`. Sketches, not sche
 ```
 GET  /v1/quotes                      # quote feed snapshot: {quotes: [...]} (no auth; multi-quote since 2026-09-19)
 WS   /v1/quotes/stream               # full-snapshot pushes on publish/withdraw/expire
-POST /v1/deals                       # create deal from quote id + USDT receive address → {dealId, dealToken}
+POST /v1/deals                       # create an OFFER from quote id + USDT receive address → {dealId, dealToken}
+                                     # (2026-09-20: deal creation is offer-only — the deal sits in QUOTED
+                                     #  until the seller accepts; offer TTL = the quote's expiry)
 GET  /v1/deals/{id}                  # status: canonical state, vault ref, insured amount, timers,
                                      # sellerPubKey (the vault R5 key the app verifies the handoff signature against)
 WS   /v1/deals/{id}/stream           # state-change push (replaces polling)
@@ -228,6 +235,12 @@ POST /v1/aml/check                     # paste address → accept/reject (§6)
 GET  /v1/disputes ; POST /v1/disputes/{id}/{contest|accept|investigate}   # dispute inbox (§7)
 GET  /v1/infra                         # monitor signals + pause state (§8)
 WS   /v1/events                        # all deal/infra events (dashboard live view)
+
+# offer flow (2026-09-20): deal creation is offer-only; the seller agrees by accepting
+# (which funds the vault — the only caller of fundDeal). Unanswered offers expire with
+# the quote; decline/abandon closes them with no on-chain footprint.
+POST /v1/dashboard/deals/{id}/accept   # → funds the vault → FUNDED; 409 with reason (state/AML/capacity/infra)
+POST /v1/dashboard/deals/{id}/decline  # → offer closed (QuoteExpired-style abort; no on-chain footprint)
 
 # M4 seller-meeting pair (state gate: FUNDED signs and drives CashCollected → PAYMENT_PENDING;
 # any other state → 409 naming the state; see specs/seller-dashboard.md §4)

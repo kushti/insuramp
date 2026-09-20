@@ -58,10 +58,11 @@ class TokenService {
         return entries.any { e -> predicate(e.scope) && MessageDigest.isEqual(e.digest, digest) }
     }
 
-    /** Revokes deal tokens automatically when the deal reaches a terminal state. */
+    /** Revokes deal tokens automatically when the deal closes (terminal state or abandoned offer). */
     fun subscribeToClosures(bus: EventBus) {
         bus.subscribe { event ->
             if (event is BackendEvent.DealTransitioned && event.to.isTerminal) revokeDeal(event.dealId)
+            if (event is BackendEvent.DealAbandoned) revokeDeal(event.dealId)
         }
     }
 }

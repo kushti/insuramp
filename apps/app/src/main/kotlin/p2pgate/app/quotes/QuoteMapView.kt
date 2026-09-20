@@ -108,7 +108,12 @@ fun QuoteMapView(
             markers.forEach { m ->
                 val marker = Marker(map)
                 marker.position = GeoPoint(m.lat, m.lon)
-                marker.title = context.getString(R.string.quote_marker_title, m.maxAmount, m.etaMinutes)
+                marker.title = context.getString(
+                    R.string.quote_marker_title,
+                    m.minAmount,
+                    m.maxAmount,
+                    m.etaMinutes,
+                )
                 marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                 marker.setOnMarkerClickListener { _, _ ->
                     currentOnChoose(m.quoteId)

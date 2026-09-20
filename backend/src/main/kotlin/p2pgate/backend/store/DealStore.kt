@@ -23,9 +23,10 @@ data class AmlRecord(
 data class StoredEvent(val dealId: String?, val kind: String, val detail: String, val at: Instant)
 
 /**
- * The published quote triple (`specs/operator-backend.md` §5): spread (bps
- * over reference), ETA promise (minutes from FUNDED to the meeting), max deal
- * size (a hard capacity cap — never publish above free collateral).
+ * The published quote terms (`specs/operator-backend.md` §5): spread (bps
+ * over reference), ETA promise (minutes from FUNDED to the meeting), and the
+ * deal-size bounds — [minAmount] keeps uneconomically small deals out,
+ * [maxAmount] is a hard capacity cap (never publish above free collateral).
  * [version] increments on every publish; [expiresAt] bounds the TTL.
  * [lat]/[lon] are the optional seller meeting location (WGS-84) the buyer app
  * renders on its map — both set or neither.
@@ -35,7 +36,10 @@ data class QuoteRecord(
     val version: Long,
     val spreadBps: Int,
     val etaMinutes: Int,
+    val minAmount: Long,
     val maxAmount: Long,
+    /** The fiat leg's currency — 3-letter code, uppercase (e.g. INR, USD). */
+    val fiatCurrency: String,
     val createdAt: Instant,
     val expiresAt: Instant,
     val lat: Double? = null,

@@ -48,7 +48,7 @@ straight into the quote flow (first use: an install, once).*
   the insurance framing — that is deliberate.) Below the quote line, one tappable line:
   *"What does the seller's locked collateral mean?"* → plain-language explainer with an
   optional "show me on-chain" deep link.
-- The buyer pastes their **USDT receive address** at quote time (Tron base58 or EIP-55); it is pinned in the deal terms so the seller pays exactly that address (`specs/deal-protocol.md` §3.1).
+- The buyer pastes their **USDT receive address** at quote time (Tron in phase 1 — the deployed deal flow is Tron-only, `srcChainId = 0x01`; the Ethereum path stays defined in `specs/oracle-integration.md` for when its observer lands); it is pinned in the deal terms so the seller pays exactly that address (`specs/deal-protocol.md` §3.1).
 - Location selection is coarse (city-level); exact meeting point is only revealed after the seller funds the vault.
 
 ### 2.2 Deal timeline (the core screen)

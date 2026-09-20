@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -62,13 +63,14 @@ import p2pgate.app.verify.Hex
  * button — one job per screen). The quote can be browsed as a list (default)
  * or as seller-location pins on a map; a pin tap is the same Choose action.
  */
-/** The cash currencies offered at launch (owner decision, 2026-09-19). Codes are never translated. */
+/** The cash currencies offered (owner decision, 2026-09-19; RUB added 2026-09-19). Codes are never translated. */
 private data class FiatCurrency(val code: String, @StringRes val labelRes: Int)
 
 private val FIAT_CURRENCIES = listOf(
     FiatCurrency("INR", R.string.fiat_inr),
     FiatCurrency("USD", R.string.fiat_usd),
     FiatCurrency("KSH", R.string.fiat_ksh),
+    FiatCurrency("RUB", R.string.fiat_rub),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,28 +104,39 @@ fun QuoteScreen(
     var createError by remember { mutableStateOf<String?>(null) }
 
     // One selection handler for both views: the list's Choose button and a
-    // map-pin tap land here.
+    // map-pin tap land here. The amount is checked against the quote's
+    // [minAmount, maxAmount] before the backend is called (it enforces the
+    // same limits); createError holds a fully resolved localized message.
+    val context = LocalContext.current
     val chooseQuote: (QuoteDto) -> Unit = choose@{ q ->
         if (creating) return@choose
+        // Cards/pins are currency-filtered, so this cannot mismatch; the
+        // backend enforces the same equality — guard anyway.
+        if (q.fiatCurrency != fiatCurrency) return@choose
         scope.launch {
             creating = true
             createError = null
             try {
-                val amount = q.maxAmount.coerceAtMost(
-                    fiatAmount.toLongOrNull() ?: q.maxAmount,
-                )
+                val amount = fiatAmount.toLongOrNull()
+                if (amount == null || !amountInRange(amount, q.minAmount, q.maxAmount)) {
+                    createError = context.getString(
+                        R.string.quote_amount_out_of_range, q.minAmount, q.maxAmount,
+                    )
+                    return@launch
+                }
                 val deal = createDeal(
                     container.dealRepository,
                     container,
                     q.id,
                     amount,
-                    fiatAmount.toLongOrNull() ?: 0L,
+                    amount,
                     fiatCurrency,
                     receiveAddress,
+                    q.expiresAtEpochMs,
                 )
                 onDealCreated(deal.dealId)
             } catch (e: Exception) {
-                createError = e.message
+                createError = context.getString(R.string.quote_create_error, e.message ?: "")
             } finally {
                 creating = false
             }
@@ -234,6 +247,17 @@ fun QuoteScreen(
             )
         }
 
+        // Currency scoping: both views show only quotes serving the selected
+        // fiat currency; recomputed on every dropdown change. The empty text
+        // distinguishes "nothing published at all" from "nothing in this
+        // currency".
+        val currencyQuotes = quotesForCurrency(ui.quotes, fiatCurrency)
+        val emptyQuotesText = if (ui.quotes.isEmpty()) {
+            stringResource(R.string.quote_none)
+        } else {
+            stringResource(R.string.quote_none_for_currency, fiatCurrency)
+        }
+
         when (ui.viewMode) {
             QuoteViewMode.LIST -> Column(
                 Modifier
@@ -242,12 +266,12 @@ fun QuoteScreen(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (ui.quotes.isEmpty()) {
-                    Text(stringResource(R.string.quote_none))
+                if (currencyQuotes.isEmpty()) {
+                    Text(emptyQuotesText)
                 } else {
                     // One card per active quote, best ETA first; each card's
                     // Choose runs the same per-quote-id flow as a map-pin tap.
-                    bestFirst(ui.quotes).forEach { q ->
+                    bestFirst(currencyQuotes).forEach { q ->
                         QuoteCard(
                             quote = q,
                             creating = creating,
@@ -260,14 +284,14 @@ fun QuoteScreen(
                 }
             }
             QuoteViewMode.MAP -> {
-                val model = ui.mapModel
-                if (ui.quotes.isEmpty()) {
-                    Text(stringResource(R.string.quote_none))
+                val model = quoteMapModel(currencyQuotes)
+                if (currencyQuotes.isEmpty()) {
+                    Text(emptyQuotesText)
                 } else {
                     QuoteMapView(
                         markers = model.markers,
                         onMarkerChoose = { quoteId ->
-                            ui.quotes.firstOrNull { it.id == quoteId }?.let(chooseQuote)
+                            currencyQuotes.firstOrNull { it.id == quoteId }?.let(chooseQuote)
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -283,7 +307,7 @@ fun QuoteScreen(
                         Text(stringResource(R.string.quote_creating), style = MaterialTheme.typography.bodySmall)
                     }
                     createError?.let {
-                        Text(stringResource(R.string.quote_create_error, it), color = MaterialTheme.colorScheme.error)
+                        Text(it, color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -332,12 +356,13 @@ private fun QuoteCard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(stringResource(R.string.quote_eta, quote.etaMinutes), fontWeight = FontWeight.Bold)
-            // The collateral line: actual vault collateral capacity (1:1).
+            // The per-deal amount range the seller honors.
             Text(
-                stringResource(R.string.quote_available, quote.maxAmount),
+                stringResource(R.string.quote_amount_range, quote.minAmount, quote.maxAmount),
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold,
             )
+            // The collateral line: actual vault collateral behind these deals.
             Text(
                 stringResource(R.string.quote_collateral_line),
                 style = MaterialTheme.typography.bodySmall,
@@ -347,18 +372,21 @@ private fun QuoteCard(
                 onClick = onChoose,
                 enabled = !creating && chooseEnabled,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(if (creating) R.string.quote_creating else R.string.quote_choose)) }
+            ) { Text(stringResource(if (creating) R.string.quote_creating else R.string.offer_action)) }
             createError?.let {
-                Text(stringResource(R.string.quote_create_error, it), color = MaterialTheme.colorScheme.error)
+                Text(it, color = MaterialTheme.colorScheme.error)
             }
         }
     }
 }
 
 /**
- * Deal creation (`specs/android-app.md` §3.1): mint the deal key first (it is
- * keyed by a pending id and moved once the server assigns the deal id), then
- * POST /v1/deals with the buyer pubkey and the pinned receive address.
+ * Deal creation (`specs/android-app.md` §3.1): an OFFER to the seller — the
+ * deal sits in QUOTED until the seller funds the vault or the offer expires
+ * (the quote's `expiresAtEpochMs` is persisted for the pending-offer
+ * countdown). Mint the deal key first (it is keyed by a pending id and moved
+ * once the server assigns the deal id), then POST /v1/deals with the buyer
+ * pubkey and the pinned receive address.
  */
 private suspend fun createDeal(
     repository: DealRepository,
@@ -368,6 +396,7 @@ private suspend fun createDeal(
     fiatAmount: Long,
     fiatCurrency: String,
     receiveAddress: String,
+    offerExpiresAtEpochMs: Long,
 ): p2pgate.app.data.DealSnapshot {
     val pendingKeyId = "pending-${System.nanoTime()}"
     val buyerPubKey = Hex.encode(container.dealKeyStore.ensurePublicKey(pendingKeyId))
@@ -377,10 +406,13 @@ private suspend fun createDeal(
             amount = amount,
             receiveAddress = receiveAddress,
             buyerPubKey = buyerPubKey,
+            fiatCurrency = fiatCurrency,
+            fiatAmount = fiatAmount,
         ),
         fiatAmount = fiatAmount,
         fiatCurrency = fiatCurrency,
         recoveryLink = null,
+        offerExpiresAtEpochMs = offerExpiresAtEpochMs,
     )
     container.dealKeyStore.move(pendingKeyId, snapshot.dealId)
     return snapshot

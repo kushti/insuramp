@@ -11,9 +11,10 @@
     <string name="fiat_inr">भारतीय रुपया</string>
     <string name="fiat_usd">अमेरिकी डॉलर</string>
     <string name="fiat_ksh">कीनियाई शिलिंग</string>
+    <string name="fiat_rub">रूसी रूबल</string>
     <string name="fiat_currency_option">%1$s — %2$s</string>
-    <string name="quote_amount_label">आप देंगे (सबसे छोटी इकाई, जैसे पैसे/सेंट)</string>
-    <string name="quote_address_label">आपका USDT प्राप्ति पता (Tron base58 या EIP-55)</string>
+    <string name="quote_amount_label">आप देंगे (पूरी इकाइयाँ, बिना दशमलव)</string>
+    <string name="quote_address_label">आपका USDT प्राप्ति पता (Tron नेटवर्क)</string>
     <string name="quote_best">सबसे अच्छे कोट</string>
     <string name="quote_view_list">सूची</string>
     <string name="quote_view_map">नक्शा</string>
@@ -21,14 +22,16 @@
     <string name="quote_refreshing">रीफ़्रेश हो रहा है…</string>
     <string name="quote_stale">बैकएंड से संपर्क नहीं — अंतिम ज्ञात कोट दिखाया जा रहा है।</string>
     <string name="quote_none">अभी कोई कोट प्रकाशित नहीं — रीफ़्रेश करके फिर कोशिश करें।</string>
+    <string name="quote_none_for_currency">अभी %1$s के लिए कोई कोट नहीं — कोई दूसरी मुद्रा चुनें या रीफ़्रेश करें।</string>
     <string name="quote_unlocated">सेलर ने इस कोट के लिए लोकेशन प्रकाशित नहीं की — इसे चुनने के लिए सूची पर जाएँ।</string>
     <string name="quote_creating">डील बन रही है…</string>
     <string name="quote_eta">~%1$d मिनट</string>
-    <string name="quote_available">%1$d USDT तक उपलब्ध</string>
-    <string name="quote_collateral_line">सेलर ने उतना कोलैटरल लॉक किया है — अगर आपके USDT कभी नहीं आते तो आप उसे क्लेम कर सकते हैं।</string>
-    <string name="quote_choose">चुनें</string>
+    <string name="quote_amount_range">%1$d – %2$d USDT प्रति डील</string>
+    <string name="quote_collateral_line">सेलर ने इन डीलों को कवर करने के लिए कोलैटरल लॉक किया है — अगर आपके USDT कभी नहीं आते तो आप उसे क्लेम कर सकते हैं।</string>
+    <string name="offer_action">नकद का ऑफ़र दें</string>
     <string name="quote_create_error">डील नहीं बन सकी: %1$s</string>
-    <string name="quote_marker_title">%1$d USDT तक · ~%2$d मिनट</string>
+    <string name="quote_amount_out_of_range">इस कोट के लिए राशि %1$d और %2$d के बीच होनी चाहिए।</string>
+    <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d मिनट</string>
 
     <!-- Canonical protocol states → human labels -->
     <string name="state_quoted">डील कोट हुई — सेलर के कोलैटरल लॉक करने की प्रतीक्षा</string>
@@ -62,6 +65,15 @@
     <string name="deal_claim_offer">नकद तो ले लिया गया पर USDT नहीं आया? आप लॉक किया गया %1$d USDT कोलैटरल क्लेम कर सकते हैं।</string>
     <string name="deal_claim_payout_note">~12 घंटे (CLAIM_MATURATION) बाद भुगतान होता है।</string>
     <string name="deal_stop_polling">बैकग्राउंड पोलिंग बंद करें</string>
+
+    <!-- Offer step -->
+    <string name="offer_pending">ऑफ़र भेजा गया — वॉल्ट लॉक करके स्वीकार करने के लिए सेलर के पास ~%1$d मिनट हैं।</string>
+    <string name="offer_pending_unknown">ऑफ़र भेजा गया — वॉल्ट लॉक करके सेलर के स्वीकार करने की प्रतीक्षा।</string>
+    <string name="offer_pending_note">अभी ऑन-चेन कुछ भी लॉक नहीं है — सेलर के वॉल्ट फंड करने तक ऑफ़र डील नहीं बनता।</string>
+    <string name="offer_countdown_running">ऑफ़र %1$d घंटे %2$d मिनट में समाप्त</string>
+    <string name="offer_countdown_expired">ऑफ़र समाप्त</string>
+    <string name="offer_not_taken">सेलर ने यह ऑफ़र नहीं लिया</string>
+    <string name="offer_back_to_quotes">कोट्स पर वापस जाएँ</string>
 
     <!-- Shared actions -->
     <string name="action_start_claim">क्लेम शुरू करें</string>
@@ -105,4 +117,8 @@
     <string name="recover_restored">डील वापस मिल गई।</string>
     <string name="recover_error_invalid_link">यह डील लिंक जैसा नहीं लगता — देखें कि उसमें डील id और # टोकन हो।</string>
     <string name="recover_error_failed">रिकवरी विफल: %1$s</string>
+
+    <!-- Welcome screen -->
+    <string name="welcome_text">Insuramp में आपका स्वागत है! नॉन-कस्टोडियल, नॉन-KYC, सुरक्षित, बीमाकृत कैश-टू-क्रिप्टो ऐप!</string>
+    <string name="welcome_get_started">शुरू करें</string>
 </resources>

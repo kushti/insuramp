@@ -8,9 +8,11 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
@@ -54,11 +56,20 @@ class KtorBackendClient(
 
     override suspend fun quotes(): QuoteFeedDto = client.get("$httpBase/v1/quotes").body()
 
-    override suspend fun createDeal(request: CreateDealRequest): CreateDealResponse =
-        client.post("$httpBase/v1/deals") {
+    override suspend fun createDeal(request: CreateDealRequest): CreateDealResponse {
+        val response = client.post("$httpBase/v1/deals") {
             contentType(ContentType.Application.Json)
             setBody(request)
-        }.body()
+        }
+        // Surface the backend's rejection reason ({"error": ...}) instead of a
+        // decode exception — the deal engine's messages are the useful part.
+        if (!response.status.isSuccess()) {
+            val msg = runCatching { Json.decodeFromString<ErrorDto>(response.bodyAsText()).error }
+                .getOrElse { "HTTP ${response.status.value}" }
+            throw IllegalStateException(msg)
+        }
+        return response.body()
+    }
 
     override suspend fun deal(dealId: String, token: String): DealDto =
         client.get("$httpBase/v1/deals/$dealId") {

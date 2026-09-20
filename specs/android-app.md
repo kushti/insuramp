@@ -88,8 +88,8 @@ Implements `onramp-ux.md` §2. Screen list:
 
 ### 3.1 Discovery & quote (`onramp-ux.md` §2.1)
 
-- Inputs: asset (USDT only for v1), fiat amount, fiat currency, and the buyer's **USDT receive address** (Tron base58 or EIP-55) — shared at QUOTED so the deal terms pin it as the vault's R9 `recipientAddr` (`specs/deal-protocol.md` §3.1). City-level location picker; exact meeting point is revealed only after the vault is funded (FUNDED).
-- Quote list from the operator backend (`specs/operator-backend.md`): each row shows ETA, rate, and the **collateral line** = actual vault collateral value, read from the operator's published vault capacity — never a marketing string. Since 2026-09-18 the app copy is factual ("Up to X USDT available — the seller has locked that much collateral") and no longer uses "insured" wording. "What does the seller's locked collateral mean?" opens a plain-language explainer with an optional explorer deep link to the vault box.
+- Inputs: asset (USDT only for v1), fiat amount, fiat currency, and the buyer's **USDT receive address** (Tron — phase-1 deals are Tron-only, `srcChainId = 0x01`; the Ethereum/EIP-55 path remains defined in `specs/oracle-integration.md`) — shared at QUOTED so the deal terms pin it as the vault's R9 `recipientAddr` (`specs/deal-protocol.md` §3.1). City-level location picker; exact meeting point is revealed only after the vault is funded (FUNDED).
+- Quote list from the operator backend (`specs/operator-backend.md`), filtered to the selected fiat currency (2026-09-20 — quotes carry a currency and the feed shows only matches): each row shows ETA, rate, the **deal-size range** ("X – Y USDT per deal", 2026-09-19 — the seller's min/max), and the collateral line = actual vault collateral value, read from the operator's published vault capacity — never a marketing string. Since 2026-09-18 the app copy is factual ("The seller has locked collateral to cover these deals") and no longer uses "insured" wording. "What does the seller's locked collateral mean?" opens a plain-language explainer with an optional explorer deep link to the vault box.
 - Choosing a quote → deal creation: the app generates the **deal key** (§2.1), builds the deal-creation request per `specs/deal-protocol.md` (the deal terms pin the buyer and seller keys; the seller later signs the handoff record with the seller key), and enters the machine at QUOTED. A quote that expires before funding closes the deal (`QuoteExpired`) — silently, with no on-chain footprint. On vault funding confirmation, transition to FUNDED and reveal the meeting-point area.
 
 ### 3.2 Deal timeline (`onramp-ux.md` §2.2) — the core screen
@@ -166,7 +166,7 @@ These two are the *only* transactions this app ever builds or signs.
 
 The USDT leg is sent **by the seller** on Tron or Ethereum to the buyer's address — the app never constructs, signs, or broadcasts it. What the app owns:
 
-- **Receive address entry** at QUOTED: the buyer's USDT address (Tron base58 or EIP-55) + expected amount, validated for format, stored in the deal terms and pinned at funding as the vault's R9 `recipientAddr`.
+- **Receive address entry** at QUOTED: the buyer's USDT address (Tron in phase 1; the Ethereum path is defined but not deployed — see `specs/oracle-integration.md`) + expected amount, validated for format, stored in the deal terms and pinned at funding as the vault's R9 `recipientAddr`.
 - **Payment status** read from the oracle/backend feed (§4.1): "waiting for seller payment → seen on Tron → confirmed (oracle)". The app watches; it does not participate. The "USDT confirmed" indicator (§3.2) binds to oracle confirmation, and the release follows without any buyer action.
 - **Wallet-check guidance** on the confirmation screen: deep links to the buyer's installed wallet apps where possible so the balance check is one tap. This is guidance-only — nothing in the protocol is gated on the buyer checking, and no signature follows from it.
 
@@ -202,7 +202,7 @@ Gradle (Kotlin DSL), version catalog, modules as in §2.1:
 
 - `:core:dealprotocol` — `kotlinx.serialization` only. No network, no Android.
 - `:core:ergo` — **ergo-appkit 6.0.1** (the JVM Ergo tooling/SDK, pinned in the catalog) for tx building, Schnorr verification/signing, and explorer clients. Landed 2026-09-16 (M2, extended M3-A).
-- `:app` — Jetpack Compose, ViewModel/lifecycle, WorkManager, Room (local deal store), Android Keystore (via `androidx.security` or direct API), ZXing for QR scanning (§8.6 resolved in favor of ZXing — pure, offline), **osmdroid 6.1.20** (OpenStreetMap) for the quotes **map view** — the quote screen has a List/Map toggle; quotes carrying the seller's optional `lat`/`lon` place markers, marker tap = Choose (2026-09-19). No Google Play Services, no API key, no user-location permission (the map shows sellers, never shares the buyer's location). **Localized (2026-09-19):** all user-visible strings in resources — English default + Hindi, Swahili, Arabic (RTL verified on-device); canonical protocol state names stay canonical in code, UI shows localized labels with the canonical name in small print.
+- `:app` — Jetpack Compose, ViewModel/lifecycle, WorkManager, Room (local deal store), Android Keystore (via `androidx.security` or direct API), ZXing for QR scanning (§8.6 resolved in favor of ZXing — pure, offline), **osmdroid 6.1.20** (OpenStreetMap) for the quotes **map view** — the quote screen has a List/Map toggle; quotes carrying the seller's optional `lat`/`lon` place markers, marker tap = Choose (2026-09-19). No Google Play Services, no API key, no user-location permission (the map shows sellers, never shares the buyer's location). **Localized (2026-09-19):** all user-visible strings in resources — English default + Hindi, Swahili, Arabic, Russian (RTL for ar verified on-device); canonical protocol state names stay canonical in code, UI shows localized labels with the canonical name in small print.
 
 Build: standard `./gradlew :app:assembleRelease`; reproducible-build friendliness is desirable but not a v1 gate. No CI exists in this repository today.
 
@@ -210,7 +210,11 @@ Build: standard `./gradlew :app:assembleRelease`; reproducible-build friendlines
 
 ## 7.1 Running locally (landed 2026-09-18)
 
-Full loop: buyer app on an emulator + the demo backend on the host.
+Full loop: buyer app on an emulator + the demo backend on the host. The two scripts
+at `scripts/` (2026-09-20) wrap everything below: `./scripts/run-seller.sh` (backend +
+dashboard, idempotent — exits cleanly if :8080 is already served) and
+`./scripts/run-buyer.sh` (boots the AVD if needed, `adb reverse`, builds, installs,
+launches). The manual recipe for reference:
 
 1. **Backend:** `export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1`, then
    `./gradlew :backend:run` (demo mode — in-memory store, NoOp submitter, dev oracle;

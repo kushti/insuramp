@@ -14,8 +14,12 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Quote publishing, `specs/operator-backend.md` §5. The feed holds **multiple
  * concurrent quotes** (e.g., one per seller meeting location); each quote is
- * the triple (spread, ETA promise, max deal size) with the hard rules:
+ * (spread, ETA promise, min/max deal size) with the hard rules:
  *
+ *  - **min ≤ max, both positive** — the min keeps uneconomically small deals
+ *    out (the seller's fixed meeting cost), the max is a capacity cap;
+ *  - **the fiat currency is a normalized 3-letter code** — lowercase input is
+ *    uppercased, anything that is not exactly 3 letters A–Z is refused;
  *  - **max deal size = vault capacity is a hard constraint, per quote** — a
  *    publish whose max size exceeds free (mix-ready, unlocked) collateral
  *    *minus what the other active quotes already promise* is refused
@@ -64,7 +68,9 @@ class QuotePublisher(
     fun publish(
         spreadBps: Int,
         etaMinutes: Int,
+        minAmount: Long,
         maxAmount: Long,
+        fiatCurrency: String,
         at: Instant = clock(),
         lat: Double? = null,
         lon: Double? = null,
@@ -74,9 +80,17 @@ class QuotePublisher(
                 infra.pauseHistory.lastOrNull()?.cause ?: "unknown cause"
             })", at)
         }
-        if (spreadBps < 0 || etaMinutes <= 0 || maxAmount <= 0) {
-            return reject("spread/eta/maxAmount must be positive (got $spreadBps/$etaMinutes/$maxAmount)", at)
+        if (spreadBps < 0 || etaMinutes <= 0 || minAmount <= 0 || maxAmount <= 0) {
+            return reject(
+                "spread/eta/min/max must be positive (got $spreadBps/$etaMinutes/$minAmount/$maxAmount)",
+                at,
+            )
         }
+        if (minAmount > maxAmount) {
+            return reject("min deal size $minAmount exceeds max deal size $maxAmount", at)
+        }
+        val currency = p2pgate.backend.util.FiatCurrency.normalize(fiatCurrency)
+            ?: return reject("fiatCurrency must be exactly 3 letters A-Z (got \"$fiatCurrency\")", at)
         if ((lat == null) != (lon == null)) {
             return reject("location must be a lat/lon pair (got lat=$lat lon=$lon)", at)
         }
@@ -109,7 +123,9 @@ class QuotePublisher(
             version = (store.quotes().maxOfOrNull { it.version } ?: 0L) + 1L,
             spreadBps = spreadBps,
             etaMinutes = etaMinutes,
+            minAmount = minAmount,
             maxAmount = maxAmount,
+            fiatCurrency = currency,
             createdAt = at,
             expiresAt = at.plus(ttl),
             lat = lat,

@@ -11,9 +11,10 @@
     <string name="fiat_inr">Rupia ya India</string>
     <string name="fiat_usd">Dola ya Marekani</string>
     <string name="fiat_ksh">Shilingi ya Kenya</string>
+    <string name="fiat_rub">Ruble ya Urusi</string>
     <string name="fiat_currency_option">%1$s — %2$s</string>
-    <string name="quote_amount_label">Unakabidhi (kiwango kidogo kabisa, k.m. senti)</string>
-    <string name="quote_address_label">Anwani yako ya kupokea USDT (Tron base58 au EIP-55)</string>
+    <string name="quote_amount_label">Unakabidhi (vitengo kamili, bila desimali)</string>
+    <string name="quote_address_label">Anwani yako ya kupokea USDT (mtandao wa Tron)</string>
     <string name="quote_best">Nukuu bora</string>
     <string name="quote_view_list">Orodha</string>
     <string name="quote_view_map">Ramani</string>
@@ -21,14 +22,16 @@
     <string name="quote_refreshing">Inasasisha…</string>
     <string name="quote_stale">Seva haifikiwi — tunaonyesha nukuu ya mwisho inayojulikana.</string>
     <string name="quote_none">Hakuna nukuu iliyochapishwa sasa hivi — sasisha ili kujaribu tena.</string>
+    <string name="quote_none_for_currency">Hakuna nukuu za %1$s sasa hivi — jaribu sarafu nyingine au sasisha.</string>
     <string name="quote_unlocated">Muuzaji hakuchapisha eneo la nukuu hii — badili kwenda Orodha ili kuichagua.</string>
     <string name="quote_creating">Inaunda dili…</string>
     <string name="quote_eta">~dakika %1$d</string>
-    <string name="quote_available">Hadi USDT %1$d zinapatikana</string>
-    <string name="quote_collateral_line">Muuzaji amefunga dhamana ya kiasi hicho — unaweza kuidai ikiwa USDT zako hazijawahi kufika.</string>
-    <string name="quote_choose">Chagua</string>
+    <string name="quote_amount_range">USDT %1$d – %2$d kwa kila dili</string>
+    <string name="quote_collateral_line">Muuzaji amefunga dhamana ya kukidhi haya madili — unaweza kuidai ikiwa USDT zako hazijawahi kufika.</string>
+    <string name="offer_action">Toa ofa ya pesa taslimu</string>
     <string name="quote_create_error">Dili halikuweza kuundwa: %1$s</string>
-    <string name="quote_marker_title">Hadi USDT %1$d · ~dakika %2$d</string>
+    <string name="quote_amount_out_of_range">Kiasi lazima kiwe kati ya %1$d na %2$d kwa nukuu hii.</string>
+    <string name="quote_marker_title">USDT %1$d – %2$d · ~dakika %3$d</string>
 
     <!-- Canonical protocol states → human labels -->
     <string name="state_quoted">Dili limenukuliwa — kusubiri muuzaji afunge dhamana</string>
@@ -62,6 +65,15 @@
     <string name="deal_claim_offer">Pesa taslimu zimekusanywa lakini hakuna USDT? Unaweza kudai dhamana ya USDT %1$d iliyofungwa.</string>
     <string name="deal_claim_payout_note">Hulipa baada ya ~saa 12 (CLAIM_MATURATION).</string>
     <string name="deal_stop_polling">Simamisha uchunguzi wa mandharinyuma</string>
+
+    <!-- Offer step -->
+    <string name="offer_pending">Ofa imetumwa — muuzaji ana hadi ~dakika %1$d kuikubali kwa kufunga vault.</string>
+    <string name="offer_pending_unknown">Ofa imetumwa — inasubiri muuzaji aikubali kwa kufunga vault.</string>
+    <string name="offer_pending_note">Bado hakuna kilichofungwa kwenye mnyororo — ofa si dili hadi muuzaji afunge vault.</string>
+    <string name="offer_countdown_running">Ofa inaisha baada ya saa %1$d dakika %2$d</string>
+    <string name="offer_countdown_expired">Ofa imekwisha</string>
+    <string name="offer_not_taken">Muuzaji hakuichukua ofa hii</string>
+    <string name="offer_back_to_quotes">Rudi kwenye nukuu</string>
 
     <!-- Shared actions -->
     <string name="action_start_claim">Anza dai</string>
@@ -105,4 +117,8 @@
     <string name="recover_restored">Dili limerejeshwa.</string>
     <string name="recover_error_invalid_link">Hicho hakionekani kama kiungo cha dili — hakikisha kina id ya dili na tokeni ya #.</string>
     <string name="recover_error_failed">Urejeshaji umeshindwa: %1$s</string>
+
+    <!-- Welcome screen -->
+    <string name="welcome_text">Karibu Insuramp! Programu ya kubadilisha pesa taslimu kuwa crypto — haijatunzwa na mtu, bila KYC, salama, na imebimishwa!</string>
+    <string name="welcome_get_started">Anza</string>
 </resources>

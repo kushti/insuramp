@@ -96,15 +96,30 @@ class BackendApp(
     }
 
     /**
-     * One scheduler sweep: chain facts, reclaim timeouts, claim maturation,
-     * dispute escalation, quote TTL. No threads here — the Ktor module calls
-     * this on a fixed-delay loop; tests call it by hand.
+     * One scheduler sweep: chain facts, offer expiry, reclaim timeouts, claim
+     * maturation, dispute escalation, quote TTL. No threads here — the Ktor
+     * module calls this on a fixed-delay loop; tests call it by hand.
      */
     fun tick(now: Instant = Instant.now()) {
         watcher.tick(now)
+        expireOffers(now)
         vaultManager.tickReclaims(now)
         inbox.tick(now)
         quotes.tick(now)
+    }
+
+    /**
+     * Offer expiry (seller-agreement step): a deal is an offer until the
+     * operator accepts it on the dashboard; its TTL is the originating quote's
+     * expiry (`quoteExpiry` in the terms). A QUOTED deal past it closes via
+     * `QuoteExpired` — the existing abort path, no on-chain footprint.
+     */
+    fun expireOffers(now: Instant = Instant.now()) {
+        for (deal in store.openDeals()) {
+            if (deal.state == DealState.QUOTED && now.epochSecond >= deal.quoteExpiry) {
+                engine.apply(deal.dealId, DealEvent.QuoteExpired(now), now)
+            }
+        }
     }
 
     /**
@@ -151,8 +166,22 @@ class BackendApp(
     fun createDeal(request: CreateDealRequest, now: Instant = Instant.now()): CreateDealOutcome {
         val quote = quotes.activeQuote(request.quoteId, now)
             ?: return CreateDealOutcome.Rejected("unknown or inactive quote ${request.quoteId}")
-        if (request.amount <= 0 || request.amount > quote.maxAmount) {
-            return CreateDealOutcome.Rejected("amount ${request.amount} outside quote bounds (max ${quote.maxAmount})")
+        if (request.amount < quote.minAmount || request.amount > quote.maxAmount) {
+            return CreateDealOutcome.Rejected(
+                "amount ${request.amount} outside quote bounds (min ${quote.minAmount}, max ${quote.maxAmount})",
+            )
+        }
+        val fiatCurrency = p2pgate.backend.util.FiatCurrency.normalize(request.fiatCurrency)
+            ?: return CreateDealOutcome.Rejected(
+                "fiatCurrency must be exactly 3 letters A-Z (got \"${request.fiatCurrency}\")",
+            )
+        if (fiatCurrency != quote.fiatCurrency) {
+            return CreateDealOutcome.Rejected(
+                "fiat currency $fiatCurrency does not match the quote's currency ${quote.fiatCurrency}",
+            )
+        }
+        if (request.fiatAmount <= 0) {
+            return CreateDealOutcome.Rejected("fiatAmount must be positive (whole units)")
         }
         val recipient = try {
             Hex.decode(request.receiveAddress)
@@ -185,11 +214,14 @@ class BackendApp(
             asset = 1,              // USDT
             srcChainId = 1,         // Tron (phase-1 default)
             amount = request.amount,
-            fiatAmount = 0,         // fiat leg settles off-chain in M3
-            fiatCurrency = "USD".toByteArray(),
+            fiatAmount = request.fiatAmount,
+            fiatCurrency = fiatCurrency.toByteArray(Charsets.US_ASCII),
             buyerPubKey = buyerPubKey,
             sellerPubKey = sellerPubKey,
-            quoteExpiry = now.plus(ProtocolConstants.RECLAIM_TIMEOUT).epochSecond.coerceIn(0, 0xFFFF_FFFFL),
+            // Offer TTL = the originating quote's expiry (owner decision: no
+            // separate offer clock) — expireOffers() closes a QUOTED deal once
+            // this passes.
+            quoteExpiry = quote.expiresAt.epochSecond.coerceIn(0, 0xFFFF_FFFFL),
         )
         val record = DealRecord(
             dealId = Hex.encode(terms.dealId),
@@ -200,7 +232,7 @@ class BackendApp(
             srcChainId = terms.srcChainId,
             amount = terms.amount,
             fiatAmount = terms.fiatAmount,
-            fiatCurrency = "USD",
+            fiatCurrency = fiatCurrency,
             buyerPubKeyHex = Hex.encode(buyerPubKey),
             sellerPubKeyHex = Hex.encode(sellerPubKey),
             recipientAddrHex = Hex.encode(recipient),
@@ -237,7 +269,7 @@ class BackendApp(
          * available — a card with no exit and no countdown is a bug indicator).
          */
         fun exitPath(deal: DealRecord): String = when (deal.state) {
-            DealState.QUOTED -> "cancel/expire before funding (QuoteExpired; no on-chain footprint)"
+            DealState.QUOTED -> "accept & fund, decline, or let the offer expire (QuoteExpired; no on-chain footprint)"
             DealState.FUNDED ->
                 if (deal.handoffRecordHex != null) "none — handoff record on file, do not show timeout reclaim"
                 else "timeout reclaim (auto-job)"

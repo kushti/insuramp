@@ -18,6 +18,10 @@ data class QuoteDto(
     val version: Long,
     val spreadBps: Int,
     val etaMinutes: Int,
+    /** The cash currency this quote serves (3-letter uppercase code, e.g. INR). */
+    val fiatCurrency: String,
+    /** The seller's per-deal limits: deals must be within [minAmount, maxAmount]. */
+    val minAmount: Long,
     val maxAmount: Long,
     val createdAtEpochMs: Long,
     val expiresAtEpochMs: Long,
@@ -39,6 +43,9 @@ data class CreateDealRequest(
     val amount: Long,
     val receiveAddress: String,
     val buyerPubKey: String,
+    val fiatCurrency: String,
+    /** Cash amount in whole basic units (no decimals) — pinned in the deal terms. */
+    val fiatAmount: Long,
 )
 
 @Serializable

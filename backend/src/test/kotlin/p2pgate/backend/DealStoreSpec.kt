@@ -67,8 +67,8 @@ class DealStoreSpec {
     fun `quotes are stored keyed by id`() {
         val store = InMemoryDealStore()
         assertTrue(store.quotes().isEmpty())
-        val q1 = p2pgate.backend.store.QuoteRecord("q1", 1, 50, 60, 1_000, T0, T0.plusSeconds(1800))
-        val q2 = p2pgate.backend.store.QuoteRecord("q2", 2, 40, 45, 2_000, T0, T0.plusSeconds(1800))
+        val q1 = p2pgate.backend.store.QuoteRecord("q1", 1, 50, 60, 1L, 1_000, "USD", T0, T0.plusSeconds(1800))
+        val q2 = p2pgate.backend.store.QuoteRecord("q2", 2, 40, 45, 1L, 2_000, "USD", T0, T0.plusSeconds(1800))
         store.saveQuote(q1)
         store.saveQuote(q2)
         assertEquals(q1, store.getQuote("q1"))

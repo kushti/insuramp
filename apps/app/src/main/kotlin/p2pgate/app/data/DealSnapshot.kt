@@ -29,6 +29,10 @@ data class DealSnapshot(
     val reclaimDeadlineEpochMs: Long? = null,
     val claimMaturesAtEpochMs: Long? = null,
     val contested: Boolean = false,
+    /** Backend-reported terminal flag — a terminal QUOTED deal = offer not taken. */
+    val terminal: Boolean = false,
+    /** The quote expiry captured at offer time; the QUOTED offer countdown runs against it. */
+    val offerExpiresAtEpochMs: Long? = null,
     /** Set once the meeting gate passed: the verified seller-signed record. */
     val verifiedRecordHex: String? = null,
     val verifiedRecordSigAHex: String? = null,

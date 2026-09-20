@@ -19,7 +19,11 @@ data class QuoteDto(
     val version: Long,
     val spreadBps: Int,
     val etaMinutes: Int,
+    /** Minimum deal size (base units) — the seller refuses smaller deals. */
+    val minAmount: Long,
     val maxAmount: Long,
+    /** The fiat leg's currency — 3-letter code, uppercase (e.g. INR, USD). */
+    val fiatCurrency: String,
     val createdAtEpochMs: Long,
     val expiresAtEpochMs: Long,
     /** Optional seller meeting location (WGS-84); both set or neither. */
@@ -37,6 +41,10 @@ data class CreateDealRequest(
     val amount: Long,
     val receiveAddress: String,
     val buyerPubKey: String,
+    /** The fiat leg's currency — must match the quote's currency. */
+    val fiatCurrency: String,
+    /** Cash amount in whole basic units (no decimals) — the deal terms pin it. */
+    val fiatAmount: Long,
 )
 
 @Serializable
@@ -143,15 +151,27 @@ data class HandoffSignResponse(
 data class LaneCardDto(
     val dealId: String,
     val amount: Long,
+    val fiatCurrency: String,
     val collateralTokenId: String,
     val createdAtEpochMs: Long,
     val fundedAtEpochMs: Long? = null,
+    /** Offer TTL (QUOTED only): the originating quote's expiry. */
+    val offerExpiresAtEpochMs: Long? = null,
     val reclaimDeadlineEpochMs: Long? = null,
     val claimMaturesAtEpochMs: Long? = null,
     val contested: Boolean = false,
     val hasHandoffRecord: Boolean = false,
     val vaultBoxId: String? = null,
     val exitPath: String,
+)
+
+/** Offer accept (`POST /v1/dashboard/deals/{id}/accept`): the vault was funded. */
+@Serializable
+data class FundDealResponse(
+    val dealId: String,
+    val state: String,
+    val fundTxId: String,
+    val vaultBoxId: String? = null,
 )
 
 @Serializable
@@ -170,7 +190,11 @@ data class PoolDto(
 data class PutQuoteRequest(
     val spreadBps: Int,
     val etaMinutes: Int,
+    /** Minimum deal size (base units) — required, positive, ≤ maxAmount. */
+    val minAmount: Long,
     val maxAmount: Long,
+    /** The fiat leg's currency — exactly 3 letters (normalized to uppercase). */
+    val fiatCurrency: String,
     /** Optional seller meeting location (WGS-84); both set or neither. */
     val lat: Double? = null,
     val lon: Double? = null,

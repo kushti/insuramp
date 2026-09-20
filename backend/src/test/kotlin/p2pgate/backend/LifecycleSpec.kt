@@ -24,7 +24,7 @@ class LifecycleSpec {
     @Test
     fun `full happy path releases automatically on oracle confirmation`() {
         val env = env()
-        env.quotes.publish(50, 60, Fx.AMOUNT, T0)
+        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", T0)
         val created = env.app.createDeal(dealRequest(), T0)
         val deal = (created as CreateDealOutcome.Created).deal
 
@@ -124,6 +124,24 @@ class LifecycleSpec {
     }
 
     @Test
+    fun `an offer past its quote expiry auto-closes on the scheduler tick`() {
+        val env = env()
+        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", T0) // quote TTL 30 min
+        val created = env.app.createDeal(dealRequest(), T0)
+        val deal = (created as CreateDealOutcome.Created).deal
+        // Offer TTL = the originating quote's expiry, not a separate clock.
+        assertEquals(T0.plusSeconds(1800).epochSecond, env.store.getDeal(deal.dealId)!!.quoteExpiry)
+        assertEquals(DealState.QUOTED, env.store.getDeal(deal.dealId)!!.state)
+        // Before the deadline the offer survives a tick; past it, it closes.
+        env.app.tick(T0.plusSeconds(1799))
+        assertTrue(!env.store.getDeal(deal.dealId)!!.abandoned)
+        env.app.tick(T0.plusSeconds(1801))
+        assertTrue(env.store.getDeal(deal.dealId)!!.abandoned)
+        assertTrue(env.store.openDeals().isEmpty())
+        assertTrue(env.submitter.submitted.isEmpty()) // never funded
+    }
+
+    @Test
     fun `reclaim timeout reclaims a no-show deal automatically`() {
         val env = env()
         val deal = env.quotedDeal()
@@ -140,5 +158,7 @@ class LifecycleSpec {
         amount = Fx.AMOUNT,
         receiveAddress = p2pgate.backend.util.Hex.encode(Fx.recipientRaw),
         buyerPubKey = p2pgate.backend.util.Hex.encode(Fx.buyer.pubKeyCompressed),
+        fiatCurrency = "USD",
+        fiatAmount = Fx.AMOUNT,
     )
 }

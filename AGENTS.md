@@ -26,7 +26,9 @@ Android-injectable via interfaces.
 `backend/` is live since 2026-09-17 (milestone M3-B, M4 seller-meeting additions): the
 runnable Ktor operator backend (`./gradlew :backend:run`, Netty, port 8080) — deal engine
 (sole transition authority), chain watcher, vault manager (state-aware reclaim:
-FUNDED/PAYMENT_CONFIRMED only), quote publisher (multi-quote feed since 2026-09-19 —
+FUNDED/PAYMENT_CONFIRMED only; funding is offer-driven: `POST /v1/dashboard/deals/{id}/accept`
+is the only fund path, `/decline` closes unanswered offers), quote publisher (multi-quote
+feed since 2026-09-19 —
 `GET /v1/quotes` returns `{quotes: [...]}`, operator publishes/withdraws via
 `/v1/dashboard/quotes`; `P2P_DEMO_QUOTES=true` seeds three located example quotes), buyer/dashboard `/v1` APIs + WebSockets,
 dispute inbox, AML `RiskScorer` hook, infra monitor + auto-pause. In-memory `DealStore`
@@ -162,11 +164,11 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9,
   VaultBoxTracker 17; plus (M3-A/C): OperatorTxBuilder 20, PaymentAttestation 9,
   DevOracle 6, FastContracts 4; plus (2026-09-17): NodeChainSource 12 → ergo 110;
-  backend 107 (11 suites); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 373; plus the Android buyer app
-  (`apps/app`, M4; + map view, localization hi/sw/ar, in-app locale switcher +
-  multi-quote list 2026-09-19): 51 JVM
-  unit tests (`:app:testDebugUnitTest`) → **424 total**.
+  backend 115 (11 suites); e2e 10 (E2eFlow 5,
+  E2eConfig 2, SchnorrPort 3) → JVM modules 381; plus the Android buyer app
+  (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
+  multi-quote currency-filtered list, offer-cash flow 2026-09-20): 62 JVM
+  unit tests (`:app:testDebugUnitTest`) → **443 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

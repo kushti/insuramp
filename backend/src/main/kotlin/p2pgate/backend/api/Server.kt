@@ -73,7 +73,8 @@ private fun ApplicationCall.bearer(): String? =
 
 private fun quoteDto(q: p2pgate.backend.store.QuoteRecord) = QuoteDto(
     id = q.id, version = q.version, spreadBps = q.spreadBps, etaMinutes = q.etaMinutes,
-    maxAmount = q.maxAmount, createdAtEpochMs = q.createdAt.toEpochMilli(), expiresAtEpochMs = q.expiresAt.toEpochMilli(),
+    minAmount = q.minAmount, maxAmount = q.maxAmount, fiatCurrency = q.fiatCurrency,
+    createdAtEpochMs = q.createdAt.toEpochMilli(), expiresAtEpochMs = q.expiresAt.toEpochMilli(),
     lat = q.lat, lon = q.lon,
 )
 
@@ -147,6 +148,12 @@ fun Application.module(app: BackendApp) {
     install(WebSockets)
     install(StatusPages) {
         exception<IllegalArgumentException> { call, e ->
+            call.respond(HttpStatusCode.BadRequest, ErrorDto(e.message ?: "bad request"))
+        }
+        // A payload that fails to deserialize (e.g. a missing required
+        // minAmount) is a 400, not a 500 — ContentNegotiation wraps converter
+        // failures in BadRequestException.
+        exception<io.ktor.server.plugins.BadRequestException> { call, e ->
             call.respond(HttpStatusCode.BadRequest, ErrorDto(e.message ?: "bad request"))
         }
         exception<NoSuchElementException> { call, e ->
@@ -225,7 +232,13 @@ fun Application.module(app: BackendApp) {
                     }
                     val channel = Channel<BackendEvent>(Channel.BUFFERED)
                     val unsubscribe = app.bus.subscribe { e ->
-                        if ((e as? BackendEvent.DealTransitioned)?.dealId == id) channel.trySend(e)
+                        // Transitions AND abandonment (declined/expired offer)
+                        // push to the buyer live.
+                        when (e) {
+                            is BackendEvent.DealTransitioned -> if (e.dealId == id) channel.trySend(e)
+                            is BackendEvent.DealAbandoned -> if (e.dealId == id) channel.trySend(e)
+                            else -> {}
+                        }
                     }
                     try {
                         for (event in channel) send(Frame.Text(json.encodeToString(eventDto(event))))
@@ -316,9 +329,11 @@ fun Application.module(app: BackendApp) {
                 val lanes = app.lane().mapValues { (_, deals) ->
                     deals.map { d ->
                         LaneCardDto(
-                            dealId = d.dealId, amount = d.amount, collateralTokenId = d.collateralTokenIdHex,
+                            dealId = d.dealId, amount = d.amount, fiatCurrency = d.fiatCurrency,
+                            collateralTokenId = d.collateralTokenIdHex,
                             createdAtEpochMs = d.createdAt.toEpochMilli(),
                             fundedAtEpochMs = d.fundedAt?.toEpochMilli(),
+                            offerExpiresAtEpochMs = if (d.state == DealState.QUOTED) d.quoteExpiry * 1000 else null,
                             reclaimDeadlineEpochMs = d.fundedAt?.plus(ProtocolConstants.RECLAIM_TIMEOUT)?.toEpochMilli(),
                             claimMaturesAtEpochMs = d.proofTimestamp?.plus(ProtocolConstants.CLAIM_MATURATION)?.toEpochMilli(),
                             contested = d.contested, hasHandoffRecord = d.handoffRecordHex != null,
@@ -341,6 +356,50 @@ fun Application.module(app: BackendApp) {
                         call.respond(ReclaimResponse(true, outcome.txId))
                     is VaultManager.Outcome.Rejected ->
                         call.respond(HttpStatusCode.Conflict, ErrorDto(outcome.reason))
+                }
+            }
+            // ------------------------------------- seller agreement (offers)
+            // A deal is an offer at QUOTED until the operator accepts (funds
+            // the vault) or declines. No auto-funding exists.
+            post("/dashboard/deals/{id}/accept") {
+                call.authenticateOperator(app) ?: return@post
+                val id = call.dealId()
+                app.store.getDeal(id) ?: return@post call.respond(HttpStatusCode.NotFound, ErrorDto("unknown deal"))
+                when (val outcome = app.vaultManager.fundDeal(id)) {
+                    is VaultManager.Outcome.Submitted -> call.respond(
+                        FundDealResponse(
+                            dealId = id,
+                            state = app.store.getDeal(id)!!.state.name,
+                            fundTxId = outcome.txId,
+                            vaultBoxId = outcome.boxId,
+                        ),
+                    )
+                    is VaultManager.Outcome.Rejected ->
+                        call.respond(HttpStatusCode.Conflict, ErrorDto(outcome.reason))
+                }
+            }
+            post("/dashboard/deals/{id}/decline") {
+                call.authenticateOperator(app) ?: return@post
+                val id = call.dealId()
+                val deal = app.store.getDeal(id)
+                    ?: return@post call.respond(HttpStatusCode.NotFound, ErrorDto("unknown deal"))
+                if (deal.abandoned) {
+                    return@post call.respond(HttpStatusCode.Conflict, ErrorDto("offer already closed"))
+                }
+                // Decline = the existing QuoteExpired abort path: QUOTED only,
+                // the machine refuses once funded (never a stealth refund).
+                val now = Instant.now()
+                when (val r = app.engine.apply(id, DealEvent.QuoteExpired(now), now)) {
+                    DealEngine.Result.Aborted -> {
+                        app.store.appendEvent(
+                            p2pgate.backend.store.StoredEvent(id, "OFFER_DECLINED", "operator declined", now),
+                        )
+                        call.respond(MessageDto("offer $id declined"))
+                    }
+                    is DealEngine.Result.Violation ->
+                        call.respond(HttpStatusCode.Conflict, ErrorDto(r.reason))
+                    is DealEngine.Result.Advanced ->
+                        call.respond(HttpStatusCode.InternalServerError, ErrorDto("unexpected transition"))
                 }
             }
             post("/dashboard/deals/{id}/handoff/sign") {
@@ -414,7 +473,12 @@ fun Application.module(app: BackendApp) {
             put("/dashboard/quotes") {
                 call.authenticateOperator(app) ?: return@put
                 val request = call.receive<PutQuoteRequest>()
-                when (val outcome = app.quotes.publish(request.spreadBps, request.etaMinutes, request.maxAmount, lat = request.lat, lon = request.lon)) {
+                when (
+                    val outcome = app.quotes.publish(
+                        request.spreadBps, request.etaMinutes, request.minAmount, request.maxAmount,
+                        request.fiatCurrency, lat = request.lat, lon = request.lon,
+                    )
+                ) {
                     is QuotePublisher.PublishOutcome.Published ->
                         call.respond(PublishQuoteResponse(true, quoteDto(outcome.quote)))
                     is QuotePublisher.PublishOutcome.Rejected ->
@@ -675,9 +739,9 @@ fun Application.module() {
 
     module(app)
 
-    // Demo seeding (P2P_DEMO_QUOTES=true): three example quotes pinned to
-    // seller meeting locations, so the buyer map renders pins out of the box.
-    // The store is in-memory — seeding happens exactly once per server start.
+    // Demo seeding (P2P_DEMO_QUOTES=true): one located example quote per
+    // buyer-app currency (INR, USD, KSH, RUB). The store is in-memory —
+    // seeding happens exactly once per server start.
     if (env("P2P_DEMO_QUOTES") == "true") {
         seedDemoQuotes(quotes, config.mixReadyCollateral) { log.info(it) }
     }
@@ -700,32 +764,41 @@ fun Application.module() {
 }
 
 /**
- * Demo-mode quote seeding (`P2P_DEMO_QUOTES=true`): three example quotes at
- * real seller meeting locations (WGS-84) so the buyer map renders pins. Each
- * maxAmount is a share of the mix-ready pool, so the whole seed set passes the
- * per-quote capacity rule whenever the pool is funded; an unfunded pool just
- * rejects the seeds (logged, never fatal).
+ * Demo-mode quote seeding (`P2P_DEMO_QUOTES=true`): one located example quote
+ * per buyer-app currency (INR, USD, KSH, RUB) with distinct min/max deal
+ * ranges, so the buyer map renders pins for every dropdown entry. Each
+ * maxAmount is a share of the mix-ready pool, so the whole seed set passes
+ * the per-quote capacity rule whenever the pool is funded; an unfunded pool
+ * just rejects the seeds (logged, never fatal).
  */
 internal fun seedDemoQuotes(quotes: QuotePublisher, mixReadyCollateral: Long, log: (String) -> Unit) {
     data class Seed(
         val city: String,
         val spreadBps: Int,
         val etaMinutes: Int,
+        val minAmount: Long,
         val numer: Long,
         val denom: Long,
+        val fiatCurrency: String,
         val lat: Double,
         val lon: Double,
     )
     val seeds = listOf(
-        Seed("Cairo", spreadBps = 150, etaMinutes = 45, numer = 3, denom = 10, lat = 30.044, lon = 31.235),
-        Seed("Nairobi", spreadBps = 200, etaMinutes = 90, numer = 1, denom = 4, lat = -1.292, lon = 36.821),
-        Seed("Mumbai", spreadBps = 120, etaMinutes = 30, numer = 1, denom = 5, lat = 19.076, lon = 72.877),
+        Seed("Cairo", spreadBps = 150, etaMinutes = 45, minAmount = 5_000_000, numer = 3, denom = 10, fiatCurrency = "USD", lat = 30.044, lon = 31.235),
+        Seed("Nairobi", spreadBps = 200, etaMinutes = 90, minAmount = 2_000_000, numer = 1, denom = 4, fiatCurrency = "KSH", lat = -1.292, lon = 36.821),
+        Seed("Mumbai", spreadBps = 120, etaMinutes = 30, minAmount = 1_000_000, numer = 1, denom = 5, fiatCurrency = "INR", lat = 19.076, lon = 72.877),
+        Seed("Moscow", spreadBps = 180, etaMinutes = 60, minAmount = 3_000_000, numer = 3, denom = 20, fiatCurrency = "RUB", lat = 55.755, lon = 37.617),
     )
     for (seed in seeds) {
         val maxAmount = mixReadyCollateral * seed.numer / seed.denom
-        when (val outcome = quotes.publish(seed.spreadBps, seed.etaMinutes, maxAmount, lat = seed.lat, lon = seed.lon)) {
+        when (
+            val outcome = quotes.publish(
+                seed.spreadBps, seed.etaMinutes, seed.minAmount, maxAmount, seed.fiatCurrency,
+                lat = seed.lat, lon = seed.lon,
+            )
+        ) {
             is QuotePublisher.PublishOutcome.Published ->
-                log("demo quote seeded: ${seed.city} (${outcome.quote.id}, max $maxAmount, ${seed.spreadBps} bps)")
+                log("demo quote seeded: ${seed.city} ${seed.fiatCurrency} (${outcome.quote.id}, ${seed.minAmount}..$maxAmount, ${seed.spreadBps} bps)")
             is QuotePublisher.PublishOutcome.Rejected ->
                 log("demo quote ${seed.city} not seeded: ${outcome.reason}")
         }

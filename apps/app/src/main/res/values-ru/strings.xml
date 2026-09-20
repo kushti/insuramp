@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Navigation shell -->
+    <string name="nav_quote">Курс</string>
+    <string name="nav_recover">Восстановить</string>
+    <string name="scan_qr_prompt">Отсканируйте QR-код</string>
+
+    <!-- Quote screen -->
+    <string name="quote_title">Купить USDT за наличные</string>
+    <string name="fiat_currency_label">Фиатная валюта</string>
+    <string name="fiat_inr">Индийская рупия</string>
+    <string name="fiat_usd">Доллар США</string>
+    <string name="fiat_ksh">Кенийский шиллинг</string>
+    <string name="fiat_rub">Российский рубль</string>
+    <string name="fiat_currency_option">%1$s — %2$s</string>
+    <string name="quote_amount_label">Вы отдаёте (целыми единицами, без копеек)</string>
+    <string name="quote_address_label">Ваш адрес получения USDT (сеть Tron)</string>
+    <string name="quote_best">Лучшие котировки</string>
+    <string name="quote_view_list">Список</string>
+    <string name="quote_view_map">Карта</string>
+    <string name="quote_refresh">Обновить</string>
+    <string name="quote_refreshing">Обновление…</string>
+    <string name="quote_stale">Бэкенд недоступен — показана последняя известная котировка.</string>
+    <string name="quote_none">Сейчас нет опубликованных котировок — обновите, чтобы повторить.</string>
+    <string name="quote_none_for_currency">Сейчас нет котировок в %1$s — попробуйте другую валюту или обновите.</string>
+    <string name="quote_unlocated">Продавец не опубликовал местоположение для этой котировки — переключитесь на список, чтобы выбрать её.</string>
+    <string name="quote_creating">Создание сделки…</string>
+    <string name="quote_eta">~%1$d мин</string>
+    <string name="quote_amount_range">%1$d – %2$d USDT за сделку</string>
+    <string name="quote_collateral_line">Продавец заблокировал залог для покрытия этих сделок — вы можете получить его, если ваши USDT так и не придут.</string>
+    <string name="offer_action">Предложить наличные</string>
+    <string name="quote_create_error">Не удалось создать сделку: %1$s</string>
+    <string name="quote_amount_out_of_range">Сумма для этой котировки должна быть от %1$d до %2$d.</string>
+    <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d мин</string>
+
+    <!-- Canonical protocol states → human labels -->
+    <string name="state_quoted">Сделка оценена — ждём, пока продавец заблокирует залог</string>
+    <string name="state_funded">Продавец заблокировал залог для вашей сделки</string>
+    <string name="state_payment_pending">Передайте наличные продавцу</string>
+    <string name="state_payment_confirmed">USDT в пути</string>
+    <string name="state_claim_opened">Претензия открыта — запись в блокчейне</string>
+    <string name="state_claimable">Претензия созревает (~12 ч)</string>
+    <string name="state_released">Сделка завершена</string>
+    <string name="state_reclaimed">Время вышло — продавец вернул залог</string>
+    <string name="state_claimed">Залог выплачен вам</string>
+
+    <!-- Deal timeline rows with deal terms interpolated -->
+    <string name="timeline_hand_cash">Передайте %1$d %2$s продавцу</string>
+    <string name="timeline_wait_usdt">Ждите %1$d USDT</string>
+
+    <!-- Deal timeline screen -->
+    <string name="deal_title">Сделка #%1$s</string>
+    <string name="deal_stale">Бэкенд недоступен — последняя синхронизация могла устареть.</string>
+    <string name="deal_loading">Загрузка сделки…</string>
+    <string name="deal_fiat_amount">%1$d %2$s</string>
+    <string name="deal_collateral_locked">Залог %1$d USDT заблокирован</string>
+    <string name="deal_timeout_running">Тайм-аут хранилища (RECLAIM_TIMEOUT) через %1$d ч %2$d мин</string>
+    <string name="deal_timeout_expired">Тайм-аут хранилища (RECLAIM_TIMEOUT) истёк</string>
+    <string name="deal_maturation_running">Претензия созреет через %1$d ч %2$d мин</string>
+    <string name="deal_maturation_expired">Срок созревания претензии истёк</string>
+    <string name="deal_contested">Продавец приложил доказательство оплаты — ждём тайм-аута.</string>
+    <string name="deal_record_warning_title">Не уходите без записи — это ваше единственное доказательство.</string>
+    <string name="deal_record_warning_body">Уйти до проверки подписанной продавцом записи — значит уйти без подтверждённой записи: ничто в блокчейне не докажет, что наличные сменили владельца.</string>
+    <string name="deal_record_verified">✓ Запись проверена и сохранена — можно уходить со встречи.</string>
+    <string name="deal_claim_offer">Наличные получены, а USDT нет? Вы можете получить заблокированный залог %1$d USDT.</string>
+    <string name="deal_claim_payout_note">Выплата через ~12 ч (CLAIM_MATURATION).</string>
+    <string name="deal_stop_polling">Остановить фоновый опрос</string>
+
+    <!-- Offer step -->
+    <string name="offer_pending">Оффер отправлен — у продавца есть ~%1$d мин, чтобы принять его, заблокировав хранилище.</string>
+    <string name="offer_pending_unknown">Оффер отправлен — ждём, пока продавец примет его, заблокировав хранилище.</string>
+    <string name="offer_pending_note">Пока ничего не заблокировано в блокчейне — оффер не является сделкой, пока продавец не пополнит хранилище.</string>
+    <string name="offer_countdown_running">Оффер истекает через %1$d ч %2$d мин</string>
+    <string name="offer_countdown_expired">Оффер истёк</string>
+    <string name="offer_not_taken">Продавец не принял этот оффер</string>
+    <string name="offer_back_to_quotes">Назад к котировкам</string>
+
+    <!-- Shared actions -->
+    <string name="action_start_claim">Открыть претензию</string>
+    <string name="handoff_scan_qr">Отсканируйте QR передачи продавца</string>
+
+    <!-- Handoff (meeting) screen -->
+    <string name="handoff_title">Встреча — ваше доказательство передачи наличных</string>
+    <string name="handoff_record_plain">Продавец получил %1$d %2$s по сделке #%3$s, %4$s</string>
+    <string name="handoff_watch_count">Передайте наличные и смотрите, как продавец их считает. Продавец подписывает только после пересчёта.</string>
+    <string name="handoff_sig_a_label">Подпись продавца — a (hex)</string>
+    <string name="handoff_sig_z_label">Подпись продавца — z (hex)</string>
+    <string name="handoff_rejected">✗ %1$s. НЕ считайте эту запись доказательством.</string>
+    <string name="handoff_reject_not_handoff_qr">Это не QR передачи P2PGate</string>
+    <string name="handoff_reject_invalid">Запись не соответствует этой сделке, устарела или её подпись недействительна</string>
+    <string name="handoff_missing_seller_key">Ключ продавца ещё не привязан к этой сделке, поэтому приложение не может подтвердить запись. Не уходите со встречи, не решив эту проблему.</string>
+    <string name="handoff_waiting_signature">Ожидание подписи продавца…</string>
+    <string name="handoff_scan_to_begin">Отсканируйте QR продавца, чтобы начать.</string>
+    <string name="handoff_verified">✓ Запись проверена по вашей сделке.</string>
+    <string name="handoff_saved_relayed">Сохранено и передано оператору.</string>
+    <string name="handoff_saved_relay_failed">Сохранено на этом устройстве — передача не удалась (%1$s); повтор важен только для статуса продавца.</string>
+    <string name="handoff_saved_local">Сохранено на этом устройстве…</string>
+    <string name="handoff_safe_to_leave">Можно уходить со встречи.</string>
+    <string name="handoff_not_safe">Уйти сейчас — значит уйти без подтверждённой записи; подтверждённая запись — ваш единственный артефакт для спора.</string>
+
+    <!-- Claim screen -->
+    <string name="claim_title">Получить заблокированный залог продавца</string>
+    <string name="claim_intro">Наличные получены, а USDT нет? Залог продавца выплачивается вам. Это путь получения залога — не тикет спора.</string>
+    <string name="claim_not_available">Претензия станет доступна после получения наличных (сделка в статусе %1$s).</string>
+    <string name="claim_maturation_deadline">Срок созревания претензии: %1$d (~12 ч, CLAIM_MATURATION).</string>
+    <string name="claim_contested">Продавец приложил доказательство оракула — решение за контрактом; ждём тайм-аута.</string>
+    <string name="claim_opening">Открытие претензии…</string>
+    <string name="claim_guide_title">Претензия открыта — следующие шаги</string>
+    <string name="claim_error">Не удалось открыть претензию: %1$s</string>
+
+    <!-- Recover screen -->
+    <string name="recover_title">Восстановить сделку</string>
+    <string name="recover_instructions">Вставьте сохранённую ссылку на сделку (или id сделки # токен).</string>
+    <string name="recover_input_label">Ссылка на сделку или id#token</string>
+    <string name="recover_recovering">Восстановление…</string>
+    <string name="recover_restore">Восстановить сделку</string>
+    <string name="recover_restored">Сделка восстановлена.</string>
+    <string name="recover_error_invalid_link">Это не похоже на ссылку сделки — проверьте, что в ней есть id сделки и токен после #.</string>
+    <string name="recover_error_failed">Восстановление не удалось: %1$s</string>
+
+    <!-- Welcome screen -->
+    <string name="welcome_text">Добро пожаловать в Insuramp! Некастодиальное, без KYC, безопасное, застрахованное приложение для обмена наличных на крипто!</string>
+    <string name="welcome_get_started">Начать</string>
+</resources>

@@ -27,10 +27,14 @@ import p2pgate.app.locale.resolveSupportedTag
 import p2pgate.app.quotes.QuoteScreen
 import p2pgate.app.recover.RecoverScreen
 import p2pgate.app.ui.theme.P2PGateTheme
+import p2pgate.app.welcome.WelcomeGate
+import p2pgate.app.welcome.WelcomeScreen
 
 /**
- * Single-activity shell: five screens, one timeline per deal. Deal entry is
- * link-based (`onramp-ux.md` §7) — an opened deal link lands on recovery.
+ * Single-activity shell: five screens, one timeline per deal, plus the
+ * once-after-install welcome screen as the start destination until dismissed.
+ * Deal entry is link-based (`onramp-ux.md` §7) — an opened deal link lands on
+ * recovery.
  *
  * An [AppCompatActivity] so `AppCompatDelegate.setApplicationLocales` applies
  * the in-app language choice pre-API-33 and persists it across process death.
@@ -41,10 +45,18 @@ class MainActivity : AppCompatActivity() {
         detectFirstRunLocale()
         super.onCreate(savedInstanceState)
         val container = AppContainer.get(this)
+        val welcomeGate = WelcomeGate(
+            seen = { container.settings.getBoolean(WelcomeGate.PREF_KEY, false) },
+            mark = { container.settings.edit().putBoolean(WelcomeGate.PREF_KEY, true).apply() },
+        )
+        // The start-destination decision is taken once at process start; the
+        // flag is persisted, so process death / reboot never re-shows a
+        // dismissed welcome.
+        val showWelcome = welcomeGate.shouldShow()
         val deepLink = intent?.dataString
         setContent {
             P2PGateTheme {
-                P2PGateNav(container, deepLink)
+                P2PGateNav(container, deepLink, showWelcome, welcomeGate)
             }
         }
     }
@@ -68,6 +80,7 @@ class MainActivity : AppCompatActivity() {
 }
 
 private object Routes {
+    const val WELCOME = "welcome"
     const val QUOTE = "quote"
     const val DEAL = "deal/{dealId}"
     const val HANDOFF = "deal/{dealId}/handoff"
@@ -76,46 +89,66 @@ private object Routes {
 }
 
 @Composable
-fun P2PGateNav(container: AppContainer, deepLink: String?) {
+fun P2PGateNav(
+    container: AppContainer,
+    deepLink: String?,
+    showWelcome: Boolean,
+    welcomeGate: WelcomeGate,
+) {
     val navController = rememberNavController()
 
     // An incoming deal link pre-fills recovery; a bare p2pgate link goes home.
+    // Deal entry takes priority even over a not-yet-dismissed welcome.
     LaunchedEffect(deepLink) {
         if (deepLink != null && deepLink.contains("#")) {
             navController.navigate("recover?link=${android.net.Uri.encode(deepLink)}")
         }
     }
 
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route
+
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                val backStackEntry by navController.currentBackStackEntryAsState()
-                val currentRoute = backStackEntry?.destination?.route
-                NavigationBarItem(
-                    selected = currentRoute == Routes.QUOTE,
-                    onClick = {
-                        navController.navigate(Routes.QUOTE) {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                        }
-                    },
-                    label = { Text(stringResource(R.string.nav_quote)) },
-                    icon = { Text("①") },
-                )
-                NavigationBarItem(
-                    selected = currentRoute?.startsWith("recover") == true,
-                    onClick = { navController.navigate(Routes.RECOVER) },
-                    label = { Text(stringResource(R.string.nav_recover)) },
-                    icon = { Text("②") },
-                )
+            // The welcome screen stands alone — no navigation chrome on it.
+            if (currentRoute != Routes.WELCOME) {
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = currentRoute == Routes.QUOTE,
+                        onClick = {
+                            navController.navigate(Routes.QUOTE) {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                            }
+                        },
+                        label = { Text(stringResource(R.string.nav_quote)) },
+                        icon = { Text("①") },
+                    )
+                    NavigationBarItem(
+                        selected = currentRoute?.startsWith("recover") == true,
+                        onClick = { navController.navigate(Routes.RECOVER) },
+                        label = { Text(stringResource(R.string.nav_recover)) },
+                        icon = { Text("②") },
+                    )
+                }
             }
         },
     ) { padding ->
         NavHost(
             navController = navController,
-            startDestination = Routes.QUOTE,
+            startDestination = if (showWelcome) Routes.WELCOME else Routes.QUOTE,
             modifier = Modifier.padding(padding),
         ) {
+            composable(Routes.WELCOME) {
+                WelcomeScreen(
+                    onGetStarted = {
+                        welcomeGate.markSeen()
+                        navController.navigate(Routes.QUOTE) {
+                            popUpTo(Routes.WELCOME) { inclusive = true }
+                        }
+                    },
+                )
+            }
             composable(Routes.QUOTE) {
                 QuoteScreen(container = container, onDealCreated = { dealId ->
                     navController.navigate("deal/$dealId")
@@ -128,6 +161,7 @@ fun P2PGateNav(container: AppContainer, deepLink: String?) {
                     container = container,
                     onOpenHandoff = { navController.navigate("deal/$dealId/handoff") },
                     onOpenClaim = { navController.navigate("deal/$dealId/claim") },
+                    onBackToQuotes = { navController.popBackStack(Routes.QUOTE, inclusive = false) },
                 )
             }
             composable(Routes.HANDOFF) { entry ->

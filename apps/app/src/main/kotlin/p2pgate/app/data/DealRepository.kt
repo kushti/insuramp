@@ -20,6 +20,8 @@ fun snapshotFromDto(dto: DealDto, existing: DealSnapshot?, nowEpochMs: Long): De
         reclaimDeadlineEpochMs = dto.reclaimDeadlineEpochMs,
         claimMaturesAtEpochMs = dto.claimMaturesAtEpochMs,
         contested = dto.contested,
+        terminal = dto.terminal,
+        offerExpiresAtEpochMs = existing?.offerExpiresAtEpochMs,
         verifiedRecordHex = existing?.verifiedRecordHex,
         verifiedRecordSigAHex = existing?.verifiedRecordSigAHex,
         verifiedRecordSigZHex = existing?.verifiedRecordSigZHex,
@@ -42,6 +44,7 @@ class DealRepository(
         fiatAmount: Long,
         fiatCurrency: String,
         recoveryLink: String?,
+        offerExpiresAtEpochMs: Long?,
     ): DealSnapshot {
         val response = backend.createDeal(request)
         val snapshot = DealSnapshot(
@@ -54,6 +57,7 @@ class DealRepository(
             insuredAmount = request.amount,
             createdAtEpochMs = clock(),
             updatedAtEpochMs = clock(),
+            offerExpiresAtEpochMs = offerExpiresAtEpochMs,
             recoveryLink = recoveryLink ?: "https://p2pgate.link/deal/${response.dealId}#${response.dealToken}",
         )
         store.upsert(snapshot)

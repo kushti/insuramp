@@ -21,7 +21,7 @@ stands: the seller meets the buyer, collects the cash, and signs.*
 Canonical states. Every component uses these names verbatim.
 
 ```
-                ┌──────── buyer ghosts / quote expires ───────┐
+                ┌──────── buyer ghosts / seller declines / quote expires ───────┐
                 ▼                                            │
  QUOTED ──▶ FUNDED ──▶ PAYMENT_PENDING ──▶ PAYMENT_CONFIRMED ──▶ RELEASED
               │                │                             ▲
@@ -40,7 +40,7 @@ Canonical states. Every component uses these names verbatim.
 
 | State | Meaning | Who moves it | On-chain footprint |
 |---|---|---|---|
-| QUOTED | quote selected, terms agreed, no vault yet | Buyer picks quote | none |
+| QUOTED | **offer sent** — terms proposed, no vault yet; awaiting seller accept | Buyer offers; seller accepts by funding | none |
 | FUNDED | vault box created, collateral locked, waiting for the meeting | operator backend | FUNDED box |
 | PAYMENT_PENDING | cash collected (seller-signed handoff record exists); seller is obligated to send USDT | seller signs the handoff record at the meeting | FUNDED box |
 | PAYMENT_CONFIRMED | oracle observed the seller's USDT transfer to the buyer | oracle attestation (off-chain signal) | FUNDED box (still) |
@@ -166,7 +166,7 @@ starts. The seller's app displays: *"I collected 15,600 EGP from the buyer for d
 magic         4 bytes   "P2PH"
 version       1 byte    = 0x01
 dealId        32 bytes
-fiatAmount    8 bytes   fiat amount, smallest unit — matches deal terms
+fiatAmount    8 bytes   fiat amount, whole basic units (no decimals) — matches deal terms
 fiatCurrency  3 bytes
 timestamp     4 bytes   uint32 unix seconds
 ```
@@ -196,8 +196,9 @@ gates path B and anchors maturation.
 - **Seller → buyer (handoff):** `p2pgate://handoff?m=<base64url(handoff record)>`.
   The seller renders the unsigned record; the buyer app validates amount/currency against
   the deal terms, the seller signs, the record is complete.
-- **Buyer → seller (payout address):** the buyer's USDT address (plain Tron base58 or
-  EIP-55 string) + expected amount, shared at QUOTED so R9's `recipientAddr` pins it.
+- **Buyer → seller (payout address):** the buyer's USDT address (Tron base58 string in
+  phase 1 — deals are Tron-only, `srcChainId = 0x01`; the EIP-55/Ethereum encoding stays
+  defined in `specs/oracle-integration.md`) + expected amount, shared at QUOTED so R9's `recipientAddr` pins it.
   Exact per-chain URI formats are an implementation detail of `specs/android-app.md`.
 
 ### 3.4 Oracle attestation

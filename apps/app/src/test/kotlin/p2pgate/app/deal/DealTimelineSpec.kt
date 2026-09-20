@@ -81,9 +81,33 @@ class DealTimelineSpec {
     }
 
     @Test
-    fun `quoted renders the pending happy path`() {
+    fun `quoted renders the pending-offer row above the pending happy path`() {
         val rows = DealTimeline.rowsFor(DealState.QUOTED)
-        assertTrue(rows.all { it.status == RowStatus.PENDING })
+        assertEquals(
+            listOf("QUOTED", "FUNDED", "PAYMENT_PENDING", "PAYMENT_CONFIRMED", "RELEASED"),
+            rows.map { it.state.name },
+        )
+        assertEquals(RowStatus.ACTIVE, rows[0].status)
+        assertEquals(R.string.state_quoted, rows[0].labelRes)
+        assertTrue(rows.drop(1).all { it.status == RowStatus.PENDING })
+    }
+
+    @Test
+    fun `terminal from quoted means the offer was not taken`() {
+        assertTrue(offerNotTaken(DealState.QUOTED, terminal = true))
+        assertTrue(offerNotTaken(null, terminal = true))
+        assertFalse(offerNotTaken(DealState.QUOTED, terminal = false))
+        assertFalse(offerNotTaken(DealState.FUNDED, terminal = true))
+        assertFalse(offerNotTaken(DealState.RELEASED, terminal = true))
+        assertFalse(offerNotTaken(DealState.RECLAIMED, terminal = true))
+    }
+
+    @Test
+    fun `countdown parts map remaining time to hours and minutes`() {
+        assertEquals(CountdownParts(1, 30), countdownParts(nowEpochMs = 0, deadlineEpochMs = 90L * 60_000))
+        assertEquals(CountdownParts(0, 1), countdownParts(nowEpochMs = 0, deadlineEpochMs = 60_000))
+        assertEquals(null, countdownParts(nowEpochMs = 60_000, deadlineEpochMs = 60_000))
+        assertEquals(null, countdownParts(nowEpochMs = 120_000, deadlineEpochMs = 60_000))
     }
 
     @Test
