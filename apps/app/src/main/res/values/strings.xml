@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Brand: never translated. -->
-    <string name="app_name" translatable="false">P2PGate</string>
+    <string name="app_name" translatable="false">Insuramp</string>
 
     <!-- Navigation shell -->
     <string name="nav_quote">Quote</string>
@@ -32,6 +32,7 @@
     <string name="quote_amount_range">%1$d – %2$d USDT per deal</string>
     <string name="quote_collateral_line">The seller has locked collateral to cover these deals — you can claim it if your USDT never arrives.</string>
     <string name="offer_action">Offer cash</string>
+    <string name="offer_fields_required">Enter the amount and your USDT receive address first.</string>
     <string name="quote_create_error">Could not create the deal: %1$s</string>
     <string name="quote_amount_out_of_range">Amount must be between %1$d and %2$d for this quote.</string>
     <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d min</string>
@@ -91,7 +92,7 @@
     <string name="handoff_sig_a_label">Seller signature — a (hex)</string>
     <string name="handoff_sig_z_label">Seller signature — z (hex)</string>
     <string name="handoff_rejected">✗ %1$s. Do NOT treat this record as proof.</string>
-    <string name="handoff_reject_not_handoff_qr">Not a P2PGate handoff QR</string>
+    <string name="handoff_reject_not_handoff_qr">Not an Insuramp handoff QR</string>
     <string name="handoff_reject_invalid">The record does not match this deal, is stale, or its signature is invalid</string>
     <string name="handoff_missing_seller_key">The seller key is not attached to this deal yet, so the app cannot confirm the record. Do not leave the meeting without resolving this.</string>
     <string name="handoff_waiting_signature">Waiting for the seller\'s signature…</string>

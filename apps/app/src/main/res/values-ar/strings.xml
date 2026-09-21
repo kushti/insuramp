@@ -29,6 +29,7 @@
     <string name="quote_amount_range">%1$d – %2$d USDT لكل صفقة</string>
     <string name="quote_collateral_line">جمّد البائع ضمانًا لتغطية هذه الصفقات — يمكنك المطالبة به إذا لم تصلك USDT أبدًا.</string>
     <string name="offer_action">اعرض النقد</string>
+    <string name="offer_fields_required">أدخل المبلغ وعنوان استلام USDT الخاص بك أولاً.</string>
     <string name="quote_create_error">تعذّر إنشاء الصفقة: %1$s</string>
     <string name="quote_amount_out_of_range">يجب أن يكون المبلغ بين %1$d و%2$d لهذا العرض.</string>
     <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d دقيقة</string>
@@ -86,7 +87,7 @@
     <string name="handoff_sig_a_label">توقيع البائع — a (hex)</string>
     <string name="handoff_sig_z_label">توقيع البائع — z (hex)</string>
     <string name="handoff_rejected">✗ %1$s. لا تعتبر هذا السجل دليلًا.</string>
-    <string name="handoff_reject_not_handoff_qr">ليس رمز QR لتسليم P2PGate</string>
+    <string name="handoff_reject_not_handoff_qr">ليس رمز QR لتسليم Insuramp</string>
     <string name="handoff_reject_invalid">السجل لا يطابق هذه الصفقة، أو منتهي الصلاحية، أو توقيعه غير صالح</string>
     <string name="handoff_missing_seller_key">مفتاح البائع غير مرفق بهذه الصفقة بعد، لذا لا يمكن للتطبيق تأكيد السجل. لا تغادر اللقاء دون حلّ هذه المشكلة.</string>
     <string name="handoff_waiting_signature">بانتظار توقيع البائع…</string>

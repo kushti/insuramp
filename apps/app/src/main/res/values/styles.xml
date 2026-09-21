@@ -2,5 +2,5 @@
 <resources>
     <!-- AppCompat theme: MainActivity is an AppCompatActivity (per-app locale
          switching), which requires a Theme.AppCompat descendant. -->
-    <style name="Theme.P2PGate" parent="Theme.AppCompat.Light.NoActionBar" />
+    <style name="Theme.Insuramp" parent="Theme.AppCompat.Light.NoActionBar" />
 </resources>

@@ -717,6 +717,11 @@ fun Application.module() {
         bus = bus,
         costFloorBps = config.costFloorBps,
         ttl = config.quoteTtl,
+        demoReseed = if (env("P2P_DEMO_QUOTES") == "true") {
+            { q -> seedDemoQuotes(q, config.mixReadyCollateral) { log.info(it) } }
+        } else {
+            null
+        },
     )
     val escalation = config.webhookUrl?.let { url ->
         WebhookEscalation(url) { target, body ->
@@ -740,9 +745,12 @@ fun Application.module() {
     module(app)
 
     // Demo seeding (P2P_DEMO_QUOTES=true): one located example quote per
-    // buyer-app currency (INR, USD, KSH, RUB). The store is in-memory —
-    // seeding happens exactly once per server start.
-    if (env("P2P_DEMO_QUOTES") == "true") {
+    // buyer-app currency (INR, USD, KSH, RUB). The store is in-memory, so
+    // seeding re-runs at startup AND whenever the feed drains (TTL lapses,
+    // pause withdrawal) while infra is healthy — a demo should never sit on
+    // an empty feed.
+    val demoQuotes = env("P2P_DEMO_QUOTES") == "true"
+    if (demoQuotes) {
         seedDemoQuotes(quotes, config.mixReadyCollateral) { log.info(it) }
     }
 

@@ -9,7 +9,7 @@
         android:label="@string/app_name"
         android:localeConfig="@xml/locales_config"
         android:supportsRtl="true"
-        android:theme="@style/Theme.P2PGate">
+        android:theme="@style/Theme.Insuramp">
         <activity
             android:name=".MainActivity"
             android:exported="true"

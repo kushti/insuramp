@@ -89,8 +89,14 @@ class BackendApp(
         // §8 auto-pause: the moment verification degrades, the quote feed is
         // withdrawn — buyers see no quotes, not stale ones.
         bus.subscribe { e ->
-            if (e is p2pgate.backend.bus.BackendEvent.PauseChanged && e.paused) {
-                quotes.withdraw("auto-pause: ${e.cause}", e.at)
+            if (e is p2pgate.backend.bus.BackendEvent.PauseChanged) {
+                if (e.paused) {
+                    quotes.suspendForPause("auto-pause: ${e.cause}", e.at)
+                } else {
+                    // Resume restores what the pause suspended (TTL-lapsed
+                    // quotes stay gone).
+                    quotes.resumeFromPause(e.at)
+                }
             }
         }
     }

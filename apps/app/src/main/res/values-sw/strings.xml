@@ -29,6 +29,7 @@
     <string name="quote_amount_range">USDT %1$d – %2$d kwa kila dili</string>
     <string name="quote_collateral_line">Muuzaji amefunga dhamana ya kukidhi haya madili — unaweza kuidai ikiwa USDT zako hazijawahi kufika.</string>
     <string name="offer_action">Toa ofa ya pesa taslimu</string>
+    <string name="offer_fields_required">Weka kiasi na anwani yako ya kupokea USDT kwanza.</string>
     <string name="quote_create_error">Dili halikuweza kuundwa: %1$s</string>
     <string name="quote_amount_out_of_range">Kiasi lazima kiwe kati ya %1$d na %2$d kwa nukuu hii.</string>
     <string name="quote_marker_title">USDT %1$d – %2$d · ~dakika %3$d</string>
@@ -86,7 +87,7 @@
     <string name="handoff_sig_a_label">Sahihi ya muuzaji — a (hex)</string>
     <string name="handoff_sig_z_label">Sahihi ya muuzaji — z (hex)</string>
     <string name="handoff_rejected">✗ %1$s. USICHUKULIE rekodi hii kama ushahidi.</string>
-    <string name="handoff_reject_not_handoff_qr">Hii si QR ya makabidhiano ya P2PGate</string>
+    <string name="handoff_reject_not_handoff_qr">Hii si QR ya makabidhiano ya Insuramp</string>
     <string name="handoff_reject_invalid">Rekodi hailingani na dili hili, imepitwa na wakati, au sahihi yake ni batili</string>
     <string name="handoff_missing_seller_key">Ufunguo wa muuzaji bado haujaambatishwa kwenye dili hili, kwa hivyo programu haiwezi kuthibitisha rekodi. Usiondoke kwenye mkutano bila kutatua hili.</string>
     <string name="handoff_waiting_signature">Inasubiri sahihi ya muuzaji…</string>

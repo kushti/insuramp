@@ -130,6 +130,42 @@ class QuotePublisherSpec {
     }
 
     @Test
+    fun `demo reseed refills an empty feed on read without any scheduler`() {
+        val env = env()
+        val publisher = QuotePublisher(
+            env.store, env.infra, { 1_000_000_000L }, env.bus,
+            demoReseed = { q -> q.publish(50, 60, 1L, 500_000_000L, "USD") },
+        )
+        assertTrue(publisher.active(T0).isEmpty().not())
+        assertEquals(1, publisher.active(T0).size)
+        // Only refills when empty — the existing feed is untouched.
+        assertEquals(1, publisher.active(T0).size)
+    }
+
+    @Test
+    fun `resume restores the suspended quotes and lapsed ones stay gone`() {
+        val env = env()
+        env.quotes.publish(50, 60, 1L, 500_000_000L, "USD", T0)
+        env.quotes.publish(80, 90, 1L, 200_000_000L, "INR", T0.plusSeconds(30), lat = 19.076, lon = 72.877)
+        // Pause suspends + withdraws the feed (snapshot + withdraw).
+        env.quotes.suspendForPause("auto-pause: test", T0.plusSeconds(10))
+        assertTrue(env.quotes.active(T0.plusSeconds(20)).isEmpty())
+        // Resume: both quotes come back with their ORIGINAL expiry (the pause
+        // did not refresh the clock), ids intact.
+        env.quotes.resumeFromPause(T0.plusSeconds(20))
+        val restored = env.quotes.active(T0.plusSeconds(20))
+        assertEquals(listOf("quote-1", "quote-2"), restored.map { it.id })
+        assertEquals(T0.plus(QuotePublisher.DEFAULT_TTL), restored[0].expiresAt)
+        assertEquals(19.076, restored[1].lat)
+        // A quote that lapses mid-pause is not resurrected.
+        env.quotes.suspendForPause("auto-pause: test", T0.plusSeconds(30))
+        val pastBothExpiries = T0.plus(QuotePublisher.DEFAULT_TTL).plusSeconds(31)
+        env.quotes.tick(pastBothExpiries)
+        env.quotes.resumeFromPause(pastBothExpiries)
+        assertTrue(env.quotes.active(pastBothExpiries).isEmpty())
+    }
+
+    @Test
     fun `quote expires after its ttl`() {
         val env = env()
         env.quotes.publish(50, 60, 1L, 500_000_000L, "USD", T0)

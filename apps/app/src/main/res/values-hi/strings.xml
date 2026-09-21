@@ -29,6 +29,7 @@
     <string name="quote_amount_range">%1$d – %2$d USDT प्रति डील</string>
     <string name="quote_collateral_line">सेलर ने इन डीलों को कवर करने के लिए कोलैटरल लॉक किया है — अगर आपके USDT कभी नहीं आते तो आप उसे क्लेम कर सकते हैं।</string>
     <string name="offer_action">नकद का ऑफ़र दें</string>
+    <string name="offer_fields_required">पहले राशि और अपना USDT प्राप्ति पता दर्ज करें।</string>
     <string name="quote_create_error">डील नहीं बन सकी: %1$s</string>
     <string name="quote_amount_out_of_range">इस कोट के लिए राशि %1$d और %2$d के बीच होनी चाहिए।</string>
     <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d मिनट</string>
@@ -86,7 +87,7 @@
     <string name="handoff_sig_a_label">सेलर सिग्नेचर — a (hex)</string>
     <string name="handoff_sig_z_label">सेलर सिग्नेचर — z (hex)</string>
     <string name="handoff_rejected">✗ %1$s। इस रिकॉर्ड को सबूत न मानें।</string>
-    <string name="handoff_reject_not_handoff_qr">यह P2PGate हैंडऑफ़ QR नहीं है</string>
+    <string name="handoff_reject_not_handoff_qr">यह Insuramp हैंडऑफ़ QR नहीं है</string>
     <string name="handoff_reject_invalid">रिकॉर्ड इस डील से मेल नहीं खाता, पुराना है, या उसका सिग्नेचर अमान्य है</string>
     <string name="handoff_missing_seller_key">इस डील से सेलर की अभी जुड़ी नहीं है, इसलिए ऐप रिकॉर्ड की पुष्टि नहीं कर सकता। इसे सुलझाए बिना मीटिंग मत छोड़ें।</string>
     <string name="handoff_waiting_signature">सेलर के सिग्नेचर की प्रतीक्षा…</string>

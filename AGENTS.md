@@ -164,11 +164,11 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9,
   VaultBoxTracker 17; plus (M3-A/C): OperatorTxBuilder 20, PaymentAttestation 9,
   DevOracle 6, FastContracts 4; plus (2026-09-17): NodeChainSource 12 → ergo 110;
-  backend 115 (11 suites); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 381; plus the Android buyer app
+  backend 117 (11 suites); e2e 10 (E2eFlow 5,
+  E2eConfig 2, SchnorrPort 3) → JVM modules 383; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
   multi-quote currency-filtered list, offer-cash flow 2026-09-20): 62 JVM
-  unit tests (`:app:testDebugUnitTest`) → **443 total**.
+  unit tests (`:app:testDebugUnitTest`) → **445 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

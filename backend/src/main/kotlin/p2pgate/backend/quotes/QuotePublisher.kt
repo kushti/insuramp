@@ -49,6 +49,7 @@ class QuotePublisher(
     private val costFloorBps: Int = 0,
     private val ttl: Duration = DEFAULT_TTL,
     private val clock: () -> Instant = Instant::now,
+    private val demoReseed: ((QuotePublisher) -> Unit)? = null,
 ) {
     init {
         require(ttl < ProtocolConstants.RECLAIM_TIMEOUT) {
@@ -144,6 +145,29 @@ class QuotePublisher(
         bus.publish(BackendEvent.QuoteWithdrawn(cause, at))
     }
 
+    // Quotes suspended by an auto-pause are restored on resume — the pause was
+    // infra, not the operator withdrawing their offers. Expiry semantics stay
+    // honest: a quote whose TTL lapsed during the pause is not resurrected.
+    private var pauseSnapshot: List<QuoteRecord>? = null
+
+    /** Auto-pause path: snapshot the feed, then withdraw it. */
+    fun suspendForPause(cause: String, at: Instant = clock()) {
+        pauseSnapshot = store.quotes().toList()   // copy — clearQuotes() must not empty the snapshot
+        withdraw(cause, at)
+    }
+
+    /** Resume path: restore the suspended quotes whose TTL has not lapsed. */
+    fun resumeFromPause(at: Instant = clock()) {
+        val snapshot = pauseSnapshot ?: return
+        pauseSnapshot = null
+        for (quote in snapshot) {
+            if (at.isBefore(quote.expiresAt)) {
+                store.saveQuote(quote)
+                bus.publish(BackendEvent.QuotePublished(quote, at))
+            }
+        }
+    }
+
     /**
      * Withdraws a single quote by id (operator action — the seller at that
      * location stopped taking meetings). `false` when the id is unknown.
@@ -159,6 +183,9 @@ class QuotePublisher(
     fun active(at: Instant = clock()): List<QuoteRecord> {
         pruneExpired(at)
         if (!infra.healthy()) return emptyList()
+        // Demo self-healing on READ: if the feed is drained (TTL, pause,
+        // scheduler hiccup), refill it right here — no scheduler dependency.
+        if (store.quotes().isEmpty()) demoReseed?.invoke(this)
         return store.quotes()
     }
 

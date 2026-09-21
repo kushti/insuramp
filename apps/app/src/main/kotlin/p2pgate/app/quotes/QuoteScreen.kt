@@ -40,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
 import kotlinx.coroutines.launch
@@ -110,6 +112,12 @@ fun QuoteScreen(
     val context = LocalContext.current
     val chooseQuote: (QuoteDto) -> Unit = choose@{ q ->
         if (creating) return@choose
+        // The button is always tappable — empty inputs get an explicit
+        // message instead of a silently dead button.
+        if (fiatAmount.isEmpty() || receiveAddress.isEmpty()) {
+            createError = context.getString(R.string.offer_fields_required)
+            return@choose
+        }
         // Cards/pins are currency-filtered, so this cannot mismatch; the
         // backend enforces the same equality — guard anyway.
         if (q.fiatCurrency != fiatCurrency) return@choose
@@ -158,7 +166,11 @@ fun QuoteScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.weight(1f),
             )
-            LanguagePicker()
+            LanguagePicker(onLanguageChange = {
+                // Language switch re-derives the currency from the new locale
+                // (clears any explicit currency pick — it is the older choice).
+                settings.edit().remove(PREF_FIAT_CURRENCY).apply()
+            })
         }
 
         // The supported cash currencies are fixed — no free text (a typo'd
@@ -200,6 +212,8 @@ fun QuoteScreen(
             label = { Text(stringResource(R.string.quote_amount_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
+            // Whole units only — open the numeric keypad, not the text layout.
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         )
         OutlinedTextField(
             value = receiveAddress,
@@ -276,8 +290,6 @@ fun QuoteScreen(
                             quote = q,
                             creating = creating,
                             createError = createError,
-                            chooseEnabled = receiveAddress.isNotEmpty() &&
-                                fiatAmount.isNotEmpty() && q.id.isNotEmpty(),
                             onChoose = { chooseQuote(q) },
                         )
                     }
@@ -319,10 +331,13 @@ fun QuoteScreen(
  * The language entry point: a translate glyph opening the four supported
  * languages by their native names; the effective language is ticked. The
  * choice goes through AppCompatDelegate.setApplicationLocales, which persists
- * it and recreates the activity with the new resources.
+ * it and recreates the activity with the new resources. A language switch
+ * also RESETS the fiat currency to the new locale's default (en→USD,
+ * ru→RUB…): the language pick is the newer explicit action, so it clears any
+ * earlier explicit currency choice (owner decision, 2026-09-21).
  */
 @Composable
-private fun LanguagePicker() {
+private fun LanguagePicker(onLanguageChange: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     val current = AppCompatDelegate.getApplicationLocales().get(0)?.language ?: DEFAULT_LOCALE_TAG
     Box {
@@ -335,6 +350,7 @@ private fun LanguagePicker() {
                     text = { Text((if (locale.tag == current) "✓ " else "") + locale.nativeName) },
                     onClick = {
                         open = false
+                        onLanguageChange()
                         AppCompatDelegate.setApplicationLocales(
                             LocaleListCompat.forLanguageTags(locale.tag),
                         )
@@ -350,7 +366,6 @@ private fun QuoteCard(
     quote: QuoteDto,
     creating: Boolean,
     createError: String?,
-    chooseEnabled: Boolean,
     onChoose: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
@@ -370,7 +385,7 @@ private fun QuoteCard(
             Spacer(Modifier.height(4.dp))
             Button(
                 onClick = onChoose,
-                enabled = !creating && chooseEnabled,
+                enabled = !creating,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(if (creating) R.string.quote_creating else R.string.offer_action)) }
             createError?.let {

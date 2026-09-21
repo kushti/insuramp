@@ -29,6 +29,7 @@
     <string name="quote_amount_range">%1$d – %2$d USDT за сделку</string>
     <string name="quote_collateral_line">Продавец заблокировал залог для покрытия этих сделок — вы можете получить его, если ваши USDT так и не придут.</string>
     <string name="offer_action">Предложить наличные</string>
+    <string name="offer_fields_required">Сначала введите сумму и ваш адрес получения USDT.</string>
     <string name="quote_create_error">Не удалось создать сделку: %1$s</string>
     <string name="quote_amount_out_of_range">Сумма для этой котировки должна быть от %1$d до %2$d.</string>
     <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d мин</string>
@@ -86,7 +87,7 @@
     <string name="handoff_sig_a_label">Подпись продавца — a (hex)</string>
     <string name="handoff_sig_z_label">Подпись продавца — z (hex)</string>
     <string name="handoff_rejected">✗ %1$s. НЕ считайте эту запись доказательством.</string>
-    <string name="handoff_reject_not_handoff_qr">Это не QR передачи P2PGate</string>
+    <string name="handoff_reject_not_handoff_qr">Это не QR передачи Insuramp</string>
     <string name="handoff_reject_invalid">Запись не соответствует этой сделке, устарела или её подпись недействительна</string>
     <string name="handoff_missing_seller_key">Ключ продавца ещё не привязан к этой сделке, поэтому приложение не может подтвердить запись. Не уходите со встречи, не решив эту проблему.</string>
     <string name="handoff_waiting_signature">Ожидание подписи продавца…</string>

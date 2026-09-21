@@ -236,6 +236,11 @@ launches). The manual recipe for reference:
    `./gradlew :app:assembleDebug`, then `adb install -r
    apps/app/build/outputs/apk/debug/app-debug.apk` and
    `adb shell am start p2pgate.app/.MainActivity`.
+   **Pasting into the app (e.g. the receive-address field):** tap-and-hold the
+   field → context menu → Paste (it appears only when the clipboard is
+   non-empty). To copy from the host: emulator window → ⋯ (Extended controls)
+   → Settings → enable "Clipboard sharing" — then copy on the host and paste
+   in the app; or copy inside any app on the emulator (e.g. a wallet).
 4. **Physical device variant:** same debug build, but the debug `BACKEND_URL` must match
    how the phone reaches the host — either the host's LAN IP (e.g.
    `http://192.168.1.5:8080`; the Ktor connector binds all interfaces by default) with a
