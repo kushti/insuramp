@@ -16,8 +16,8 @@ import java.time.Instant
  * On-chain correlation (`specs/vault-contract.md` §1, §3, §4):
  * - FUNDED-family states (FUNDED, PAYMENT_PENDING, PAYMENT_CONFIRMED) hold the
  *   FUNDED vault box — an instance of `vault_funded.es` (R4 dealId, R5
- *   sellerPubKey, R6 buyerPubKey, R9 source-chain binding pinning the *buyer's* USDT
- *   address, R8 the plain `Long` timeoutHeight).
+ *   sellerPubKey, R6 buyerPubKey, R7 oracleNftId, R8 the plain `Long`
+ *   timeoutHeight).
  * - CLAIM_OPENED / CLAIMABLE hold the PAYMENT_PROVEN box — `vault_payment_proven.es`,
  *   created by path B, which carried the seller-signed handoff record (one Schnorr
  *   under the seller's R5 key over the P2PH cash-collection message).

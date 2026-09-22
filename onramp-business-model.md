@@ -106,13 +106,15 @@ model [spec] would reopen these questions, not inherit the answers.*
 Parallels the deck's fee-treasury model (slide 9): fees accumulate in a protocol treasury
 denominated in the operating asset, bridging into recurring revenue only when volume exists.
 
-**Collusion economics.** The attack to worry about on-ramp: the oracle attests to a fake digest of
-the seller's own "USDT transfer", releasing the vault without payment. In v2 the attestation
+**Collusion economics.** The attack to worry about on-ramp: the oracle attests to a fake
+payment — the seller's own "USDT transfer" — releasing the vault without payment. In v2 the attestation
 alone is sufficient for release, so in phase 1 there is **no on-chain defense** against a
 compromised or seller-captured oracle — that is accepted at launch and must be priced in
 honestly. The defense stack is operational and economic: (a) oracle operator ≠ marketplace
-operator, so a fake digest is never self-certifying; (b) every attestation is publicly auditable
-against source-chain data, so oracle fraud is ex-post provable and each false attestation is
+operator, so a fake attestation is never self-certifying; (b) every attestation is publicly auditable
+against source-chain data (via the oracle's off-chain records since the 2026-09-21 dealId-only
+payload no longer carries the source-chain tx reference on-chain — `specs/vault-contract.md` §9),
+so oracle fraud is ex-post provable and each false attestation is
 bounded by the per-deal size cap while the oracle is centralized; (c) in phase 2 the single
 trusted oracle is replaced by a k-of-n guard set holding slashable collateral — then the attack's
 profit is one vault's collateral while the cost is the guards' own locked collateral plus future

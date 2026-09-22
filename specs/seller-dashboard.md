@@ -103,8 +103,9 @@ Per the privacy-funding rule, no consolidated operator-wallet graph: amounts, no
 Claim rows (`GET /disputes`), sorted by maturation countdown — the deadline is the sort
 key. The evidence view juxtaposes the two artifacts (`specs/operator-backend.md` §7): the
 seller-signed handoff record (cash receipt acknowledged under the same key that reclaims
-the collateral) versus the oracle's payment attestation (did the seller's USDT transfer
-confirm?). Exactly three actions (`POST /disputes/{id}/{action}` — the action names are
+the collateral) versus the oracle's payment attestation — the bare `dealId` signal,
+posted on-chain, meaning "this deal's USDT transfer seller→buyer is done and screened"
+(did the seller's USDT transfer confirm?; the dispute row's `attestationDealId`). Exactly three actions (`POST /disputes/{id}/{action}` — the action names are
 the API's):
 
 - **Contest** (`contest`) — present the oracle attestation **alone** (path C′): mechanical whenever

@@ -101,7 +101,6 @@ class ClaimTxBuilderSpec {
         assertTrue(outBytes(out, 6).contentEquals(f.buyerKeys.pubKeyCompressed))
         assertEquals(1500L, outLong(out, 7)) // plain Long proofHeight
         assertTrue(outBytes(out, 8).contentEquals(SchnorrVerifier.blake2b256(sig.a, sig.z, record.encode())))
-        assertTrue(outBytes(out, 9).contentEquals(f.fundingBinding()))
     }
 
     @Test

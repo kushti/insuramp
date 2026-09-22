@@ -30,8 +30,8 @@ data class DisputeRow(
     val geoRef: String?,
     /** Whether the oracle has confirmed the seller's USDT transfer. */
     val oracleConfirmed: Boolean,
-    /** `blake2b256(attestation)` — the digest reference, once attested. */
-    val attestationDigest: String?,
+    /** The attested dealId hex — the evidence pointer, once attested. */
+    val attestationDealId: String?,
     val actioned: Boolean,
     val action: String?,
     /** The escalation hook already fired for this claim. */
@@ -68,7 +68,7 @@ class WebhookEscalation(
 /**
  * Dispute inbox, `specs/operator-backend.md` §7. Exactly three actions —
  * contest, accept, investigate — and nothing else. Contest is mechanical
- * whenever the oracle digest exists (path C′); accept concedes and records
+ * whenever the oracle attestation exists (path C′); accept concedes and records
  * the loss; investigate routes the deal to internal review of the handoff
  * evidence, changing nothing on-chain. The inbox is fail-loud: any claim
  * approaching maturation unactioned escalates through [escalation].
@@ -108,7 +108,7 @@ class DisputeInbox(
             handoffRecordRef = deal.handoffRecordHex,
             geoRef = deal.handoffGpsRef,
             oracleConfirmed = attestation != null,
-            attestationDigest = attestation?.let { p2pgate.backend.util.Hex.encode(it.digest()) },
+            attestationDealId = attestation?.let { p2pgate.backend.util.Hex.encode(it) },
             actioned = deal.claimAction != null,
             action = deal.claimAction,
             escalated = deal.escalated,
@@ -116,8 +116,9 @@ class DisputeInbox(
     }
 
     /**
-     * Contest: present the oracle digest of the seller's USDT transfer (vault
-     * path C′). Rejected without a digest on file — with one, it is mechanical.
+     * Contest: present the oracle attestation of the seller's USDT transfer
+     * (vault path C′). Rejected without an attestation on file — with one, it
+     * is mechanical.
      */
     fun contest(dealId: String, at: Instant = Instant.now()): ActionOutcome {
         val deal = store.getDeal(dealId) ?: return ActionOutcome.Rejected("unknown deal $dealId")

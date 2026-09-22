@@ -10,9 +10,12 @@ contract is ErgoScript tested via ergo-appkit/sigmastate JVM tooling.*
 **Two phases, one output format.** Phase 1 (launch): a **trusted centralized oracle**,
 authenticated on-chain by an NFT — a single trusted entity, stated plainly and not dressed
 up as anything else. Phase 2 (post-launch): a k-of-n guard threshold derived from the
-Rosen bridge's GuardSign/Lock contract pattern (§3.2). The **payment-proof digest format
-(§2) is identical in both phases** — the upgrade swaps only the authentication check in
-the vault contract, not the register layout, deal protocol, wire formats, or apps.
+Rosen bridge's GuardSign/Lock contract pattern (§3.2). The **payment-proof payload (§2) —
+the bare 32-byte `dealId` — is identical in both phases** — the upgrade swaps only the
+authentication check in the vault contract, not the register layout, deal protocol, wire
+formats, or apps. (The payload was simplified from a 112-byte field digest to the bare
+`dealId` pre-launch, 2026-09-21, §2.2; the old "this byte layout is permanent across
+phases" claim attached to that 112-byte layout and is superseded.)
 
 Timing constants used throughout are owned by `specs/vault-contract.md`: `RECLAIM_TIMEOUT`,
 `CLAIM_MATURATION`, `BTC_DEADLINE` (extension note only). (The in-contract
@@ -25,7 +28,7 @@ that never funded, with no on-chain footprint; the timeout branch FUNDED → REC
 no-show); the dispute branch PAYMENT_PENDING →
 CLAIM_OPENED → CLAIMABLE → CLAIMED (claim opens once cash is collected and the seller has not
 paid; claims without cause from PAYMENT_CONFIRMED are possible and are countered with the
-oracle digest alone). PAYMENT_CONFIRMED means the oracle confirmed the seller's USDT transfer;
+oracle attestation alone). PAYMENT_CONFIRMED means the oracle confirmed the seller's USDT transfer;
 the release follows without any buyer action.
 On-chain vault box states: FUNDED box → spent (routine release via path C or reclaim via
 path A), or FUNDED box → PAYMENT_PROVEN box → spent (dispute: contest via path C′ or
@@ -40,14 +43,17 @@ unilaterally — least of all the seller, whose own collateral release depends o
 
 The oracle's job is narrow:
 
-1. Observe the source chain for a USDT `Transfer` matching (deal's `recipientAddr` in R9 —
-   the buyer's USDT address, exact amount).
+1. Observe the source chain for a USDT `Transfer` matching the deal's registered
+   `(recipient, amount)` pair — the buyer's USDT address and the exact amount, registered
+   off-chain with the oracle's watch set at funding (§4.1).
 2. Wait for the source-chain confirmation rule (§4.2) to be satisfied.
 3. **Screen the transfer as non-tainted (§4.3)** — Tether blacklist/freeze exposure on
    Tron, sanctions screening on Ethereum. This is an attestation precondition.
 4. Attest the event by **publishing the attestation on-chain**: the oracle spends its
-   singleton box and re-creates it with the 112-byte payment-proof payload in R4 (the
-   classic oracle-pool datapoint pattern). Vault release paths (C/C′) then reference
+   singleton box and re-creates it with the bare **32-byte `dealId`** in R4 (the
+   classic oracle-pool datapoint pattern) — a per-deal signal meaning "this deal's USDT
+   transfer seller→buyer is done and the funds screened non-tainted". Vault release
+   paths (C/C′) then reference
    that box as a **data input** — on-ramp, **only the release** — the vault contract
    authenticates the oracle by its NFT (§3.1). The oracle never signs buyer/seller
    transactions.
@@ -61,7 +67,8 @@ sufficient** on the release paths (§5.3 says this without euphemism).
 The clean flip versus the off-ramp reading: the off-ramp gated the *claim* on the oracle
 (proof the buyer paid); the on-ramp gates the *claim* on the **seller-signed handoff record**
 (proof cash was collected — there is no payment for an oracle to attest at claim time) and
-gates *release* on the oracle digest alone (proof the seller's USDT arrived,
+gates *release* on the oracle's attestation alone (the dealId signal: the seller's USDT
+arrived,
 `specs/deal-protocol.md` §1). Path B therefore involves the oracle **not at all**.
 
 The attestation is consumed two ways:
@@ -69,17 +76,18 @@ The attestation is consumed two ways:
 1. **Off-chain:** the oracle's confirmation signal advances the deal from
    PAYMENT_PENDING to PAYMENT_CONFIRMED — the buyer's "USDT confirmed" indicator. The
    FUNDED box is untouched.
-2. **On-chain:** the attestation box is a **data input** to the release (path C: oracle
-   digest alone, routine close; path C′: the same digest from the PAYMENT_PROVEN box,
-   contesting a claim). The digest rides in the data input's R4 — the PAYMENT_PROVEN
-   box carries the handoff record, not the digest. Data-input scripts never execute, so
+2. **On-chain:** the attestation box is a **data input** to the release (path C: the
+   attestation alone, routine close; path C′: the same attestation from the PAYMENT_PROVEN
+   box, contesting a claim). The attested `dealId` rides in the data input's R4 — the
+   PAYMENT_PROVEN
+   box carries the handoff record, not the attestation. Data-input scripts never execute, so
    **the release transaction contains no oracle signature**; NFT custody is the
    authenticity anchor (§3.1, §5.3). **The attestation alone is sufficient on both
    paths: there is no receipt signature anywhere in the protocol.** The release follows
    the attestation without any buyer action — which is exactly why the phase-1 oracle is
    trusted, period (§5.3).
 
-## 2. Payment-proof digest format (permanent — both phases)
+## 2. Payment-proof payload (permanent — both phases)
 
 ### 2.1 ErgoTree constraint
 
@@ -88,45 +96,43 @@ ErgoScript hash opcodes are `blake2b256` and `sha256` only — no Keccak-256. Co
 - The contract **cannot** re-derive an Ethereum/Tron transaction hash or verify a
   Merkle-Patricia proof of the `Transfer` log in-script. Source-chain data arrives as
   opaque bytes attested by the oracle.
-- What the contract **can** do: check attestation fields against box registers, hash with
-  `blake2b256`, and verify Schnorr signatures on secp256k1 (used for the handoff record
-  and the guard threshold in phase 2).
+- What the contract **can** do: compare bytes across boxes, hash with `blake2b256`,
+  and verify Schnorr signatures on secp256k1 (used for the handoff record and the guard
+  threshold in phase 2).
 
-So the digest is designed so that every field is either (a) fixed at vault funding time
-and stored in the FUNDED box registers (R4 `dealId`; R9 `srcChainId`/`tokenId`/
-`recipientAddr`/`expectedAmount`), or (b) supplied by the attestation and checked against
-those registers in the release spend.
+### 2.2 The payload: the bare 32-byte `dealId`
 
-### 2.2 Byte layout
+The on-chain attestation is exactly **the 32-byte `dealId`** (`blake2b256(deal terms)`,
+per `specs/deal-protocol.md` §3.1) — the hash of the payment data — written into the
+oracle singleton's R4. The hash binds the payment-critical deal terms: the `amount`,
+the `asset`, the `srcChainId`, and both parties' deal keys (with the nonce and expiry).
+Everything else is agreed elsewhere: the vault's registers (on-chain) and the oracle's
+watch set (off-chain, §4.1). The dealId is a bare per-deal signal meaning: *this deal's
+USDT transfer seller→buyer is done, and the funds screened non-tainted.* Nothing else
+rides on-chain: no source-chain ids, no recipient,
+no amount, no `srcTxId`/block coordinates — those existed in an earlier 112-byte field
+layout and were removed **pre-launch, 2026-09-21** (the `PaymentAttestation` codec that
+encoded them is deleted; the vault's R9 funding binding is deleted with them).
 
-All integers big-endian. `digest = blake2b256(payload)` where `payload` is the exact
-concatenation:
+Consequences, stated plainly:
 
-| Offset | Field | Size | Set at | Notes |
-|---|---|---|---|---|
-| 0 | `version` | 1 B | funding | `0x01`; bump on format change |
-| 1 | `dealId` | 32 B | funding | `blake2b256(deal terms)` per `specs/deal-protocol.md` §3.1; binds the proof to one deal |
-| 33 | `srcChainId` | 1 B | funding | registry shared with the deal terms: `0x01` = Tron, `0x02` = Ethereum |
-| 34 | `tokenId` | 1 B | funding | `0x01` = USDT on the given chain (mirrors the deal-terms `asset` byte); guards against a same-address different-token attestation |
-| 35 | `recipient` | 21 B | funding | source-chain address payload, left-padded with zeros: 21 B Tron (base58check payload), 20 B Ethereum (right-aligned). **On-ramp: the buyer's USDT receive address** (R9 `recipientAddr` — the seller pays the buyer) |
-| 56 | `amount` | 8 B | funding | uint64 in USDT base units (6 decimals on both chains); exact-amount deals only — no partial-payment semantics |
-| 64 | `srcTxId` | 32 B | attestation | source-chain tx hash as opaque bytes (Tron/ETH hashes are both 32 B; no hashing of it required in-script) |
-| 96 | `srcBlockHeight` | 8 B | attestation | uint64 |
-| 104 | `srcBlockTime` | 8 B | attestation | uint64, unix seconds |
-
-Total payload: 112 bytes; digest: 32 bytes. [solid] for sizes; the chain/token registries
-are shared with the deal-terms format in `specs/deal-protocol.md` §3.1.
-
-**This layout is the permanent oracle output format.** The phase-2 threshold upgrade
-(§3.2) must keep it byte-identical: guards sign this same digest, and the vault's field
-checks are untouched.
-
-The funding-set fields are pinned in the vault box registers when the FUNDED box is
-created. The contract slices the attestation-supplied payload and checks
-`dealId`/`srcChainId`/`tokenId`/`recipient`/`amount` against its registers — the oracle
-cannot attest a different deal, address, or amount for *this* vault. Replay safety:
-`dealId` is unique per deal; cross-chain replay is excluded by `srcChainId`, cross-token
-by `tokenId`.
+- **"The USDT went to the right address" is wholly the oracle's off-chain assertion.**
+  The buyer's USDT receive address is not part of the `dealId` (the deal-terms hash) and
+  is no longer pinned anywhere on-chain: the oracle's observer matched the exact
+  `(recipient, amount)` transfer registered with its watch set at funding (§4.1), and
+  the contract cannot check any of that. The same holds for confirmation depth (§4.2)
+  and the taint screen (§4.3) — all are attestation preconditions the oracle enforces
+  off-chain before it will post the dealId.
+- **Replay safety** is unchanged: the `dealId` is unique per deal, and the release
+  path checks `dataInput.R4 == vault.R4` (§3.1), so an attestation posted for deal X
+  releases nothing of deal Y's. Cross-chain/cross-token confusion is excluded the same
+  way it always was — `srcChainId`/`asset` are bytes of the deal terms, hence of the
+  `dealId` itself.
+- **The 32-byte `dealId` is the permanent oracle output format.** The earlier claim that
+  the 112-byte field layout was permanent across phases is superseded: the format was
+  simplified pre-launch (2026-09-21) and the bare `dealId` is what both phases carry.
+  In phase 2 the guard set threshold-signs this same 32 bytes (equivalently
+  `blake2b256(dealId)`) per §3.2 — no register layout, wire format, or app change.
 
 ## 3. Authenticating the oracle
 
@@ -134,15 +140,18 @@ by `tokenId`.
 
 - A single **oracle box** on Ergo carries `ORACLE_NFT` (a compile-time constant of the
   vault contract, also pinned in each vault's R7 so vaults survive oracle-box moves) and
-  is governed by `proveDlog(oracleKey)`. Its R4 holds the current 112-byte attestation
-  payload (§2.2).
+  is governed by `proveDlog(oracleKey)`. Its R4 holds the current attestation: the bare
+  32-byte `dealId` (§2.2).
 - Any vault spend that needs the payment proof — on-ramp, the release paths C and C′
   only — **includes the oracle box as a data input** (`CONTEXT.dataInputs(0)`). The
-  vault contract checks the data input's token id against R7 (or the compile-time pin)
-  and the payload's `dealId`/`srcChainId`/`tokenId`/`recipient`/`amount` against R4/R9.
+  vault contract checks exactly two things about it: the data input's token id equals R7
+  (or the compile-time pin), and **`dataInput.R4 == vault.R4`** — the attested `dealId`
+  equals this vault's own deal id. There are no payload-field slice checks anymore: the
+  dealId equality is the whole binding.
   Because data-input scripts never execute, **no oracle signature exists in the release
   transaction** — authenticity reduces to NFT custody, and any box carrying the oracle
-  NFT with a matching R4 payload passes, foreign-script boxes included (`specs/vault-contract.md`
+  NFT with R4 equal to the vault's `dealId` passes, foreign-script boxes included
+  (`specs/vault-contract.md`
   §7 test 20; §5.3 states this honestly). The claim path (B) takes no oracle input at
   all: it is gated on the seller-signed handoff record.
 - **One attestation in flight (hard serialization constraint).** The attestation box is
@@ -155,7 +164,8 @@ by `tokenId`.
   throughput to one pending release at a time and makes prompt operator-side release
   submission part of the oracle's liveness.
 - The oracle publishes an attestation **only after** its daemon has confirmed the
-  seller's USDT transfer to the R9 recipient per §4.2 **and** the transfer has passed
+  seller's USDT transfer to the buyer's registered receive address (the watch-set entry
+  created at funding) per §4.2 **and** the transfer has passed
   the §4.3 taint screen. Refusing to attest is the oracle's only *honest* power; it
   cannot redirect funds (the vault's own paths fix every output) — but note its
   attestation alone releases the vault, so a *dishonest* posting moves collateral with
@@ -167,8 +177,8 @@ by `tokenId`.
   backend resolves the attestation box through `OracleClient.attestationBoxFor(dealId):
   ChainBox?`, with the in-process `DevOracle` wired in tests/dev (and in the e2e gate,
   which mints a dev-oracle NFT and drives the full release/contest flows); production
-  swaps in a remote attestation-box provider behind the same seam. `DevOracle.attestationBox(attestation)`
-  builds the box; the old `OracleSigner` / `DevOracle.signer()` / `releaseInputBox()`
+  swaps in a remote attestation-box provider behind the same seam. `DevOracle.attestationBox(dealId)`
+  builds the box (R4 = the bare `dealId`); the old `OracleSigner` / `DevOracle.signer()` / `releaseInputBox()`
   co-signing seam is deleted — the backend's dev whole-tx co-signing deviation is gone
   with it.
 - Key management: `oracleKey` in an HSM or encrypted keystore; the oracle box is
@@ -181,12 +191,13 @@ by `tokenId`.
 ### 3.2 Phase 2 — k-of-n guard threshold (Rosen-derived, post-launch)
 
 The upgrade replaces exactly one check in the vault contract: "the data input carries
-the oracle NFT and its R4 payload matches R4/R9" becomes "the data input is the
+the oracle NFT and its R4 equals the vault's `dealId`" becomes "the data input is the
 guard-set box (NFT) providing `Coll[Coll[Byte]]` guard keys + threshold, and
-`atLeast(k, guardPks)` sign the digest (per the Schnorr verification in
+`atLeast(k, guardPks)` sign the **32-byte `dealId`** (equivalently
+`blake2b256(dealId)`) (per the Schnorr verification in
 `specs/vault-contract.md` §5)" — the guard signatures ride in the release tx as context
 vars, restoring a cryptographic gate where phase 1 has NFT custody only. Everything
-else — digest format, register layout, wire formats, apps — is untouched. The claim
+else — payload, register layout, wire formats, apps — is untouched. The claim
 path stays oracle-free in both phases.
 
 This pattern is not invented; it is lifted from the Rosen bridge's production contracts
@@ -246,8 +257,10 @@ phase 2 multiplies signers without reshaping the oracle.
 
 **Implementation status (M3, 2026-09-17):** this daemon is not yet deployed, and no
 source-chain observer exists yet — stated plainly. What has landed is the *seam* and
-the attestation machinery: the 112-byte `PaymentAttestation` payload (`:apps:core:ergo`),
-the `DevOracle` (NFT-bearing oracle box; `DevOracle.attestationBox(attestation)` builds
+the attestation machinery: the 32-byte `dealId` attestation payload (`:apps:core:ergo` —
+`DevOracle.attest(terms) = terms.dealId`; the 112-byte `PaymentAttestation` codec that
+preceded it is deleted, 2026-09-21),
+the `DevOracle` (NFT-bearing oracle box; `DevOracle.attestationBox(dealId)` builds
 the release's data input — the old whole-tx co-signing `OracleSigner` seam is deleted),
 the backend's `OracleClient`/`DevOracleClient` (attestation registry + liveness probe +
 `attestationBoxFor` + the serialization rule of §3.1), and the e2e gate driving release
@@ -286,20 +299,25 @@ not an observation of Tron/Ethereum.
   before it can become signable; a transfer that fails screening is never attested.
 - **Signing oracle.** Holds `oracleKey` (HSM or encrypted keystore). Its one on-chain
   write is the **attestation posting**: spend the singleton and re-create it at
-  `OUTPUTS(0)` with the 112-byte payload in R4 — but only after verifying the deal event
-  is signable: confirmed per §4.2, screened per §4.3, and the payload fields match the
-  confirmed event. Refuses: unsigned/unconfirmed events, field mismatches, events that
-  failed the taint screen, and a second `srcTxId` for the same `dealId` (one payment per
-  deal — the vault accepts exactly one). It never sees or signs buyer/seller
+  `OUTPUTS(0)` with the deal's 32-byte `dealId` in R4 — but only after verifying the deal
+  event is signable: the observed `(recipient, amount)` exactly matches the watch-set
+  entry created at funding, confirmed per §4.2, and screened per §4.3. Refuses:
+  unsigned/unconfirmed events, watch-set mismatches (wrong address, wrong amount — a
+  partial or misdirected transfer is never attested), events that failed the taint
+  screen, and **a second attestation for the same `dealId`** (one payment per deal — the
+  vault accepts exactly one). It never sees or signs buyer/seller
   transactions. **Serialization:** one attestation in flight — it never posts deal Y's
   attestation while the release using deal X's attestation is unconfirmed; a
   mempool-pending release blocks the next posting, re-checked by deal id / box id (§3.1).
 - **Attestation API (Ktor).** External surface:
-  - `POST /v1/attestations` with `{ dealId }` → `{ boxId, payload }` — the current
+  - `POST /v1/attestations` with `{ dealId }` → `{ boxId, payload }` where `payload`
+    **is the attested 32-byte `dealId`** — the current
     attestation box, ready to be attached as the release's data input, once the event is
     confirmed and screened; or `202` with confirmation progress (`{ srcTxId, height,
     confirmations, required }`) while pending (or `409` while a previous attestation is
-    still in flight per the serialization rule). The release transaction itself is built
+    still in flight per the serialization rule). `srcTxId` here is **off-chain
+    metadata** — it no longer exists on-chain anywhere; it is how the operator can
+    audit which source-chain transfer the oracle is tracking/attested (§5.3). The release transaction itself is built
     and signed by the operator backend alone — the oracle never sees it. The operator
     backend polls this to advance the deal to PAYMENT_CONFIRMED and to fetch the
     attestation box for the release; the buyer app reads confirmation status through the
@@ -374,8 +392,8 @@ release path it is trusted *completely*.** On-ramp, the oracle gates *release*, 
 attestation is **solely sufficient**: a malicious or compromised oracle can attest a
 payment that never happened — a seller-run oracle could publish a fake attestation of
 its own "payment", and since the release path's authenticity anchor is NFT custody alone
-(data-input scripts never execute), any box carrying the NFT with a matching payload
-moves the collateral — with **no on-chain defense of any kind**. There is no buyer
+(data-input scripts never execute), any box carrying the NFT with R4 equal to the
+vault's `dealId` moves the collateral — with **no on-chain defense of any kind**. There is no buyer
 signature on the release paths to withhold, and none to save a cheated buyer.
 This is a deliberate launch trade-off, not a discovery, and it is accepted for phase 1.
 It is exactly why:
@@ -390,13 +408,19 @@ Mitigations beyond those two structural points — all operational, none cryptog
 
 - **Separation:** the oracle key is not the seller's vault key. Collusion then requires
   two entities, not one insider.
-- **Transparency:** every attestation is on-chain (the payload sits in the singleton
-  box's R4, readable by anyone) and auditable against public source-chain data — anyone
-  can check that an attested `srcTxId` really paid `recipient`/`amount`. False
-  attestations are publicly detectable after the fact, so oracle fraud is **ex-post
-  provable** and the oracle's reputation (and phase-2 prospects) is continuously on the
-  line. That is all that may be promised — detection and recourse after the fact, not
-  prevention.
+- **Transparency, weakened — said plainly:** every attestation is still on-chain (the
+  `dealId` sits in the singleton box's R4, readable by anyone), but since the 2026-09-21
+  payload simplification the on-chain bytes are *only* the dealId — `srcTxId`,
+  `srcBlockHeight`, `srcBlockTime` no longer exist on-chain. Ex-post audit of an
+  attestation (which source-chain tx the oracle attested) has therefore moved to the
+  oracle's **off-chain API** (the attestation service keeps the srcTxId/progress
+  metadata, §4.1): anyone can still check a recorded srcTxId against public source-chain
+  data, but they must take the oracle's word for which tx it attested. False
+  attestations remain **ex-post provable** in the weaker sense — the oracle publishes
+  its records and can be caught contradicting the source chain — but the public
+  verifiability story is weaker than it was when the srcTxId rode on-chain, and this
+  spec does not pretend otherwise. That is all that may be promised — detection and
+  recourse after the fact, not prevention.
 - **Blast radius cap:** max deal size = vault capacity is already enforced
   operator-side; protocol-level deal-size caps while the oracle is centralized keep a
   single false attestation small.
@@ -431,8 +455,10 @@ Phase 2 restores the design's intended posture: not trustless, but cost-to-attac
 - **XMR leg (rsXMR, proposed).** Identical machinery, different observer: the oracle
   (phase 2: each watcher) re-runs `check_tx_key` verification against its own Monero
   daemon (all daemon RPC, automatable — `onramp-insurance.md` §3.3) and attests the same
-  digest format with `srcChainId` extended to Monero (`srcTxId` = Monero tx hash, opaque
-  32 B; `recipient` repurposed to the deal's one-time XMR address hash). For XMR the
+  signal — the bare 32-byte `dealId`, meaning "this deal's XMR transfer seller→buyer is
+  done" (with `srcChainId` extended to Monero in the deal terms, so the dealId itself is
+  chain-bound; the Monero tx hash lives only in the oracle's off-chain records, same as
+  the USDT leg's srcTxId). For XMR the
   oracle is **mandatory, not a fallback** — no trustless in-script path exists (no
   Keccak-256 in ErgoTree). Rosen's own Monero R&D (`docs/r-and-d/bringing-monero.md`)
   converges on the same `check_tx_proof`-published-on-Ergo design.

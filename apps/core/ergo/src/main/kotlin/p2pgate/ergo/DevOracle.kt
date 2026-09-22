@@ -13,9 +13,9 @@ import java.math.BigInteger
 /**
  * The phase-1 oracle as a dev/test object (`specs/oracle-integration.md` §4 —
  * dev mode): holds the oracle Dlog key and NFT id, compiles `oracle.es`,
- * constructs oracle boxes, and mints [PaymentAttestation]s for deals.
- * No real Tron/Ethereum observation happens here: the CALLER asserts the
- * seller's transfer happened (the e2e harness drives it); the production
+ * constructs oracle boxes, and posts deal attestations. No real Tron/Ethereum
+ * observation happens here: the CALLER asserts the seller's transfer happened
+ * and screened non-tainted (the e2e harness drives it); the production
  * observers replace this class behind the backend's oracle client seam.
  *
  * ## How the attestation reaches the release
@@ -26,9 +26,11 @@ import java.math.BigInteger
  * oracle does NOT co-sign releases. The oracle's on-chain involvement is
  * posting the attestation: it spends its singleton box (governed by
  * `oracle.es`, which pins the NFT + value reproduction at `OUTPUTS(0)`; its
- * registers are unconstrained) and recreates it with R4 = the 112-byte
- * payload. [attestationBox] models that posted box; [oracleChainBox] models
- * the at-rest box (no registers) the rotation spends.
+ * registers are unconstrained) and recreates it with R4 = the 32-byte dealId
+ * — the single per-deal signal "this deal's USDT transfer seller→buyer is
+ * done and non-tainted" (specs/oracle-integration.md §2). [attestationBox]
+ * models that posted box; [oracleChainBox] models the at-rest box (no
+ * registers) the rotation spends.
  */
 class DevOracle(
     /** The oracle Dlog secret (HSM/encrypted keystore in production). */
@@ -88,44 +90,37 @@ class DevOracle(
 
     /**
      * The oracle box as the release/contest tx sees it: the `oracle.es`-governed
-     * singleton carrying the NFT and R4 = the 112-byte [attestation] payload
-     * (the result of the oracle's attestation-posting rotation). Attached as a
-     * DATA INPUT — the script never executes, so no oracle signature is needed.
+     * singleton carrying the NFT and R4 = the 32-byte dealId (the result of the
+     * oracle's attestation-posting rotation). Attached as a DATA INPUT — the
+     * script never executes, so no oracle signature is needed.
      */
     fun attestationBox(
-        attestation: PaymentAttestation,
+        dealId: ByteArray,
         boxId: String = this.boxId,
         transactionId: String = this.transactionId,
-    ): ChainBox = ChainBox(
-        boxId = boxId,
-        transactionId = transactionId,
-        index = 0,
-        value = boxValueNanoErg,
-        creationHeight = 0,
-        ergoTreeHex = ErgoValues.treeHex(tree),
-        address = "",
-        tokens = listOf(ChainToken(Base16.encode(oracleNftId), 1L)),
-        registers = listOf(ChainRegister.CollBytes(attestation.encode()), null, null, null, null, null),
-    )
+    ): ChainBox {
+        require(dealId.size == 32) { "dealId must be 32 bytes, got ${dealId.size}" }
+        return ChainBox(
+            boxId = boxId,
+            transactionId = transactionId,
+            index = 0,
+            value = boxValueNanoErg,
+            creationHeight = 0,
+            ergoTreeHex = ErgoValues.treeHex(tree),
+            address = "",
+            tokens = listOf(ChainToken(Base16.encode(oracleNftId), 1L)),
+            registers = listOf(ChainRegister.CollBytes(dealId), null, null, null, null, null),
+        )
+    }
 
     /**
-     * Dev-mode attestation (`specs/oracle-integration.md` §2.2): the caller
+     * Dev-mode attestation (`specs/oracle-integration.md` §2): the caller
      * asserts the seller's USDT transfer to the buyer's address happened on the
-     * source chain; the funding-set fields are derived from the deal terms.
+     * source chain and screened non-tainted — both preconditions are off-chain.
+     * The attestation itself is just the deal's id: the single per-deal signal
+     * the release paths check.
      */
-    fun attest(
-        dealTerms: DealTerms,
-        recipientAddr: ByteArray,
-        srcTxId: ByteArray,
-        srcBlockHeight: Long,
-        srcBlockTime: Long,
-    ): PaymentAttestation = PaymentAttestation.build(
-        dealTerms = dealTerms,
-        recipientAddr = recipientAddr,
-        srcTxId = srcTxId,
-        srcBlockHeight = srcBlockHeight,
-        srcBlockTime = srcBlockTime,
-    )
+    fun attest(dealTerms: DealTerms): ByteArray = dealTerms.dealId
 
     companion object {
         private val spec = CustomNamedCurves.getByName("secp256k1")

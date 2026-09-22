@@ -34,12 +34,12 @@ collateral in a vault box governed by a script with multiple spending paths:
 |---|---|---|
 | Timeout | `RECLAIM_TIMEOUT` (24h) passes with no claim | Seller reclaims collateral (buyer no-show) |
 | Cash-collection proof | The **seller-signed handoff record**: a Schnorr signature from `sellerPubKey` (the same R5 key that reclaims the collateral) over the cash-received message | Buyer can claim the collateral (after `CLAIM_MATURATION`, 12h) |
-| Payment proof | Oracle digest of the **seller's** USDT transfer to the buyer (recipient pinned at funding) — the attestation alone | Collateral released to the seller immediately |
+| Payment proof | The oracle's on-chain attestation of the **seller's** USDT transfer to the buyer — the bare 32-byte `dealId` signal (the receive address is registered with the oracle off-chain at funding, not pinned on-chain) — the attestation alone | Collateral released to the seller immediately |
 
 The proof roles flip cleanly with the direction. The on-ramp has no payment for an oracle to attest
 at claim time (cash has no oracle — never claim a trustless cash proof), so the **claim** is gated
 on the seller-signed handoff record collected physically at the meeting, while the **release** is
-gated on the oracle digest of the seller's USDT transfer — and on nothing else: the attestation
+gated on the oracle's attestation of the seller's USDT transfer — and on nothing else: the attestation
 alone moves the collateral. The seller's own signature never releases the vault (self-attestation
 protects nobody), but the phase-1 oracle's attestation does — that trust is stated plainly in §3.1
 and §5, not dressed up.
@@ -86,7 +86,9 @@ The contested event differs per leg, and that — not the vault — is where the
 On-ramp shape (buyer hands cash, seller sends USDT afterwards):
 
 1. Buyer and seller agree terms (quote). No reputation vetting. The buyer shares a USDT receive
-   address, pinned in the vault at funding (R9 `recipientAddr` — the seller pays the buyer), and
+   address, registered with the operator/oracle watch set **off-chain** at funding (since
+   2026-09-21 it is no longer pinned on-chain — the vault's R9 `recipientAddr` binding is
+   removed; the seller pays the buyer), and
    the deal terms pin the two deal keys: `buyerPubKey` and `sellerPubKey`
    (`specs/deal-protocol.md` §3.1).
 2. Seller does its standard AML check — off-chain, seller-side, regardless of everything else;
@@ -96,13 +98,13 @@ On-ramp shape (buyer hands cash, seller sends USDT afterwards):
 4. At the meeting, the buyer hands over the cash and watches the seller count it; the seller
    signs the handoff record only after the count; the buyer does not leave until their app shows
    the verified seller-signed record, checked against the deal terms.
-5. Seller sends the USDT to the buyer's pinned address; the phase-1 oracle observes the transfer
+5. Seller sends the USDT to the buyer's registered receive address; the phase-1 oracle observes the transfer
    and **screens it as non-tainted before attesting** (Tether blacklist/freeze exposure on Tron,
    sanctions screening on Ethereum — a heuristic: Tether can freeze after attestation, so
    screening at attestation time is not a guarantee; `specs/oracle-integration.md` §4).
 6. Resolution:
    - **Routine:** the oracle attests the transfer and the seller releases the vault with the
-     oracle digest alone — immediate payout (path C). No buyer action is required at any point
+     oracle's attestation alone — immediate payout (path C). No buyer action is required at any point
      after the meeting; the release follows the attestation.
    - **Seller collected the cash but never paid:** the buyer opens the claim with the
      seller-signed handoff record (path B); after `CLAIM_MATURATION` (12h) the buyer claims the
@@ -115,12 +117,18 @@ On-ramp shape (buyer hands cash, seller sends USDT afterwards):
 
 **Trust model:** the payment-proof path trusts the oracle — *completely*. In practice the phase-1
 deployment is a single trusted centralized oracle authenticated on-chain by NFT, upgraded
-post-launch to a Rosen-derived guard threshold with a byte-identical payment-proof format (two
+post-launch to a Rosen-derived guard threshold over the same 32-byte `dealId` payload (two
 phases: `specs/oracle-integration.md`). Say "trusted" for phase 1 and mean it: the attestation
 alone releases the vault, so a compromised or malicious oracle can attest a payment that never
 happened and take the collateral — there is no on-chain defense, and that is accepted at launch.
-What remains is operational: oracle operator ≠ marketplace operator, publicly auditable
-attestations (a false attestation is ex-post provable against public source-chain data, and each
+Since the 2026-09-21 payload simplification the on-chain attestation is only the bare `dealId`:
+"the USDT went to the buyer's address, in the exact amount, screened non-tainted" is wholly the
+oracle's off-chain assertion, and which source-chain tx was attested is auditable only through
+the oracle's off-chain records — the public verifiability story is correspondingly weaker and
+this doc does not pretend otherwise.
+What remains is operational: oracle operator ≠ marketplace operator, publicly
+auditable attestations (a false attestation is ex-post provable against public source-chain
+data via the oracle's records, and each
 one is bounded by the per-deal size cap while the oracle is centralized), and the phase-2
 threshold upgrade. The claim path, by contrast, involves no oracle at all — and its artifact
 is now seller-signed under the same R5 key that reclaims the collateral. Consequences,
@@ -139,14 +147,20 @@ v2 design (2026-09-13): R7 holds the bare 32-byte
 `oracleNftId` (the old two-key packing is gone), claim path B is gated on the
 seller-signed handoff record with no oracle input, and the release paths C/C′ take the
 oracle's attestation box as a **data input** — the attestation alone, no oracle signature
-in the release tx, no receipt signature anywhere. The tested suite is the on-ramp
-matrix in `specs/vault-contract.md` §7 (44 tests + 8 oracle-box tests, green — the
-2026-09-18 fee removal deleted the old fee tests, 35a–35e);
+in the release tx, no receipt signature anywhere. (2026-09-21, pre-launch: the attestation
+payload was simplified to the bare 32-byte `dealId` — the vault's R9 funding binding and
+all payload-field slice checks are removed; `specs/vault-contract.md` §8.4.) The tested
+suite is the on-ramp
+matrix in `specs/vault-contract.md` §7 (40 tests + 8 oracle-box tests, green — the
+2026-09-18 fee removal deleted the old fee tests, 35a–35e, and the 2026-09-21
+dealId-only payload deleted tests 22, 23, 25, 29);
 `specs/deal-protocol.md` is canonical for roles and wire formats (its state machine and wire
 formats are implemented and tested in `apps/core/dealprotocol/`). On top of that: the chain layer
 landed 2026-09-16 (M2, extended M3-A) in `apps/core/ergo/` — explorer-backed `ChainSource`,
 `VaultBoxTracker`, the claim txs (`ClaimTxBuilder`), the operator-side txs
-(`OperatorTxBuilder`: fund/reclaim/release/contest), the 112-byte `PaymentAttestation`, and the
+(`OperatorTxBuilder`: fund/reclaim/release/contest), the 32-byte `dealId` attestation
+(`DevOracle.attest(terms) = terms.dealId` — the 112-byte `PaymentAttestation` codec
+that preceded it was deleted 2026-09-21), and the
 `DevOracle` attestation-box seam; the Ktor operator backend landed 2026-09-17 (M3-B, `backend/`);
 the 2026-09-17 data-input rework removed the `OracleSigner` co-signing seam — release txs
 now reference the oracle box as a data input, with the attestation serialized one in
@@ -262,7 +276,9 @@ release path (§3.1).
   oracle's attestation alone releases the vault, so a compromised oracle can attest a fake
   payment and steal the collateral, and nothing on-chain prevents it. That is accepted at
   launch. The mitigations are operational: oracle operator ≠ marketplace operator, publicly
-  auditable attestations (oracle fraud is ex-post provable against source-chain data and bounded
+  auditable attestations (oracle fraud is ex-post provable against source-chain data — via the
+  oracle's off-chain records since the 2026-09-21 dealId-only payload no longer carries the
+  attested srcTxId on-chain — and bounded
   per deal), and deal-size caps while the oracle is centralized. Do not use "cost-to-attack"
   language for phase 1 — there is no threshold to attack; that framing returns only with the
   phase-2 guard set.

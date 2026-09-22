@@ -43,10 +43,6 @@ class VaultFixture(
     val oracleNftId: ByteArray = ByteArray(32) { (it * 5 + 1).toByte() }
     val wrongNftId: ByteArray = ByteArray(32) { (it * 11 + 2).toByte() }
     val dealId: ByteArray = ByteArray(32) { (it * 13 + 4).toByte() }
-    val srcTxId: ByteArray = ByteArray(32) { (it * 17 + 5).toByte() }
-    val recipientAddr: ByteArray = ByteArray(21) { (it * 19 + 6).toByte() } // the buyer's USDT address (the seller pays the buyer)
-    val chainId: Byte = 1 // Tron — registry in specs/deal-protocol.md §3.1
-    val tokenId: Byte = 1 // USDT
 
     /** R7 of the FUNDED box: the 32-byte oracleNftId (release paths only; path B
      *  no longer reads R7 — the record signature verifies under R5's seller key). */
@@ -104,24 +100,13 @@ class VaultFixture(
     fun recordId(record: ByteArray, sig: Schnorr.Signature): ByteArray =
         SigmaBridge.blake2b256(sig.a + sig.z + record)
 
-    /** 112-byte payment-proof payload: version, dealId, chain/token, recipient, amount, srcTxId, block. */
-    fun paymentPayload(
-        amount: Long = dealAmount,
-        dealId: ByteArray = this.dealId,
-        recipientAddr: ByteArray = this.recipientAddr,
-        srcTxId: ByteArray = this.srcTxId,
-        srcHeight: Long = 12_345L,
-        srcTime: Long = 1_700_000_000L,
-    ): ByteArray =
-        byteArrayOf(1) + dealId + byteArrayOf(chainId, tokenId) + recipientAddr + amount.toBe(8) +
-            srcTxId + srcHeight.toBe(8) + srcTime.toBe(8)
+    /** The oracle attestation payload: exactly the 32-byte dealId, nothing else
+     *  (specs/oracle-integration.md §2.2). */
+    fun paymentPayload(dealId: ByteArray = this.dealId): ByteArray = dealId
 
     // --- registers ---
 
     private fun bytesC(b: ByteArray): EvaluatedValue<out SType> = SigmaBridge.bytesConst(b)
-
-    /** The R9 funding binding shared by the FUNDED box and the PAYMENT_PROVEN copy. */
-    val fundingBinding: ByteArray = byteArrayOf(chainId, tokenId) + recipientAddr + dealAmount.toBe(8)
 
     /** The FUNDED box's registers: R8 is the plain `Long` timeoutHeight (§3.1). */
     val fundedRegs = SigmaBridge.regs(
@@ -131,7 +116,6 @@ class VaultFixture(
             t(SigmaBridge.regId(6), bytesC(buyerPk)),
             t(SigmaBridge.regId(7), bytesC(fundedR7)),
             t(SigmaBridge.regId(8), SigmaBridge.longVal(timeoutHeight.toLong()) as EvaluatedValue<out SType>),
-            t(SigmaBridge.regId(9), bytesC(fundingBinding)),
         ),
     )
 
@@ -143,7 +127,6 @@ class VaultFixture(
             t(SigmaBridge.regId(6), bytesC(buyerPk)),
             t(SigmaBridge.regId(7), SigmaBridge.longVal(proofHeight.toLong()) as EvaluatedValue<out SType>),
             t(SigmaBridge.regId(8), bytesC(recordId)),
-            t(SigmaBridge.regId(9), bytesC(fundingBinding)),
         ),
     )
 
@@ -166,7 +149,7 @@ class VaultFixture(
 
     /**
      * The oracle singleton box as the release DATA INPUT: the oracle.es tree
-     * (never executed as a data input), the NFT, and R4 = the 112-byte
+     * (never executed as a data input), the NFT, and R4 = the 32-byte dealId
      * attestation payload (specs/oracle-integration.md §2.2). Parameterize
      * [payload]/[nftId]/[tree] for the adversarial release tests.
      */

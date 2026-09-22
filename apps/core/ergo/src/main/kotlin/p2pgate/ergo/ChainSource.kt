@@ -41,7 +41,7 @@ sealed interface ChainRegister {
     /** The sigma-serialized constant bytes (exactly what explorers serve as hex). */
     val serialized: ByteArray
 
-    /** `Coll[Byte]` register (e.g. dealId, pubkeys, oracleNftId, record id, R9 binding). */
+    /** `Coll[Byte]` register (e.g. dealId, pubkeys, oracleNftId, record id). */
     class CollBytes(
         val value: ByteArray,
         override val serialized: ByteArray = ErgoValues.serializedBytes(value),

@@ -64,7 +64,7 @@ Three states, always rendered top-to-bottom with the pending ones greyed:
 Per-state details:
 
 - **State 2 — hand over cash.** Meeting point revealed at FUNDED; a countdown shows the vault timeout (`RECLAIM_TIMEOUT`, 24h). The handoff record is created live at the meeting: the buyer hands over the cash, watches the seller count it, and the seller signs the record only after the count. The app validates the record against the deal terms (amount, currency, deal id), verifies the seller's signature against the seller key pinned in the deal terms (the vault's R5 key), and shows the **"safe to leave the meeting" indicator** — record received + validated — only once the verified record is persisted. The rule is absolute: **don't leave the meeting without the record.** It is the buyer's only dispute artifact; leaving without it means walking away with no claim if the USDT never arrives.
-- **State 3 — waiting for USDT.** The "USDT confirmed" indicator turns green once the oracle has confirmed the seller's USDT transfer to the buyer's pinned address — until then the seller could still stall, and the answer is the dispute button below. Green means the release follows automatically: the seller's backend submits it with the oracle digest alone, no buyer action needed. Checking the wallet is still good advice, but it gates nothing.
+- **State 3 — waiting for USDT.** The "USDT confirmed" indicator turns green once the oracle has confirmed the seller's USDT transfer to the buyer's registered receive address — until then the seller could still stall, and the answer is the dispute button below. Green means the release follows automatically: the seller's backend submits it with the oracle attestation alone (the attested dealId), no buyer action needed. Checking the wallet is still good advice, but it gates nothing.
 
 The dispute button lives permanently under the timeline:
 
@@ -99,7 +99,7 @@ same deal link. The seller-side meeting screen mirrors the buyer's handoff scree
    - "Show handoff QR" button → renders the handoff record (`p2pgate://handoff?m=...`) for the buyer to scan and validate against their deal terms.
    - The seller's signature is enabled only **after physically counting the cash** — signing before collection would hand the buyer a false artifact, and a false artifact only ever unlocks a payout of the seller's own collateral to the buyer. The record is signed with the seller key already in the deal terms (vault R5) — no deal-scoped third-party key exists.
    - Once signed, the seller's screen confirms "record signed — the buyer has verified it"; the buyer's app shows its own "safe to leave" indicator. The meeting ends only when the buyer holds the verified record.
-3. **After the meeting** — the seller sends the USDT (exactly the agreed amount, one transaction, to the buyer's pinned address) and the oracle confirmation drives the release; nothing else is required from either party at the meeting.
+3. **After the meeting** — the seller sends the USDT (exactly the agreed amount, one transaction, to the buyer's registered receive address) and the oracle confirmation drives the release; nothing else is required from either party at the meeting.
 4. **No-show handling** — if the buyer never shows, the vault times out and the seller reclaims (`RECLAIM_TIMEOUT`); the meeting screen just closes the deal card.
 
 ## 4. Operator dashboard
@@ -110,7 +110,7 @@ The seller is the capital-heavy side; the dashboard's job is capital efficiency 
 - **Collateral management** — pool view: USE balance, utilization %, "capital idle 38% — reclaim 2 expired vaults" nudges. One-tap reclaim of timed-out vaults (the default routine path, also the privacy-preserving one).
 - **Quote publishing** — set spread, ETA promise, max deal size = vault capacity. The buyer-side collateral line reads straight from here, so overstating capacity is self-defeating — the line is the vault.
 - **AML pre-check panel** — paste address, get risk score, accept/reject. Off-chain tooling; the app records only the accept/reject decision, not the report, into deal metadata.
-- **Dispute inbox** — open claims with the evidence view: the **seller-signed handoff record** (the seller acknowledging cash receipt under the same key that reclaims the collateral) versus the **oracle digest of the seller's USDT transfer** (was the buyer paid?), deadlines. Actions: contest (present the oracle digest alone — path C′ — mechanical when the digest exists), wait-for-timeout, escalate to manual review.
+- **Dispute inbox** — open claims with the evidence view: the **seller-signed handoff record** (the seller acknowledging cash receipt under the same key that reclaims the collateral) versus the **oracle attestation of the seller's USDT transfer** (the attested dealId — was the buyer paid?), deadlines. Actions: contest (present the oracle attestation alone — path C′ — mechanical once the oracle confirmed), wait-for-timeout, escalate to manual review.
 - **Infrastructure status** — oracle lag, observer health. If the oracle is lagging, quote publishing pauses automatically — never sell insurance you can't currently verify.
 
 ## 5. Per-leg UX deltas
@@ -122,10 +122,10 @@ The seller is the capital-heavy side; the dashboard's job is capital efficiency 
 
 - **Buyer never shows up (no-show)** → the meeting never happens, cash never changes hands; the vault times out (`RECLAIM_TIMEOUT`) and the seller reclaims. Deal card closes silently. No penalty; ghosting is the expected mode of a no-reputation market.
 - **Cash collected, seller never sends USDT** → dispute button becomes primary; claim timeline shown (`CLAIM_MATURATION` ~12h). The buyer's cash is already handed over in this failure mode — that's what the insurance covers.
-- **Partial USDT payment** → the vault keys on the exact amount; the oracle digest amount ≠ expected, so release fails and the deal lands in the dashboard dispute inbox. The seller side is instructed operationally: "send exactly 500 USDT in one transaction". The claim path is unaffected.
+- **Partial USDT payment** → the oracle's observer matches the exact `(recipient, amount)` registered with its watch set at funding and never attests a partial, so the deal never confirms and lands in the dashboard dispute inbox. The seller side is instructed operationally: "send exactly 500 USDT in one transaction". The claim path is unaffected.
 - **Seller takes the cash and refuses to sign** → the buyer app never showed "safe to leave" (the §2.3 rule); if the buyer handed the cash over anyway, they hold no artifact and there is no on-chain case — this is the same residual as in any face-to-face cash trade. The mitigation is procedural and product-level: the meeting rule is unmissable, and off-chain escalation (operator investigation, deal-identity blacklisting) is the recourse, not a contract case.
-- **Buyer ghosts after the USDT arrives** → there is nothing for the buyer to withhold: the seller releases with the oracle digest alone, no buyer action required. The ghost case is a non-event in v2.
-- **Buyer claims without cause** → the seller contests by presenting the oracle digest alone during maturation (path C′); the digest is sufficient, so an honest seller always counters a false claim. The dashboard shows "evidence attached, awaiting timeout".
+- **Buyer ghosts after the USDT arrives** → there is nothing for the buyer to withhold: the seller releases with the oracle attestation alone, no buyer action required. The ghost case is a non-event in v2.
+- **Buyer claims without cause** → the seller contests by presenting the oracle attestation alone during maturation (path C′); the attestation is sufficient, so an honest seller always counters a false claim. The dashboard shows "evidence attached, awaiting timeout".
 - **App dies mid-deal** → deal recovery by link token or seed phrase of the deal key; no server-side account to lose.
 
 ## 7. Onboarding & market design

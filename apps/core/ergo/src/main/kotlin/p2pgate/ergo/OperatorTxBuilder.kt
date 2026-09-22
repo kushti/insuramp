@@ -9,13 +9,13 @@ import sigma.ast.ErgoTree
  * Builds the four vault transactions only the operator backend ever
  * constructs (`specs/operator-backend.md` §2 "vault manager"):
  *
- *  - [buildFund] — create the FUNDED box (R4–R9 per `specs/vault-contract.md`
+ *  - [buildFund] — create the FUNDED box (R4–R8 per `specs/vault-contract.md`
  *    §3.1), collateral in, deal parameters pinned;
  *  - [buildReclaim] — path A: `HEIGHT > timeoutHeight` (R8), seller-signed,
  *    seller paid in full;
  *  - [buildRelease] — path C from the FUNDED box: the oracle box as a DATA
- *    INPUT (NFT pinned in R7), its R4 carrying the 112-byte attestation —
- *    digest field checks vs R4/R9 in-script, no oracle signature anywhere
+ *    INPUT (NFT pinned in R7), its R4 carrying this vault's dealId — the
+ *    oracle's per-deal attestation signal; no oracle signature anywhere
  *    (v2: the phase-1 oracle's attestation alone releases the vault);
  *  - [buildContest] — path C′: the same from the PAYMENT_PROVEN box (the
  *    oracle NFT id is the compile-time pin of the proven tree, §8.3 item 3).
@@ -28,8 +28,8 @@ import sigma.ast.ErgoTree
  * ## The release's oracle data input
  *
  * The vault authenticates the release by NFT presence on
- * `CONTEXT.dataInputs(0)` and reads the attestation payload from that box's
- * R4. A data input's script never executes, so release/contest txs are
+ * `CONTEXT.dataInputs(0)` and checks that box's R4 against its own R4 dealId.
+ * A data input's script never executes, so release/contest txs are
  * operator-wallet-only — the oracle does NOT co-sign (the oracle's
  * involvement is posting the attestation box on-chain in the first place,
  * via its own `oracle.es` rotation spend). The seller payout therefore
@@ -47,9 +47,6 @@ class OperatorTxBuilder(
 ) {
     private val networkType: NetworkType = trees.networkType
 
-    /** The parsed R9 funding binding (`specs/vault-contract.md` §3.1, 31 B). */
-    private data class FundingBinding(val chainId: Int, val tokenId: Int, val recipient: ByteArray, val amount: Long)
-
     init {
         require(minerFeeNanoErg >= ClaimTxBuilder.MIN_MINER_FEE_NANO_ERG) {
             "miner fee $minerFeeNanoErg below protocol minimum ${ClaimTxBuilder.MIN_MINER_FEE_NANO_ERG}"
@@ -57,15 +54,13 @@ class OperatorTxBuilder(
     }
 
     /**
-     * Fund: creates the FUNDED box for [dealTerms]. [recipientAddr] is the
-     * buyer's raw USDT address payload (padded per chain into R9); the deal
-     * amount of [collateralTokenId] (USE) is drawn from [fundingInputs]
-     * (surplus collateral rides the change output). The box's R8 pins the
-     * plain `Long` `timeoutHeight`; R7 is the 32-byte `oracleNftId`.
+     * Fund: creates the FUNDED box for [dealTerms]; the deal amount of
+     * [collateralTokenId] (USE) is drawn from [fundingInputs] (surplus
+     * collateral rides the change output). The box's R8 pins the plain `Long`
+     * `timeoutHeight`; R7 is the 32-byte `oracleNftId`.
      */
     fun buildFund(
         dealTerms: DealTerms,
-        recipientAddr: ByteArray,
         collateralTokenId: ByteArray,
         timeoutHeight: Int,
         fundingInputs: List<ChainBox>,
@@ -89,9 +84,6 @@ class OperatorTxBuilder(
         }
         val surplus = available - dealTerms.amount
 
-        val paddedRecipient = PaymentAttestation.padRecipient(recipientAddr, dealTerms.srcChainId)
-        val r9 = PaymentAttestation.fundingBinding(dealTerms.srcChainId, dealTerms.asset, paddedRecipient, dealTerms.amount)
-
         // R7: the 32-byte oracleNftId (release paths only — path B verifies the
         // handoff record under R5's seller key and does not read R7).
         val r7 = trees.oracleNftId
@@ -106,7 +98,6 @@ class OperatorTxBuilder(
                 6 to ErgoValues.collBytesConstant(dealTerms.buyerPubKey),
                 7 to ErgoValues.collBytesConstant(r7),
                 8 to ErgoValues.longConstant(timeoutHeight.toLong()),
-                9 to ErgoValues.collBytesConstant(r9),
             ),
             creationHeight = currentHeight,
         )
@@ -191,16 +182,14 @@ class OperatorTxBuilder(
     /**
      * Release (path C) from the FUNDED box: [oracleDataInput] is the oracle
      * singleton box attached as a read-only data input — it must carry the
-     * NFT pinned in the box's R7 and the 112-byte [attestation] payload in
-     * its R4 (build-time mirror checks fail fast, exactly the in-script
-     * conditions). No oracle co-signature: the tx is [signer]-signed
-     * (operator wallet) and pays the full collateral to the seller's R5 key
-     * at OUTPUTS(0).
+     * NFT pinned in the box's R7 and this vault's dealId in its R4 (build-time
+     * mirror checks fail fast, exactly the in-script conditions). No oracle
+     * co-signature: the tx is [signer]-signed (operator wallet) and pays the
+     * full collateral to the seller's R5 key at OUTPUTS(0).
      */
     fun buildRelease(
         fundedBox: ChainBox,
         oracleDataInput: ChainBox,
-        attestation: PaymentAttestation,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
         changeAddress: String,
@@ -216,7 +205,6 @@ class OperatorTxBuilder(
             vaultBox = fundedBox,
             vaultTree = trees.fundedTree,
             oracleDataInput = oracleDataInput,
-            attestation = attestation,
             feeInputs = feeInputs,
             currentHeight = currentHeight,
             changeAddress = changeAddress,
@@ -233,7 +221,6 @@ class OperatorTxBuilder(
     fun buildContest(
         provenBox: ChainBox,
         oracleDataInput: ChainBox,
-        attestation: PaymentAttestation,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
         changeAddress: String,
@@ -246,7 +233,6 @@ class OperatorTxBuilder(
             vaultBox = provenBox,
             vaultTree = trees.provenTree,
             oracleDataInput = oracleDataInput,
-            attestation = attestation,
             feeInputs = feeInputs,
             currentHeight = currentHeight,
             changeAddress = changeAddress,
@@ -261,7 +247,6 @@ class OperatorTxBuilder(
         vaultBox: ChainBox,
         vaultTree: ErgoTree,
         oracleDataInput: ChainBox,
-        attestation: PaymentAttestation,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
         changeAddress: String,
@@ -272,38 +257,20 @@ class OperatorTxBuilder(
 
         val dealId = vaultBox.registerBytes(4) ?: throw IllegalArgumentException("vault box has no R4 dealId")
         val sellerPk = vaultBox.registerBytes(5) ?: throw IllegalArgumentException("vault box has no R5 sellerPubKey")
-        val r9 = vaultBox.registerBytes(9) ?: throw IllegalArgumentException("vault box has no R9 funding binding")
         require(vaultBox.tokens.isNotEmpty()) { "vault box carries no collateral tokens" }
-        val binding = parseFundingBinding(r9)
 
         // Build-time mirror of the in-script release conditions
         // (vault_funded.es path C / vault_payment_proven.es path C′): the data
-        // input must carry the pinned NFT, its R4 must hold exactly the
-        // attestation payload, and the attestation fields must match the
-        // vault's R4/R9 — reject before broadcasting what the contract would
+        // input must carry the pinned NFT and its R4 must hold exactly this
+        // vault's dealId — reject before broadcasting what the contract would
         // burn a fee rejecting.
         val nftHex = Base16.encode(nftPin)
         require(oracleDataInput.tokens.any { it.tokenId.equals(nftHex, ignoreCase = true) }) {
             "oracle data input carries no oracle NFT (pinned id mismatch)"
         }
-        val payloadBytes = oracleDataInput.registerBytes(4)
-            ?: throw IllegalArgumentException("oracle data input has no R4 attestation payload")
-        require(payloadBytes.contentEquals(attestation.encode())) {
-            "oracle data input R4 payload does not match the attestation"
-        }
-        require(attestation.dealId.contentEquals(dealId)) { "attestation dealId does not match the vault's R4" }
-        require(attestation.srcChainId == binding.chainId) {
-            "attestation srcChainId 0x%02x does not match the R9 binding 0x%02x".format(attestation.srcChainId, binding.chainId)
-        }
-        require(attestation.tokenId == binding.tokenId) {
-            "attestation tokenId 0x%02x does not match the R9 binding 0x%02x".format(attestation.tokenId, binding.tokenId)
-        }
-        require(attestation.recipient.contentEquals(binding.recipient)) {
-            "attestation recipient does not match the R9 binding's recipientAddr"
-        }
-        require(attestation.amount == binding.amount) {
-            "attestation amount ${attestation.amount} does not match the R9 binding's expectedAmount ${binding.amount}"
-        }
+        val payload = oracleDataInput.registerBytes(4)
+            ?: throw IllegalArgumentException("oracle data input has no R4 attestation (dealId)")
+        require(payload.contentEquals(dealId)) { "oracle data input R4 dealId does not match the vault's R4" }
 
         val useToken = vaultBox.tokens.first()
         val sellerAmount = useToken.amount
@@ -337,17 +304,6 @@ class OperatorTxBuilder(
             changeAddress = changeAddress,
             networkType = networkType,
             signer = signer,
-        )
-    }
-
-    /** Slices the 31-byte R9 funding binding exactly as the contracts do. */
-    private fun parseFundingBinding(r9: ByteArray): FundingBinding {
-        require(r9.size == 31) { "R9 funding binding must be 31 bytes, got ${r9.size}" }
-        return FundingBinding(
-            chainId = r9[0].toInt() and 0xff,
-            tokenId = r9[1].toInt() and 0xff,
-            recipient = r9.copyOfRange(2, 23),
-            amount = PaymentAttestation.u64(r9, 23),
         )
     }
 }

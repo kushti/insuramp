@@ -1,8 +1,8 @@
 package p2pgate.backend.oracle
 
+import p2pgate.backend.util.Hex
 import p2pgate.ergo.ChainBox
 import p2pgate.ergo.DevOracle
-import p2pgate.ergo.PaymentAttestation
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -23,16 +23,17 @@ import java.util.concurrent.ConcurrentHashMap
  * release/contest tx and its script never executes, so there is no oracle
  * co-signature to collect. [attestationBoxFor] hands the vault manager that
  * data-input box per deal (the on-chain box the oracle posted by rotating its
- * `oracle.es` singleton with R4 = the payload); release txs are
+ * `oracle.es` singleton with R4 = the 32-byte dealId); release txs are
  * operator-wallet-only, funded from the vault signer's fee inputs.
  */
 interface OracleClient {
-    /** The attestation for [dealId] (hex), or `null` while unobserved. */
-    fun attestationFor(dealId: String): PaymentAttestation?
+    /** The attested dealId bytes for [dealId] (hex), or `null` while unobserved. */
+    fun attestationFor(dealId: String): ByteArray?
 
     /**
      * The oracle box carrying [dealId]'s attestation as a release-ready data
-     * input (NFT + R4 payload), or `null` while no attestation is posted.
+     * input (NFT + R4 = the 32-byte dealId), or `null` while no attestation is
+     * posted.
      */
     fun attestationBoxFor(dealId: String): ChainBox?
 
@@ -44,21 +45,22 @@ class OracleUnavailableException(message: String, cause: Throwable? = null) :
     RuntimeException(message, cause)
 
 /**
- * M3 default: an in-process [DevOracle] plus a registry of minted
- * attestations keyed by deal id. Nothing here observes a real source chain —
- * tests and the dev harness assert a seller transfer and call [attest].
+ * M3 default: an in-process [DevOracle] plus a registry of attested deal ids
+ * (dealId hex → the 32-byte dealId bytes). Nothing here observes a real source
+ * chain — tests and the dev harness assert a seller transfer and call [attest].
  */
 class DevOracleClient(
     private val devOracle: DevOracle,
 ) : OracleClient {
-    private val attestations = ConcurrentHashMap<String, PaymentAttestation>()
+    private val attestations = ConcurrentHashMap<String, ByteArray>()
 
     @Volatile
     private var up: Boolean = true
 
     /** Dev/test only: records (or replaces) the attestation for a deal. */
-    fun attest(dealId: String, attestation: PaymentAttestation) {
-        attestations[dealId] = attestation
+    fun attest(dealIdBytes: ByteArray) {
+        require(dealIdBytes.size == 32) { "dealId must be 32 bytes, got ${dealIdBytes.size}" }
+        attestations[Hex.encode(dealIdBytes)] = dealIdBytes
     }
 
     fun drop(dealId: String) {
@@ -70,15 +72,15 @@ class DevOracleClient(
         up = reachable
     }
 
-    override fun attestationFor(dealId: String): PaymentAttestation? {
+    override fun attestationFor(dealId: String): ByteArray? {
         if (!up) throw OracleUnavailableException("oracle unreachable")
         return attestations[dealId]
     }
 
     override fun attestationBoxFor(dealId: String): ChainBox? {
         if (!up) throw OracleUnavailableException("oracle unreachable")
-        val attestation = attestations[dealId] ?: return null
-        return devOracle.attestationBox(attestation)
+        val dealIdBytes = attestations[dealId] ?: return null
+        return devOracle.attestationBox(dealIdBytes)
     }
 
     override fun reachable(): Boolean = up

@@ -477,7 +477,7 @@ function renderDisputeRow(row) {
     '" data-label="matures in">matures in ' + maturesIn + "</span></div>" +
     '<div class="muted mono">' + shortId(row.dealId) + "</div>" +
     '<div class="evidence">handoff record: ' + (row.handoffRecordRef ? "on file" : "none") +
-    " · oracle attestation: " + (row.oracleConfirmed ? ("confirmed" + (row.attestationDigest ? " (" + shortId(row.attestationDigest) + ")" : "")) : "absent") +
+    " · oracle attestation: " + (row.oracleConfirmed ? ("confirmed" + (row.attestationDealId ? " (" + shortId(row.attestationDealId) + ")" : "")) : "absent") +
     (row.geoRef ? " · geo: " + escapeHtml(row.geoRef) : "") + "</div>" +
     (row.actioned ? '<div class="muted">actioned: ' + escapeHtml(row.action || "") + "</div>" : "");
 

@@ -39,7 +39,7 @@ class DisputeInboxSpec {
     }
 
     @Test
-    fun `row shows the contested flag and the attestation digest once confirmed`() {
+    fun `row shows the contested flag and the attestation deal id once confirmed`() {
         val env = TestEnv()
         val deal = claimedDeal(env)
         env.attestPayment(deal)
@@ -47,7 +47,7 @@ class DisputeInboxSpec {
         val row = env.inbox.row(deal.dealId)
         assertTrue(row.contested)
         assertTrue(row.oracleConfirmed)
-        assertTrue(row.attestationDigest != null)
+        assertTrue(row.attestationDealId != null)
     }
 
     @Test

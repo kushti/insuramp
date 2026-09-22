@@ -207,7 +207,6 @@ class VaultManager(
         val currentHeight = chain.getCurrentHeight()
         val tx = builder.buildFund(
             dealTerms = terms,
-            recipientAddr = Hex.decode(deal.recipientAddrHex),
             collateralTokenId = Hex.decode(deal.collateralTokenIdHex),
             timeoutHeight = currentHeight + reclaimTimeoutBlocks,
             fundingInputs = fundingInputs,
@@ -267,7 +266,7 @@ class VaultManager(
     /**
      * Automatic release on payment confirmation (path C). The oracle
      * attestation alone gates the spend (v2): the tx carries the oracle box
-     * as a DATA INPUT (its R4 the 112-byte attestation, its tokens the
+     * as a DATA INPUT (its R4 the 32-byte dealId, its tokens the
      * pinned NFT) and is operator-wallet-only — no oracle signature exists.
      */
     fun releaseIfConfirmed(dealId: String, at: Instant = Instant.now()): Outcome {
@@ -275,16 +274,11 @@ class VaultManager(
         if (deal.state != DealState.PAYMENT_CONFIRMED) {
             return Rejected("deal is ${deal.state}, expected PAYMENT_CONFIRMED")
         }
-        val attestation = try {
-            oracle.attestationFor(dealId)
-        } catch (e: p2pgate.backend.oracle.OracleUnavailableException) {
-            return Rejected("oracle unavailable: ${e.message}")
-        } ?: return Rejected("no attestation on file")
         val oracleDataInput = try {
             oracle.attestationBoxFor(dealId)
         } catch (e: p2pgate.backend.oracle.OracleUnavailableException) {
             return Rejected("oracle unavailable: ${e.message}")
-        } ?: return Rejected("no attestation box on file")
+        } ?: return Rejected("no attestation on file")
         val fundedBox = chain.getBox(deal.vaultBoxId ?: return Rejected("deal has no vault box"))
             ?.takeIf { it.spentTransactionId == null }
             ?: return Rejected("vault box spent or unknown")
@@ -292,7 +286,6 @@ class VaultManager(
         val tx = builder.buildRelease(
             fundedBox = fundedBox,
             oracleDataInput = oracleDataInput,
-            attestation = attestation,
             feeInputs = signer.feeInputs(),
             currentHeight = currentHeight,
             changeAddress = signer.changeAddress,
@@ -316,23 +309,17 @@ class VaultManager(
         if (deal.state != DealState.CLAIM_OPENED && deal.state != DealState.CLAIMABLE) {
             return Rejected("deal is ${deal.state}, no open claim to contest")
         }
-        val attestation = try {
-            oracle.attestationFor(dealId)
-        } catch (e: p2pgate.backend.oracle.OracleUnavailableException) {
-            return Rejected("oracle unavailable: ${e.message}")
-        } ?: return Rejected("no attestation on file — contest is mechanical only when the digest exists")
         val oracleDataInput = try {
             oracle.attestationBoxFor(dealId)
         } catch (e: p2pgate.backend.oracle.OracleUnavailableException) {
             return Rejected("oracle unavailable: ${e.message}")
-        } ?: return Rejected("no attestation box on file")
+        } ?: return Rejected("no attestation on file — contest is mechanical only when the dealId is attested")
         val provenBoxId = deal.provenBoxId ?: return Rejected("no PAYMENT_PROVEN box tracked for this deal")
         val provenBox = chain.getBox(provenBoxId)?.takeIf { it.spentTransactionId == null }
             ?: return Rejected("PAYMENT_PROVEN box spent or unknown")
         val tx = builder.buildContest(
             provenBox = provenBox,
             oracleDataInput = oracleDataInput,
-            attestation = attestation,
             feeInputs = signer.feeInputs(),
             currentHeight = chain.getCurrentHeight(),
             changeAddress = signer.changeAddress,

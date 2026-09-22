@@ -80,10 +80,8 @@ data class DealDto(
 @Serializable
 data class AttestationDto(
     val status: String,   // CONFIRMED | UNCONFIRMED
-    val digest: String? = null,
-    val srcTxId: String? = null,
-    val srcBlockHeight: Long? = null,
-    val srcBlockTime: Long? = null,
+    /** The attested deal id hex — must match the backend's JSON field name. */
+    val dealId: String? = null,
 )
 
 @Serializable

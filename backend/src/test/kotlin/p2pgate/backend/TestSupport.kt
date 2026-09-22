@@ -44,7 +44,6 @@ import p2pgate.ergo.ChainToken
 import p2pgate.ergo.DealTxSigner
 import p2pgate.ergo.DevOracle
 import p2pgate.ergo.ErgoContracts
-import p2pgate.ergo.PaymentAttestation
 import java.math.BigInteger
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -129,13 +128,7 @@ object Fx {
                 ChainRegister.CollBytes(buyer.pubKeyCompressed),
                 ChainRegister.CollBytes(trees.oracleNftId),
                 ChainRegister.Int64(timeoutHeight.toLong()),
-                ChainRegister.CollBytes(
-                    PaymentAttestation.fundingBinding(
-                        deal.srcChainId, deal.asset,
-                        PaymentAttestation.padRecipient(Hex.decode(deal.recipientAddrHex), deal.srcChainId),
-                        deal.amount,
-                    ),
-                ),
+                null,
             ),
             spentTransactionId = spentTxId,
         )
@@ -165,13 +158,7 @@ object Fx {
                 ChainRegister.CollBytes(buyer.pubKeyCompressed),
                 ChainRegister.Int64(proofHeight.toLong()),
                 ChainRegister.CollBytes(recordId),
-                ChainRegister.CollBytes(
-                    PaymentAttestation.fundingBinding(
-                        deal.srcChainId, deal.asset,
-                        PaymentAttestation.padRecipient(Hex.decode(deal.recipientAddrHex), deal.srcChainId),
-                        deal.amount,
-                    ),
-                ),
+                null,
             ),
             spentTransactionId = spentTxId,
         )
@@ -369,16 +356,8 @@ class TestEnv(
         timestamp = at.epochSecond,
     )
 
-    /** Mints a seller-payment attestation and registers it with the dev oracle client. */
-    fun attestPayment(deal: DealRecord): PaymentAttestation {
-        val attestation = devOracle.attest(
-            deal.terms(),
-            Hex.decode(deal.recipientAddrHex),
-            srcTxId = ByteArray(32) { (it * 11 + 5).toByte() },
-            srcBlockHeight = 61_000_000L,
-            srcBlockTime = T0.epochSecond,
-        )
-        oracle.attest(deal.dealId, attestation)
-        return attestation
+    /** Attests the deal's USDT transfer (dev mode: the caller asserts it happened + screened clean). */
+    fun attestPayment(deal: DealRecord) {
+        oracle.attest(devOracle.attest(deal.terms()))
     }
 }

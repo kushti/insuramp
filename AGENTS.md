@@ -17,8 +17,9 @@ mainnet-default; `NodeChainSource`, any Ergo node's `/blockchain` extra-indexer 
 multi-URL failover — selected in the backend via `P2P_CHAIN_SOURCE=node` + `P2P_NODE_URL`),
 `VaultBoxTracker`
 (chain facts → `DealEvent`s), `ClaimTxBuilder` (the two buyer-side txs), `OperatorTxBuilder`
-(fund/reclaim/release/contest), `PaymentAttestation` (112-byte oracle payload), `DevOracle`
-(attestation-box builder; release paths reference the oracle box as a **data input**, so
+(fund/reclaim/release/contest), `DevOracle`
+(attestation-box builder; release paths reference the oracle box as a **data input** carrying
+the bare 32-byte `dealId` attestation, so
 there is no oracle signature in buyer/seller txs — the `OracleSigner` co-signing seam is
 deleted), `ErgoContracts` incl. `compileFast` variants. Every built tx is
 prover-verified against the compiled vault scripts. Pure Kotlin/JVM on ergo-appkit 6.0.1;
@@ -138,7 +139,13 @@ the seller-signed handoff record (a single Schnorr half under the R5 seller key,
 oracle on the claim path), and paths C/C′ take the oracle box as a **data input** — the
 oracle's attestation alone releases the vault (NFT custody is the authenticity anchor;
 no oracle signature exists in release txs); there is no receipt signature anywhere in
-the protocol. The in-contract protocol fee was removed on 2026-09-18 (owner
+the protocol. On 2026-09-21 (pre-launch, owner decision) the attestation payload was
+simplified to the bare 32-byte `dealId`: the oracle box's R4 carries only the dealId
+(the 112-byte `PaymentAttestation` field codec is deleted), the vault's R9 31-byte
+funding binding is deleted from both boxes, and release paths check only NFT custody +
+`dataInput.R4 == vault.R4 (dealId)`. The buyer's receive address is no longer pinned
+on-chain; "the USDT went to the right address" is wholly the oracle's off-chain
+assertion (`specs/oracle-integration.md` §2.2). The in-contract protocol fee was removed on 2026-09-18 (owner
 decision): `ContractParams.PROTOCOL_FEE_BPS` (25 bps, in-contract since
 2026-09-17) is deleted, no treasury fee output exists, and every
 collateral-moving path pays the recipient in full — the miner fee is unchanged.
@@ -157,18 +164,21 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   `~/.local/opt/jdk-17.0.20.1+1`, so run:
   `export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1 && ./gradlew :contracts:test`
   (optionally `--tests 'p2pgate.contracts.VaultContractSpec'`). Expected test counts:
-  `VaultContractSpec` 44 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
-  the 2026-09-18 fee removal deleted the old 35a–35e fee tests) plus
-  `OracleContractSpec` 8 → contracts 52; dealprotocol module: DealStateMachine 44,
+  `VaultContractSpec` 40 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
+  the 2026-09-18 fee removal deleted the old 35a–35e fee tests; the 2026-09-21
+  dealId-only payload removed tests 22, 23, 25, 29) plus
+  `OracleContractSpec` 8 → contracts 48; dealprotocol module: DealStateMachine 44,
   Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7 → 94; ergo module:
   ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9,
-  VaultBoxTracker 17; plus (M3-A/C): OperatorTxBuilder 20, PaymentAttestation 9,
-  DevOracle 6, FastContracts 4; plus (2026-09-17): NodeChainSource 12 → ergo 110;
+  VaultBoxTracker 17; plus (M3-A/C): OperatorTxBuilder 15,
+  DevOracle 6, FastContracts 4; plus (2026-09-17): NodeChainSource 12 → ergo 96
+  (the 2026-09-21 payload simplification deleted `PaymentAttestation` and its
+  9-test suite, and collapsed the five per-field release-tamper tests into one);
   backend 117 (11 suites); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 383; plus the Android buyer app
+  E2eConfig 2, SchnorrPort 3) → JVM modules 365; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
   multi-quote currency-filtered list, offer-cash flow 2026-09-20): 62 JVM
-  unit tests (`:app:testDebugUnitTest`) → **445 total**.
+  unit tests (`:app:testDebugUnitTest`) → **427 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

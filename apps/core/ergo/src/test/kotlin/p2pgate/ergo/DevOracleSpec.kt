@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
  * authenticate it by the NFT on that box — the data input's script never
  * executes, so no oracle signature rides in the release. The oracle's on-chain
  * involvement is posting the attestation: an `oracle.es` rotation spend that
- * recreates the singleton box with R4 = the 112-byte payload (its
+ * recreates the singleton box with R4 = the 32-byte dealId (its
  * self-reproduction pins NFT + value at `OUTPUTS(0)`; registers are
  * unconstrained). The suite pins both halves: the standalone rotation prover
  * run passes, and a release carrying the attestation box as a data input is
@@ -47,26 +47,24 @@ class DevOracleSpec {
     }
 
     @Test
-    fun `attestationBox exposes the NFT payload box the release takes as data input`() {
+    fun `attestationBox exposes the NFT dealId box the release takes as data input`() {
         val terms = f.dealTerms()
-        val attestation = oracle.attest(terms, f.recipientRaw, ByteArray(32) { 5 }, 12_345L, 1_700_000_000L)
-        val box = oracle.attestationBox(attestation)
+        val box = oracle.attestationBox(terms.dealId)
         assertEquals(Base16.encode(oracle.oracleNftId), box.tokens[0].tokenId)
         assertEquals(1L, box.tokens[0].amount)
         assertEquals(ErgoValues.treeHex(oracle.tree), box.ergoTreeHex)
-        assertTrue(box.registerBytes(4)!!.contentEquals(attestation.encode()))
-        assertEquals(112, box.registerBytes(4)!!.size)
+        assertTrue(box.registerBytes(4)!!.contentEquals(terms.dealId))
+        assertEquals(32, box.registerBytes(4)!!.size)
         // Slots R5..R9 stay empty — the attestation box carries only R4.
         assertTrue(box.registers.drop(1).all { it == null })
     }
 
     @Test
-    fun `attest derives the funding-set fields from the deal terms`() {
+    fun `attest returns the deal terms' dealId`() {
         val terms = f.dealTerms()
-        val att = oracle.attest(terms, f.recipientRaw, ByteArray(32) { 3 }, 45_678L, 1_700_000_000L)
-        assertTrue(att.matches(terms, f.recipientRaw))
-        assertEquals(112, att.encode().size)
-        assertEquals(PaymentAttestation.VERSION, att.version)
+        val att = oracle.attest(terms)
+        assertTrue(att.contentEquals(terms.dealId))
+        assertEquals(32, att.size)
     }
 
     @Test
@@ -146,13 +144,11 @@ class DevOracleSpec {
         // OUTPUTS(0), paid in full.
         val terms = f.dealTerms()
         val builder = OperatorTxBuilder(f.trees)
-        val attestation = oracle.attest(terms, f.recipientRaw, ByteArray(32) { 5 }, 12_345L, 1_700_000_000L)
-        val dataInput = oracle.attestationBox(attestation)
+        val dataInput = oracle.attestationBox(terms.dealId)
         val recording = RecordingSigner(ErgoTestFixtures.ProverSigner(f.dealKeys.secret))
         val signed = builder.buildRelease(
             fundedBox = f.fundedChainBox(terms),
             oracleDataInput = dataInput,
-            attestation = attestation,
             feeInputs = listOf(f.feeChainBox()),
             currentHeight = 1500,
             changeAddress = f.dealKeysAddress,

@@ -10,10 +10,13 @@
 //       record with freshness; spends into the PAYMENT_PROVEN box.
 //       No oracle input on this path
 //   C — release: the oracle singleton box as a DATA INPUT (NFT == R7) whose R4
-//       carries the 112-byte payment-proof payload (specs/oracle-integration.md
-//       §2.2, describing the SELLER's USDT transfer to the buyer's address in R9)
-//       — nothing else; seller paid in full. A data input's script never
-//       executes, so no oracle signature rides in the release tx
+//       carries exactly the 32-byte dealId — the oracle's single per-deal signal
+//       that the seller's USDT transfer to the buyer is confirmed AND screened
+//       non-tainted; both preconditions (and "to the right address") are
+//       off-chain and unchecked here (semantics in oracle.es). Checked on-chain:
+//       NFT custody + dealId equality ONLY; seller paid in full. A data
+//       input's script never executes, so no oracle signature rides in the
+//       release tx
 //
 // Registers:
 //   R4 Coll[Byte]              dealId (32 B)
@@ -24,18 +27,14 @@
 //                              centralized oracle; phase 2: guard-set box NFT —
 //                              same register, same role)
 //   R8 Long                 timeoutHeight (reclaim timeout, blocks)
-//   R9 Coll[Byte]              funding binding, 31 B: srcChainId(1) | tokenId(1) |
-//                              recipientAddr(21) | expectedAmount(8, big-endian) —
-//                              recipientAddr is the buyer's USDT address (the seller pays
-//                              the buyer); the digest fields are checked against this
 //
 // Context variables:
 //   Path B (claim):    (0) Coll[Byte] handoff record msg (52 B, "P2PH")
 //                      (1) Coll[Byte] a_sig — Schnorr nonce point, 33 B
 //                      (2) Coll[Byte] z_sig — Schnorr response, 32 B
 //                      (3) Long        record timestamp in millis (msg bytes 48..52 * 1000)
-//   Path C (release):  none — the attestation payload rides in the oracle data
-//                      input's R4
+//   Path C (release):  none — the attestation (the dealId itself) rides in
+//                      the oracle data input's R4
 //
 // Path selection: path A is recognized by HEIGHT alone; of the two remaining
 // paths, path B supplies context variable 0 and path C supplies NONE, so the
@@ -50,10 +49,6 @@
   val collateral = SELF.tokens(0)._2
   val useTokenId = SELF.tokens(0)._1
   val timeoutH = SELF.R8[Long].get
-  val r9 = SELF.R9[Coll[Byte]].get
-  val chainId = r9(0)
-  val tokenIdF = r9(1)
-  val recipient = r9.slice(2, 23)
   // Paths A and C pay the seller in full at OUTPUTS(0) (reclaim and release
   // are payout-identical): release txs carry the oracle box as a data input —
   // its script never executes — so the old joint-spend OUTPUTS(1) convention
@@ -97,14 +92,13 @@
     val recordId = blake2b256(
       getVar[Coll[Byte]](1).get ++ getVar[Coll[Byte]](2).get ++
       getVar[Coll[Byte]](0).get)
-    // Output: the PAYMENT_PROVEN box carrying everything, registers copied
-    // (R9 funding binding included), proofHeight = HEIGHT, record id in R8.
+    // Output: the PAYMENT_PROVEN box carrying everything, registers copied,
+    // proofHeight = HEIGHT, record id in R8.
     val provenOutOk =
       OUTPUTS(0).propositionBytes == %%PAYMENT_PROVEN_SCRIPT%% &&
       OUTPUTS(0).R4[Coll[Byte]].get == SELF.R4[Coll[Byte]].get &&
       OUTPUTS(0).R5[Coll[Byte]].get == SELF.R5[Coll[Byte]].get &&
       OUTPUTS(0).R6[Coll[Byte]].get == SELF.R6[Coll[Byte]].get &&
-      OUTPUTS(0).R9[Coll[Byte]].get == r9 &&
       OUTPUTS(0).R7[Long].get == HEIGHT.toLong &&
       OUTPUTS(0).R8[Coll[Byte]].get == recordId &&
       OUTPUTS(0).tokens(0)._1 == useTokenId &&
@@ -113,26 +107,20 @@
     sigmaProp(recordDealOk && freshOk && sellerSigOk && provenOutOk)
   } else {
     // Path C — fast close, oracle-only: the oracle singleton box as a DATA
-    // INPUT, its R4 carrying the 112-byte attestation payload of the SELLER's
-    // USDT transfer (recipient = R9's buyer address). No receipt signature
-    // (v2 — the oracle is trusted, period) and no oracle signature: a data
-    // input's script never executes. NFT custody is the whole phase-1 trust
-    // root — ANY box carrying the pinned NFT id and a field-matching R4
-    // payload passes (documented as intended in VaultContractSpec test 20).
+    // INPUT, its R4 carrying exactly the 32-byte dealId of the SELLER's
+    // USDT transfer to the buyer. No receipt signature (v2 — the oracle is
+    // trusted, period) and no oracle signature: a data input's script never
+    // executes. NFT custody is the whole phase-1 trust root — ANY box
+    // carrying the pinned NFT id and this deal's dealId in R4 passes
+    // (documented as intended in VaultContractSpec test 20). The payload
+    // carries nothing but the dealId, so "from the seller", "to the right
+    // address", "confirmed", and "non-tainted" all remain the trusted
+    // oracle's off-chain assertions (semantics in oracle.es).
     val attestationBox = CONTEXT.dataInputs(0)
-    val payload = attestationBox.R4[Coll[Byte]].get
     // The data input must carry the oracle NFT pinned in R7.
     val oracleNftOk = attestationBox.tokens(0)._1 == SELF.R7[Coll[Byte]].get
-    // The attestation must match THIS vault's deal (fields pinned in R4/R9).
-    // The amount is compared as raw big-endian bytes (both sides carry the
-    // same 8-byte form) — byteArrayToBigInt on a val reference fails the
-    // sigma-state 6 typer.
-    val fieldsOk =
-      payload.slice(1, 33) == SELF.R4[Coll[Byte]].get &&
-      payload(33) == chainId &&
-      payload(34) == tokenIdF &&
-      payload.slice(35, 56) == recipient &&
-      payload.slice(56, 64) == r9.slice(23, 31)
+    // The attestation must name THIS vault's deal (R4, the dealId).
+    val fieldsOk = attestationBox.R4[Coll[Byte]].get == SELF.R4[Coll[Byte]].get
     sigmaProp(oracleNftOk && fieldsOk && sellerPaid)
   }
 }

@@ -22,7 +22,7 @@ fun interface DealTxSigner {
  *
  *  - [buildClaimOpen] — vault path B: spends the FUNDED box carrying the
  *    SELLER-signed handoff record as context vars 0–3, output 0 the
- *    PAYMENT_PROVEN box (registers copied, R7 the plain `Long` `proofHeight`,
+ *    PAYMENT_PROVEN box (R4–R6 copied, R7 the plain `Long` `proofHeight`,
  *    R8 = `blake2b256(a ‖ z ‖ record)`);
  *  - [buildClaimPayout] — vault path D: spends the PAYMENT_PROVEN box after
  *    maturation, paying the full collateral to the buyer's payout address.
@@ -91,7 +91,6 @@ class ClaimTxBuilder(
         val sellerPk = fundedBox.registerBytes(5) ?: throw IllegalArgumentException("FUNDED box has no R5 sellerPubKey")
         val buyerPk = fundedBox.registerBytes(6) ?: throw IllegalArgumentException("FUNDED box has no R6 buyerPubKey")
         fundedBox.registerBytes(7) ?: throw IllegalArgumentException("FUNDED box has no R7 oracleNftId")
-        val r9 = fundedBox.registerBytes(9) ?: throw IllegalArgumentException("FUNDED box has no R9 funding binding")
         require(fundedBox.tokens.isNotEmpty()) { "FUNDED box carries no collateral tokens" }
 
         // Pre-check the freshness window the contract enforces in-script against
@@ -105,7 +104,7 @@ class ClaimTxBuilder(
         val recordId = SchnorrVerifier.blake2b256(a, z, recordBytes)
 
         // Output 0: the PAYMENT_PROVEN box carrying ALL tokens and ERG,
-        // registers copied with R7 = proofHeight (plain Long) and R8 = record id.
+        // R4–R6 copied with R7 = proofHeight (plain Long) and R8 = record id.
         val provenCandidate = TxAssembly.candidate(
             value = fundedBox.value,
             tree = trees.provenTree,
@@ -116,7 +115,6 @@ class ClaimTxBuilder(
                 6 to ErgoValues.collBytesConstant(buyerPk),
                 7 to ErgoValues.longConstant(currentHeight.toLong()),
                 8 to ErgoValues.collBytesConstant(recordId),
-                9 to ErgoValues.collBytesConstant(r9),
             ),
             creationHeight = currentHeight,
         )

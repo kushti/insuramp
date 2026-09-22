@@ -5,10 +5,13 @@
 // the handoff record — landed (proofHeight in R7). Spending paths (see
 // specs/vault-contract.md §4):
 //   C' — release: the oracle singleton box as a DATA INPUT (phase-1 NFT,
-//        compile-time pin — the proven box has no spare register for it, R9
-//        carries the copied funding binding) with the 112-byte attestation
-//        payload in the data input's R4 — nothing else (v2: no buyer receipt
-//        signature; the oracle is trusted, period); seller paid in full.
+//        compile-time pin — the proven box has no spare register for it)
+//        with exactly the 32-byte dealId in the data input's R4 — the
+//        oracle's per-deal signal that the seller's USDT transfer to the
+//        buyer is confirmed AND screened non-tainted (off-chain
+//        preconditions, unchecked here; semantics in oracle.es). Nothing
+//        else (v2: no buyer receipt signature; the oracle is trusted,
+//        period); seller paid in full.
 //        A data input's script never executes, so no oracle signature rides
 //        in the contest tx. Oracle-only C' is also how an honest seller
 //        counters ANY claim: the attestation alone resolves it.
@@ -21,13 +24,10 @@
 //   R7 Long              proofHeight (the claim-open height, blocks)
 //   R8 Coll[Byte]        handoff-record id (32 B, blake2b256 of a_sig | z_sig |
 //                        record — the dashboard's evidence view)
-//   R9 Coll[Byte]        funding binding copied from the FUNDED box, 31 B: srcChainId(1) |
-//                        tokenId(1) | recipientAddr(21) | expectedAmount(8, big-endian) —
-//                        the path C' digest fields are checked against this;
-//                        recipientAddr is the buyer's USDT address (the seller pays the buyer)
 //
 // Context variables: none on either path — the claim discharges proveDlog(buyerKey)
-// and the release payload rides in the oracle data input's R4.
+// and the release attestation (the dealId itself) rides in the oracle data
+// input's R4.
 //
 // ErgoScript vals are lazy and if / Boolean && / || short-circuit, so the
 // release-path material below is only evaluated when the release path is
@@ -40,10 +40,6 @@
   val collateral = SELF.tokens(0)._2
   val useTokenId = SELF.tokens(0)._1
   val proofH = SELF.R7[Long].get
-  val r9 = SELF.R9[Coll[Byte]].get
-  val chainId = r9(0)
-  val tokenIdF = r9(1)
-  val recipient = r9.slice(2, 23)
   // Paths C′ and D both pay out in full at OUTPUTS(0) — the release is no
   // longer a joint spend with the oracle box (it rides as a data input), so
   // the old OUTPUTS(1) seller-payout convention is gone.
@@ -66,28 +62,21 @@
     proveDlog(buyerKey)
   } else {
     // Path C' — release, oracle-only: the oracle singleton box as a DATA INPUT
-    // (its script never executes — no oracle signature), its R4 carrying the
-    // 112-byte attestation payload of the SELLER's USDT transfer (this box
-    // carries the handoff record, not the digest). The data input must carry
-    // the phase-1 oracle NFT — the compile-time pin of this tree (the FUNDED
-    // box pins the NFT id in its R7; the proven box has no spare register for
-    // it, R9 carries the copied funding binding; phase 2 replaces this check
-    // with the guard-set box, §3.3 of the spec). NFT custody is the whole
-    // phase-1 trust root — a data input's script never executes, so any box
-    // carrying the pinned NFT id and a field-matching R4 payload passes.
+    // (its script never executes — no oracle signature), its R4 carrying
+    // exactly the 32-byte dealId (this box carries the handoff record in R8,
+    // not the payment signal). The data input must carry the phase-1 oracle
+    // NFT — the compile-time pin of this tree (the FUNDED box pins the NFT id
+    // in its R7; the proven box has no spare register for it; phase 2
+    // replaces this check with the guard-set box, §3.3 of the spec). NFT
+    // custody is the whole phase-1 trust root — a data input's script never
+    // executes, so any box carrying the pinned NFT id and this deal's dealId
+    // in R4 passes. The payload carries nothing but the dealId, so "from the
+    // seller, to the right address, confirmed, non-tainted" is wholly the
+    // oracle's trusted off-chain assertion.
     val attestationBox = CONTEXT.dataInputs(0)
-    val payload = attestationBox.R4[Coll[Byte]].get
     val oracleNftOk = attestationBox.tokens(0)._1 == %%ORACLE_NFT_ID%%
-    // The attestation must match THIS vault's deal (fields pinned in R4/R9).
-    // The amount is compared as raw big-endian bytes (both sides carry the
-    // same 8-byte form) — byteArrayToBigInt on a val reference fails the
-    // sigma-state 6 typer.
-    val fieldsOk =
-      payload.slice(1, 33) == SELF.R4[Coll[Byte]].get &&
-      payload(33) == chainId &&
-      payload(34) == tokenIdF &&
-      payload.slice(35, 56) == recipient &&
-      payload.slice(56, 64) == r9.slice(23, 31)
+    // The attestation must name THIS vault's deal (R4, the dealId).
+    val fieldsOk = attestationBox.R4[Coll[Byte]].get == SELF.R4[Coll[Byte]].get
     sigmaProp(oracleNftOk && fieldsOk && sellerPaid)
   }
 }

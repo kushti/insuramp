@@ -7,7 +7,6 @@ import org.ergoplatform.appkit.impl.UnsignedTransactionImpl
 import org.ergoplatform.sdk.JavaHelpers
 import org.junit.jupiter.api.Test
 import p2pgate.contracts.ContractParams
-import p2pgate.dealprotocol.SourceChainId
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -18,7 +17,8 @@ import kotlin.test.assertTrue
  * Every successful build is prover-verified against the compiled scripts by
  * the offline prover (the ClaimTxBuilderSpec pattern) — a passing build proves
  * the tx satisfies the vault contract, not just the builder's own math. The
- * release/contest path takes the oracle attestation box as a DATA INPUT
+ * release/contest path takes the oracle attestation box (R4 = the vault's
+ * dealId, the oracle's per-deal signal) as a DATA INPUT
  * ([DevOracle.attestationBox]) and signs with a plain [DealTxSigner] — no
  * oracle co-signature exists (the data input's script never executes).
  */
@@ -45,28 +45,6 @@ class OperatorTxBuilderSpec {
     private fun outLong(out: OutBoxImpl, r: Int): Long =
         (out.registers[r - 4].value as java.lang.Long).toLong()
 
-    /** An attestation over one field tampered away from the deal/R9 binding. */
-    private fun tampered(
-        terms: p2pgate.dealprotocol.DealTerms,
-        dealId: ByteArray = terms.dealId,
-        srcChainId: Int = terms.srcChainId,
-        tokenId: Int = terms.asset,
-        recipient: ByteArray = f.recipientRaw,
-        amount: Long = terms.amount,
-    ): PaymentAttestation = PaymentAttestation(
-        dealId = dealId,
-        srcChainId = srcChainId,
-        tokenId = tokenId,
-        recipient = recipient,
-        amount = amount,
-        srcTxId = ByteArray(32) { 5 },
-        srcBlockHeight = 12_345L,
-        srcBlockTime = 1_700_000_000L,
-    )
-
-    private fun honestAttestation(terms: p2pgate.dealprotocol.DealTerms): PaymentAttestation =
-        tampered(terms)
-
     // ---------------------------------------------------------------- fund
 
     @Test
@@ -75,7 +53,6 @@ class OperatorTxBuilderSpec {
         val signer = ErgoTestFixtures.RecordingSigner(ErgoTestFixtures.ProverSigner(f.sellerKeys.secret))
         builder.buildFund(
             dealTerms = terms,
-            recipientAddr = f.recipientRaw,
             collateralTokenId = Base16.decode(f.useTokenIdHex),
             timeoutHeight = f.CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS,
             fundingInputs = listOf(f.fundingChainBox()),
@@ -101,7 +78,6 @@ class OperatorTxBuilderSpec {
             (f.CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS).toLong(),
             outLong(out, 8), // plain Long timeoutHeight
         )
-        assertTrue(outBytes(out, 9).contentEquals(f.fundingBinding()))
     }
 
     @Test
@@ -110,7 +86,6 @@ class OperatorTxBuilderSpec {
         val signer = ErgoTestFixtures.RecordingSigner(ErgoTestFixtures.ProverSigner(f.sellerKeys.secret))
         builder.buildFund(
             dealTerms = terms,
-            recipientAddr = f.recipientRaw,
             collateralTokenId = Base16.decode(f.useTokenIdHex),
             timeoutHeight = 2000,
             fundingInputs = listOf(f.fundingChainBox(tokens = listOf(ChainToken(f.useTokenIdHex, f.DEAL_AMOUNT + 100_000_000L)))),
@@ -135,7 +110,6 @@ class OperatorTxBuilderSpec {
         assertFailsWith<IllegalArgumentException> {
             builder.buildFund(
                 dealTerms = terms,
-                recipientAddr = f.recipientRaw,
                 collateralTokenId = Base16.decode(f.useTokenIdHex),
                 timeoutHeight = 2000,
                 fundingInputs = listOf(f.fundingChainBox(tokens = listOf(ChainToken(f.useTokenIdHex, f.DEAL_AMOUNT - 1)))),
@@ -147,23 +121,19 @@ class OperatorTxBuilderSpec {
     }
 
     @Test
-    fun `fund rejects a mis-sized recipient and an expired timeout`() {
+    fun `fund rejects an expired timeout`() {
         val terms = f.dealTerms()
-        val signer = ErgoTestFixtures.ProverSigner(f.sellerKeys.secret)
-        val fund = { recipient: ByteArray, timeout: Int ->
+        assertFailsWith<IllegalArgumentException> {
             builder.buildFund(
                 dealTerms = terms,
-                recipientAddr = recipient,
                 collateralTokenId = Base16.decode(f.useTokenIdHex),
-                timeoutHeight = timeout,
+                timeoutHeight = f.CREATION_HEIGHT, // timeout must be future
                 fundingInputs = listOf(f.fundingChainBox()),
                 currentHeight = f.CREATION_HEIGHT,
                 changeAddress = f.p2pkAddress(f.sellerKeys.pubKeyCompressed),
-                signer = signer,
+                signer = ErgoTestFixtures.ProverSigner(f.sellerKeys.secret),
             )
         }
-        assertFailsWith<IllegalArgumentException> { fund(ByteArray(20), 2000) } // Tron payload is 21 B
-        assertFailsWith<IllegalArgumentException> { fund(f.recipientRaw, f.CREATION_HEIGHT) } // timeout must be future
     }
 
     // ---------------------------------------------------------------- reclaim (path A)
@@ -230,13 +200,11 @@ class OperatorTxBuilderSpec {
 
     private fun releaseTx(
         terms: p2pgate.dealprotocol.DealTerms,
-        attestation: PaymentAttestation,
         dataInput: ChainBox? = null,
         currentHeight: Int = 1500,
     ): SignedTransaction = builder.buildRelease(
         fundedBox = f.fundedChainBox(terms),
-        oracleDataInput = dataInput ?: oracle.attestationBox(attestation),
-        attestation = attestation,
+        oracleDataInput = dataInput ?: oracle.attestationBox(terms.dealId),
         feeInputs = listOf(f.feeChainBox()),
         currentHeight = currentHeight,
         changeAddress = f.dealKeysAddress,
@@ -244,14 +212,12 @@ class OperatorTxBuilderSpec {
     )
 
     @Test
-    fun `release with the oracle data input and valid attestation prover-signs`() {
+    fun `release with the oracle data input prover-signs`() {
         val terms = f.dealTerms()
-        val attestation = honestAttestation(terms)
         val recording = ErgoTestFixtures.RecordingSigner(releaseSigner)
         val signed = builder.buildRelease(
             fundedBox = f.fundedChainBox(terms),
-            oracleDataInput = oracle.attestationBox(attestation),
-            attestation = attestation,
+            oracleDataInput = oracle.attestationBox(terms.dealId),
             feeInputs = listOf(f.feeChainBox()),
             currentHeight = 1500,
             changeAddress = f.dealKeysAddress,
@@ -263,7 +229,7 @@ class OperatorTxBuilderSpec {
         val tx = recording.lastUnsigned!!
 
         // The oracle box rides as the tx's DATA INPUT carrying the NFT (its R4
-        // is the attestation — the build-time mirror required exact equality).
+        // is this vault's dealId — the build-time mirror required equality).
         assertEquals(Base16.encode(oracle.oracleNftId), dataInputNftId(tx))
 
         // No context vars on the vault input — path C supplies none.
@@ -285,59 +251,29 @@ class OperatorTxBuilderSpec {
     }
 
     @Test
-    fun `release rejects a tampered attestation dealId`() {
+    fun `release rejects an attestation for a different deal`() {
         val terms = f.dealTerms()
+        // The data input's R4 carries another deal's id — the dealId-equality
+        // mirror (and the contract's path C gate) reject it.
+        val otherDataInput = oracle.attestationBox(ByteArray(32) { 9 })
         assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = tampered(terms, dealId = ByteArray(32) { 9 }))
-        }
-    }
-
-    @Test
-    fun `release rejects a tampered attestation recipient`() {
-        val terms = f.dealTerms()
-        assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = tampered(terms, recipient = ByteArray(21) { (it * 23 + 7).toByte() }))
-        }
-    }
-
-    @Test
-    fun `release rejects a tampered attestation amount`() {
-        val terms = f.dealTerms()
-        assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = tampered(terms, amount = terms.amount + 1))
-        }
-    }
-
-    @Test
-    fun `release rejects a tampered attestation chain id`() {
-        val terms = f.dealTerms()
-        assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = tampered(terms, srcChainId = SourceChainId.ETHEREUM.wireId))
-        }
-    }
-
-    @Test
-    fun `release rejects a tampered attestation token id`() {
-        val terms = f.dealTerms()
-        assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = tampered(terms, tokenId = 2))
+            releaseTx(terms, dataInput = otherDataInput)
         }
     }
 
     @Test
     fun `release rejects an oracle data input carrying a different NFT`() {
         val terms = f.dealTerms()
-        val attestation = honestAttestation(terms)
         val foreignNft = ByteArray(32) { (it * 11 + 2).toByte() }
         val foreignDataInput = ChainBox(
             boxId = "e3".repeat(32), transactionId = "e4".repeat(32), index = 0,
             value = oracle.boxValueNanoErg, creationHeight = 0,
             ergoTreeHex = ErgoValues.treeHex(oracle.tree),
             address = "", tokens = listOf(ChainToken(Base16.encode(foreignNft), 1L)),
-            registers = listOf(p2pgate.ergo.ChainRegister.CollBytes(attestation.encode()), null, null, null, null, null),
+            registers = listOf(ChainRegister.CollBytes(terms.dealId), null, null, null, null, null),
         )
         assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = attestation, dataInput = foreignDataInput)
+            releaseTx(terms, dataInput = foreignDataInput)
         }
     }
 
@@ -346,29 +282,16 @@ class OperatorTxBuilderSpec {
         val terms = f.dealTerms()
         assertFailsWith<IllegalArgumentException> {
             // A plain ERG fee box as the data input: no NFT to pin.
-            releaseTx(terms, attestation = honestAttestation(terms), dataInput = f.feeChainBox())
+            releaseTx(terms, dataInput = f.feeChainBox())
         }
     }
 
     @Test
-    fun `release rejects an oracle data input without the R4 payload`() {
+    fun `release rejects an oracle data input without the R4 dealId`() {
         val terms = f.dealTerms()
-        val attestation = honestAttestation(terms)
         // The at-rest oracle box (no registers) — the attestation was never posted.
         assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = attestation, dataInput = oracle.oracleChainBox())
-        }
-    }
-
-    @Test
-    fun `release rejects an oracle data input whose R4 mismatches the attestation`() {
-        val terms = f.dealTerms()
-        val attestation = honestAttestation(terms)
-        // R4 carries a different deal's payload — the exact-equality mirror fails
-        // before any field check.
-        val otherDataInput = oracle.attestationBox(tampered(terms, dealId = ByteArray(32) { 9 }))
-        assertFailsWith<IllegalArgumentException> {
-            releaseTx(terms, attestation = attestation, dataInput = otherDataInput)
+            releaseTx(terms, dataInput = oracle.oracleChainBox())
         }
     }
 
@@ -378,8 +301,7 @@ class OperatorTxBuilderSpec {
         assertFailsWith<IllegalArgumentException> {
             builder.buildRelease(
                 fundedBox = f.provenChainBox(terms),
-                oracleDataInput = oracle.attestationBox(honestAttestation(terms)),
-                attestation = honestAttestation(terms),
+                oracleDataInput = oracle.attestationBox(terms.dealId),
                 feeInputs = listOf(f.feeChainBox()),
                 currentHeight = 1500,
                 changeAddress = f.dealKeysAddress,
@@ -391,7 +313,7 @@ class OperatorTxBuilderSpec {
     // ---------------------------------------------------------------- contest (path C′)
 
     @Test
-    fun `contest counters a real claim-open with the oracle digest alone`() {
+    fun `contest counters a real claim-open with the oracle attestation alone`() {
         val terms = f.dealTerms()
 
         // 1) The buyer opens a claim on the FUNDED box (ClaimTxBuilder, path B).
@@ -416,12 +338,10 @@ class OperatorTxBuilderSpec {
             proofHeight = 1500,
             recordId = SchnorrVerifier.blake2b256(sig.a, sig.z, record.encode()),
         )
-        val attestation = honestAttestation(terms)
         val recording = ErgoTestFixtures.RecordingSigner(releaseSigner)
         val signed = builder.buildContest(
             provenBox = proven,
-            oracleDataInput = oracle.attestationBox(attestation),
-            attestation = attestation,
+            oracleDataInput = oracle.attestationBox(terms.dealId),
             feeInputs = listOf(f.feeChainBox()),
             currentHeight = 1501, // within maturation — C′ beats path D
             changeAddress = f.dealKeysAddress,
@@ -446,8 +366,7 @@ class OperatorTxBuilderSpec {
         assertFailsWith<IllegalArgumentException> {
             builder.buildContest(
                 provenBox = f.fundedChainBox(terms),
-                oracleDataInput = oracle.attestationBox(honestAttestation(terms)),
-                attestation = honestAttestation(terms),
+                oracleDataInput = oracle.attestationBox(terms.dealId),
                 feeInputs = listOf(f.feeChainBox()),
                 currentHeight = 1500,
                 changeAddress = f.dealKeysAddress,

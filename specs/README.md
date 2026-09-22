@@ -22,7 +22,7 @@ specified.*
   (2026-09-13): vault R7 holds the bare 32-byte `oracleNftId` (the old 65-byte two-key
   packing is gone), path B is
   gated on the single seller-signed handoff record, and paths C/C′ are gated on the
-  oracle digest alone — no receipt signature anywhere in the protocol.
+  oracle's attestation (the bare `dealId`) alone — no receipt signature anywhere in the protocol.
 - **Repo layout (as implementation phases land):**
   `contracts/` — ErgoScript `.es` sources + Kotlin contract tests (phase 1 + v2
   landed); `apps/core/` — pure-Kotlin shared modules (`dealprotocol`, `ergo` chain
@@ -38,7 +38,7 @@ specified.*
 |---|---|---|---|
 | 1 | `specs/vault-contract.md` | ErgoScript vault: box layout, registers, spending paths, test matrix | **phase 1 implemented + tested** (`contracts/`); v2 landed (2026-09-13: single-signed claim, oracle-only release); in-contract protocol fee removed 2026-09-18 (every path pays in full) |
 | 2 | `specs/deal-protocol.md` | Canonical deal state machine, wire formats (deal terms, handoff record, QR), key management, privacy requirements | **landed** (`apps/core/dealprotocol/`, 94 tests green) |
-| 3 | `specs/oracle-integration.md` | Payment-proof oracle: permanent digest format, phase-1 centralized NFT-authenticated oracle, taint screening, phase-2 Rosen-derived guard threshold, liveness/safety | draft; digest format + dev oracle landed in code (`PaymentAttestation`, `DevOracle` attestation-box builder, backend `OracleClient`/`DevOracleClient` with `attestationBoxFor`) — the deployed HTTP attestation service is still future work |
+| 3 | `specs/oracle-integration.md` | Payment-proof oracle: permanent 32-byte `dealId` payload (simplified from the 112-byte field layout pre-launch, 2026-09-21), phase-1 centralized NFT-authenticated oracle, taint screening, phase-2 Rosen-derived guard threshold, liveness/safety | draft; dealId payload + dev oracle landed in code (`DevOracle.attest(terms) = terms.dealId` — the `PaymentAttestation` codec is deleted — plus the `DevOracle` attestation-box builder, backend `OracleClient`/`DevOracleClient` with `attestationBoxFor`) — the deployed HTTP attestation service is still future work |
 | 4 | `specs/seller-dashboard.md` | seller/operator dashboard front-end: login, vault lane kanban, the meeting screen (counted-cash gate, handoff QR), pool view, dispute inbox, infra status; handoff sign/QR endpoints | **landed** (2026-09-17/18, M4; static vanilla JS/CSS app at `/dashboard/`, handoff sign + QR endpoints live, backend runnable via `./gradlew :backend:run`) |
 | 5 | `specs/android-app.md` | buyer-facing native Android app: modules, screens, chain interaction, handoff-record verification | **landed** (2026-09-18, M4): `apps/app` native Android buyer app (Compose, ZXing, WorkManager polling) — quote discovery, deal timeline, the meeting screen, claim path, recovery; 37 JVM unit tests + `assembleDebug` green. Native Android is the owner decision; the earlier PWA wording is superseded |
 | 6 | `specs/operator-backend.md` | Ktor operator backend: vault lane, collateral management, quotes, AML hook, dispute inbox, APIs | **landed M3-B** (2026-09-17, `backend/`, 93 tests green; M4 seller-meeting endpoints + static dashboard serving added; documented deviations in the spec's status note) |
@@ -75,15 +75,16 @@ specified.*
    `vault-contract.md` §7, against a mock oracle key set. Phase 1 implemented and
    tested; the **v2 rework has landed** (2026-09-13): R7 holds the bare 32-byte
    `oracleNftId` (the old two-key packing is gone); path B is gated
-   on the single seller-signed handoff record; paths C/C′ gate release on the oracle
-   digest alone; `CLAIM_MATURATION` 12h.
+   on the single seller-signed handoff record; paths C/C′ gate release on the oracle's
+   attestation alone; `CLAIM_MATURATION` 12h.
 2. **Deal protocol library** — pure-Kotlin `:core:dealprotocol` implementing
    `deal-protocol.md` wire formats + state machine, shared by all apps and the backend.
    **Landed** (2026-09).
 3. **Chain layer** — pure-Kotlin `:core:ergo` (`android-app.md` §4): `ChainSource` +
    explorer client, `VaultBoxTracker`, `ClaimTxBuilder`, `OperatorTxBuilder`,
-   `PaymentAttestation`, `DevOracle` (attestation-box builder; the `OracleSigner`
-   co-signing seam was removed in the 2026-09-17 data-input rework), prover-verified txs.
+   `DevOracle` (attestation-box builder over the bare `dealId`; the `OracleSigner`
+   co-signing seam was removed in the 2026-09-17 data-input rework, and the 112-byte
+   `PaymentAttestation` codec was deleted with the 2026-09-21 dealId-only payload), prover-verified txs.
    **Landed** (2026-09-16, M2; operator-side txs extended M3-A).
 4. **Operator backend** — vault funding/reclaim + quote feed; enables manual end-to-end
    deals (mainnet by default since 2026-09-17; testnet via config — `P2P_NETWORK=testnet`).
@@ -97,7 +98,7 @@ specified.*
    front-end, specced in `specs/seller-dashboard.md`, served at `/dashboard/`. The
    handoff sign + QR endpoints it depends on are live (sign from `FUNDED` drives
    `CashCollected` → `PAYMENT_PENDING`).
-7. **Oracle phase 2** — replace the centralized NFT-authenticated oracle with a GuardSign-style k-of-n guard set (Rosen contract fork, `specs/oracle-integration.md` §3.2). The payment-proof digest format is unchanged; only the vault's authentication check and the signer set change. (The deployed phase-1 HTTP attestation service is also still future work — the seam exists in code.)
+7. **Oracle phase 2** — replace the centralized NFT-authenticated oracle with a GuardSign-style k-of-n guard set (Rosen contract fork, `specs/oracle-integration.md` §3.2). The payload is unchanged — the guard set threshold-signs the same 32-byte `dealId`; only the vault's authentication check and the signer set change. (The deployed phase-1 HTTP attestation service is also still future work — the seam exists in code.)
 
 (Phases 6–7 can overlap; the oracle service and phase-2 guard set are independent workstreams.)
 

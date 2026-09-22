@@ -78,7 +78,7 @@ class VaultBoxTrackerSpec {
             ChainRegister.CollBytes(f.buyerKeys.pubKeyCompressed),
             ChainRegister.Int64(1500L),
             ChainRegister.CollBytes(ByteArray(32) { 7 }),
-            ChainRegister.CollBytes(f.fundingBinding()),
+            null,
         ),
     )
 

@@ -107,7 +107,7 @@ private fun disputeRowDto(r: p2pgate.backend.disputes.DisputeRow) = DisputeRowDt
     dealId = r.dealId, state = r.state.name, openedAtEpochMs = r.openedAt.toEpochMilli(),
     maturesAtEpochMs = r.maturesAt.toEpochMilli(), contested = r.contested,
     handoffRecordRef = r.handoffRecordRef, geoRef = r.geoRef,
-    oracleConfirmed = r.oracleConfirmed, attestationDigest = r.attestationDigest,
+    oracleConfirmed = r.oracleConfirmed, attestationDealId = r.attestationDealId,
     actioned = r.actioned, action = r.action,
 )
 
@@ -260,13 +260,7 @@ fun Application.module(app: BackendApp) {
                     }
                     call.respond(
                         if (attestation == null) AttestationDto("UNCONFIRMED")
-                        else AttestationDto(
-                            "CONFIRMED",
-                            digest = Hex.encode(attestation.digest()),
-                            srcTxId = Hex.encode(attestation.srcTxId),
-                            srcBlockHeight = attestation.srcBlockHeight,
-                            srcBlockTime = attestation.srcBlockTime,
-                        ),
+                        else AttestationDto("CONFIRMED", dealId = Hex.encode(attestation)),
                     )
                 }
                 post("/claim") {

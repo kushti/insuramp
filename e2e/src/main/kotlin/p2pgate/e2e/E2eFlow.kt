@@ -15,7 +15,6 @@ import p2pgate.ergo.ClaimTxBuilder
 import p2pgate.ergo.DevOracle
 import p2pgate.ergo.ErgoContracts
 import p2pgate.ergo.OperatorTxBuilder
-import p2pgate.ergo.PaymentAttestation
 import sigma.ast.ErgoTree
 import java.math.BigInteger
 
@@ -37,7 +36,7 @@ import java.math.BigInteger
  *     buyer address for claim fees;
  *  5. Flow A (release): fund → seller-signed 52-byte P2PH handoff record →
  *     oracle attestation (the oracle posts it: an `oracle.es` rotation spend
- *     recreating the singleton box with R4 = the 112-byte payload) → release
+ *     recreating the singleton box with R4 = the 32-byte dealId) → release
  *     (operator-wallet-only, the posted oracle box as a DATA INPUT — no
  *     oracle signature) → assert seller paid in full;
  *  6. Flow B (dispute): fund → record → claim-open → wait maturation (3
@@ -77,7 +76,6 @@ class E2eFlow(
     private val collateralTotal = 10 * dealAmount
 
     private lateinit var keys: RunKeys
-    private lateinit var recipient: ByteArray
     private lateinit var nftIdHex: String
     private lateinit var collateralTokenIdHex: String
     private val dryOutputs = HashMap<String, List<ChainBox>>()
@@ -121,7 +119,6 @@ class E2eFlow(
 
         // ------------------------------------------------ 2. keys (per run, no secrets stored)
         keys = RunKeys(Keys.random(), Keys.random(), Keys.random())
-        recipient = ByteArray(21) { (it * 31 + 5).toByte() }
         val operatorAddress = p2pkAddress(keys.operator)
         log("operator (seller): $operatorAddress")
 
@@ -208,14 +205,15 @@ class E2eFlow(
     private class OracleState(val devOracle: DevOracle, var box: ChainBox, var feeBox: ChainBox)
 
     /**
-     * Posts [attestation] on-chain: an `oracle.es` rotation spend recreating the
-     * singleton box with R4 = the 112-byte payload (oracle.es pins NFT + value
-     * reproduction at OUTPUTS(0); registers are unconstrained). Returns the
-     * posted box — the release's DATA INPUT. Live: broadcast through the real
-     * explorer-parsed box (ids and heights must match the network); dry-run:
-     * the synthetic spend is recorded, not broadcast.
+     * Posts the [dealId] attestation on-chain: an `oracle.es` rotation spend
+     * recreating the singleton box with R4 = the 32-byte dealId (oracle.es pins
+     * NFT + value reproduction at OUTPUTS(0); registers are unconstrained).
+     * Returns the posted box — the release's DATA INPUT. Live: broadcast
+     * through the real explorer-parsed box (ids and heights must match the
+     * network); dry-run: the synthetic spend is recorded, not broadcast.
      */
-    private fun postAttestation(oracle: OracleState, attestation: PaymentAttestation, height: Int): ChainBox {
+    private fun postAttestation(oracle: OracleState, dealId: ByteArray, height: Int): ChainBox {
+        require(dealId.size == 32) { "dealId must be 32 bytes, got ${dealId.size}" }
         val rotationTx = assemble(
             inputs = listOf(oracle.box, oracle.feeBox),
             candidates = listOf(
@@ -224,7 +222,7 @@ class E2eFlow(
                     oracle.devOracle.tree,
                     listOf(ChainToken(nftIdHex, 1L)),
                     height,
-                    registers = listOf(4 to sigma.ast.ByteArrayConstant.apply(attestation.encode())),
+                    registers = listOf(4 to sigma.ast.ByteArrayConstant.apply(dealId)),
                 ),
             ),
             height = height,
@@ -316,7 +314,6 @@ class E2eFlow(
         val height = buildHeight()
         val fundTx = operatorBuilder.buildFund(
             dealTerms = terms,
-            recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = height + config.reclaimTimeoutBlocks,
             fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.minerFeeNanoErg + 1_000_000L),
@@ -331,20 +328,18 @@ class E2eFlow(
         val record = handoffRecord(terms)
         val sig = Schnorr.sign(keys.operator.secret, record.encode(), keys.operator.pubKeyCompressed)
 
-        // Dev attestation: the phase-1 oracle is trusted by design; a fabricated srcTxId is fine.
-        val attestation = PaymentAttestation.build(
-            terms, recipient, srcTxId = Blake2b256.digest("e2e-flowA".encodeToByteArray()),
-            srcBlockHeight = height.toLong(), srcBlockTime = nowSec(),
-        )
+        // Dev attestation: the phase-1 oracle is trusted by design — the caller
+        // asserts the seller's transfer happened and screened clean; the
+        // attestation itself is just the deal's id.
+        val dealId = oracle.devOracle.attest(terms)
 
         // The oracle posts the attestation: an oracle.es rotation spend recreating
-        // the singleton box with R4 = the payload. The release then takes that box
-        // as a DATA INPUT — no oracle signature — and is operator-wallet-only.
-        val attestationBox = postAttestation(oracle, attestation, buildHeight())
+        // the singleton box with R4 = the 32-byte dealId. The release then takes
+        // that box as a DATA INPUT — no oracle signature — and is operator-wallet-only.
+        val attestationBox = postAttestation(oracle, dealId, buildHeight())
         val releaseTx = operatorBuilder.buildRelease(
             fundedBox = fundedBox,
             oracleDataInput = attestationBox,
-            attestation = attestation,
             feeInputs = operatorErgInputs(config.minerFeeNanoErg + 1_000_000L),
             currentHeight = buildHeight(),
             changeAddress = p2pkAddress(keys.operator),
@@ -381,7 +376,6 @@ class E2eFlow(
         val height = buildHeight()
         val fundTx = operatorBuilder.buildFund(
             dealTerms = terms,
-            recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = height + config.reclaimTimeoutBlocks,
             fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.minerFeeNanoErg + 1_000_000L),
@@ -448,7 +442,6 @@ class E2eFlow(
         val timeoutHeight = height + config.reclaimTimeoutBlocks
         val fundTx = operatorBuilder.buildFund(
             dealTerms = terms,
-            recipientAddr = recipient,
             collateralTokenId = Hex.decode(collateralTokenIdHex),
             timeoutHeight = timeoutHeight,
             fundingInputs = listOf(collateralBox) + operatorErgInputs(fundedValueForFund + config.minerFeeNanoErg + 1_000_000L),

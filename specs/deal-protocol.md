@@ -26,8 +26,8 @@ Canonical states. Every component uses these names verbatim.
  QUOTED ──▶ FUNDED ──▶ PAYMENT_PENDING ──▶ PAYMENT_CONFIRMED ──▶ RELEASED
               │                │                             ▲
               │                │ (buyer opens claim: cash     │ path C′ — the seller
-              │                │  collected, seller never    │ counters with the oracle
-              │                │  paid)                      │ digest alone; an oracle
+              │                │  collected, seller never    │ counters with the oracle's
+              │                │  paid)                      │ attestation alone; an oracle
               │                ▼                             │ signal landing during
               │ (RECLAIM_   CLAIM_OPENED ──▶ CLAIMABLE ──▶ CLAIMED
               │  TIMEOUT)        └──▶ RELEASED (contested) ──┘  kills the claim
@@ -44,7 +44,7 @@ Canonical states. Every component uses these names verbatim.
 | FUNDED | vault box created, collateral locked, waiting for the meeting | operator backend | FUNDED box |
 | PAYMENT_PENDING | cash collected (seller-signed handoff record exists); seller is obligated to send USDT | seller signs the handoff record at the meeting | FUNDED box |
 | PAYMENT_CONFIRMED | oracle observed the seller's USDT transfer to the buyer | oracle attestation (off-chain signal) | FUNDED box (still) |
-| RELEASED | payment-proof path spent; collateral to seller in full | seller submits tx (path C/C′, oracle digest alone) | box spent (path C/C′) |
+| RELEASED | payment-proof path spent; collateral to seller in full | seller submits tx (path C/C′, oracle's attestation alone) | box spent (path C/C′) |
 | RECLAIMED | timeout path spent; collateral back to seller in full | backend reclaim job | box spent (path A) |
 | CLAIM_OPENED | seller-signed handoff record on-chain; box is PAYMENT_PROVEN | Buyer app (path B tx) | PAYMENT_PROVEN box |
 | CLAIMABLE | `CLAIM_MATURATION` elapsed since `proofHeight` | automatic (height) | PAYMENT_PROVEN box |
@@ -56,26 +56,30 @@ Rules:
   FUNDED → PAYMENT_PENDING requires the seller-signed handoff record; the seller's USDT
   transfer and the oracle observation come after.
 - **PAYMENT_CONFIRMED does not touch the chain** (routine deals leave one funding tx and
-  one release/reclaim tx). The oracle digest only goes on-chain when the seller releases
+  one release/reclaim tx). The oracle's attestation (the bare `dealId`, §3.4) only goes
+  on-chain when the seller releases
   (path C/C′) — it is the seller's *proof of performance*.
 - **Claim gating flipped vs. a naive mirror:** a claim asserts "I handed over cash and the
   seller never paid". There is no payment for an oracle to attest at that point, so the
   claim is gated on the **seller-signed handoff record** (one Schnorr under the deal's
   seller key over the cash-received message), verified in path B against the vault's R5.
-  The oracle instead gates *release*: path C/C′ present the oracle digest of the
-  seller's USDT transfer (recipient = the buyer's address, R9). `PAYMENT_CONFIRMED`
+  The oracle instead gates *release*: path C/C′ present the oracle's attestation — the
+  bare `dealId` signal that the seller's USDT transfer to the buyer is done and screened
+  (the buyer's receive address is registered off-chain at funding, §3.3/§3.4 — it is no
+  longer pinned on-chain). `PAYMENT_CONFIRMED`
   still allows a claim (the "claims without cause" case — the seller counters during
-  maturation by presenting the digest, which proves performance).
-- **RELEASED** is reachable from PAYMENT_CONFIRMED (routine: path C, oracle digest alone)
+  maturation by presenting the attestation, which proves performance).
+- **RELEASED** is reachable from PAYMENT_CONFIRMED (routine: path C, the attestation
+  alone)
   and from CLAIM_OPENED/CLAIMABLE (path C′ — the seller counters a claim by presenting
-  the same digest). The seller's contest is **oracle-signal-only**: if the oracle signal
+  the same attestation). The seller's contest is **oracle-signal-only**: if the oracle signal
   lands while a claim is open, the claim is without cause and dead — the state machine
   records it as contested and awaits the seller's C′ counter-spend rather than leaving
   a zombie claim. (The contract itself never sees the off-chain signal, so a matured
   path D spend remains possible on-chain; the seller is expected to win the race with C′.)
 - **RECLAIMED is reachable only from FUNDED and PAYMENT_CONFIRMED**, always after
   `RECLAIM_TIMEOUT`. From FUNDED = buyer no-show, nothing happened. From PAYMENT_CONFIRMED =
-  the seller already paid (digest exists) and the buyer ghosted — the buyer holds the USDT,
+  the seller already paid (the attestation exists) and the buyer ghosted — the buyer holds the USDT,
   so the seller reclaiming its own collateral harms no one. Reclaim is rejected from
   PAYMENT_PENDING: cash has changed hands and no payment proof exists, so reclaim there
   is a theft path — the buyer's answer is the claim.
@@ -111,10 +115,11 @@ Rules:
   *buyer*), with the residual that a seller who takes cash and refuses to sign leaves the
   buyer no on-chain artifact (`onramp-insurance.md` §2).
 - **Oracle**: phase 1 — a single trusted oracle, authenticated on-chain by an NFT
-  pinned in the vault's R7; it attests the seller's USDT transfer to the buyer and its
-  attestation alone moves collateral on the release paths (`specs/oracle-integration.md`
+  pinned in the vault's R7; it attests the seller's USDT transfer to the buyer by
+  posting the bare 32-byte `dealId` in its singleton's R4, and that attestation alone
+  moves collateral on the release paths (`specs/oracle-integration.md`
   §3.1). Phase 2 — a k-of-n guard set via a GuardSign-style box: same register, same
-  digest format, only the vault's authentication check changes
+  32-byte `dealId` payload (threshold-signed), only the vault's authentication check changes
   (`specs/oracle-integration.md` §3.2).
 
 Recovery: a deal link carries a random token; the deal key is additionally recoverable from
@@ -144,7 +149,8 @@ quoteExpiry   4 bytes   uint32 unix seconds
 
 `dealId = blake2b256(deal terms serialization)` — 32 bytes. It binds amount, asset, chain,
 and both keys; the vault's R4 stores it and every proof references it, so no proof is
-replayable across deals (vault-contract test 22).
+replayable across deals (vault-contract test 36). The `dealId` is also the entire
+on-chain oracle attestation (§3.4).
 
 **Register note:** the oracle NFT id is pinned on-chain in R7 as the bare 32-byte
 `oracleNftId` (the 65-byte packing of oracle NFT id plus a second deal-scoped key, used
@@ -198,19 +204,32 @@ gates path B and anchors maturation.
   the deal terms, the seller signs, the record is complete.
 - **Buyer → seller (payout address):** the buyer's USDT address (Tron base58 string in
   phase 1 — deals are Tron-only, `srcChainId = 0x01`; the EIP-55/Ethereum encoding stays
-  defined in `specs/oracle-integration.md`) + expected amount, shared at QUOTED so R9's `recipientAddr` pins it.
+  defined in `specs/oracle-integration.md`) + expected amount, shared at QUOTED and
+  registered with the operator/oracle watch set **off-chain** at funding (since
+  2026-09-21 it is no longer pinned on-chain — the R9 `recipientAddr` binding is
+  removed, §3.4).
   Exact per-chain URI formats are an implementation detail of `specs/android-app.md`.
 
 ### 3.4 Oracle attestation
 
-Digest layout defined in `specs/oracle-integration.md` §2. The binding rule flips with the
-direction: the digest's `dealId`, `amount`, `srcChainId`, and `recipient` fields must equal
-the vault's R4/R9 values, where `recipient` is the **buyer's** USDT address (the seller
-pays the buyer). In phase 1 the attestation is realized as the oracle box being a **data
+The attestation **is the bare 32-byte `dealId`** of §3.1, posted in the oracle
+singleton's R4 — a per-deal signal meaning "this deal's USDT transfer seller→buyer is
+done and the funds screened non-tainted" (owned by `specs/oracle-integration.md` §2.2;
+the 112-byte field payload that preceded it was retired pre-launch, 2026-09-21). The
+binding rule is a single equality: the release path checks the attestation box's R4
+against the vault's R4 `dealId` — there are no field checks anymore, and the R9
+funding binding (`srcChainId | tokenId | recipientAddr | expectedAmount`) that backed
+them is removed from the vault. What the old binding pinned on-chain is now
+**wholly the oracle's off-chain assertion**: the buyer's USDT receive address and the
+exact amount are registered with the operator/oracle watch set at funding (off-chain,
+§3.3), and the oracle's observer matches the exact `(recipient, amount)` transfer
+before it will post the dealId (`specs/oracle-integration.md` §4.1) — the contract
+cannot verify any of that, and this spec does not pretend otherwise.
+In phase 1 the attestation is realized as the oracle box being a **data
 input** to the **release** transaction (the oracle singleton carries the NFT and the
-payload in R4; the vault checks the NFT against R7 and the payload against R4/R9 —
+`dealId` in R4; the vault checks the NFT against R7 and the R4 dealId against its own —
 data-input scripts never execute, so no oracle signature is in the tx); in phase 2 as a
-k-of-n guard signature bundle over the same digest. The attestation is **solely
+k-of-n guard signature bundle over the same 32-byte `dealId`. The attestation is **solely
 sufficient** on the release paths — no buyer or seller signature accompanies it.
 
 ## 4. Failure and edge transitions
@@ -221,8 +240,8 @@ Mapping of `onramp-ux.md` §6 onto the state machine:
 |---|---|---|
 | Buyer never shows up (no-show) | FUNDED → (RECLAIM_TIMEOUT) → RECLAIMED | silent close; collateral back to seller |
 | Cash collected, seller never sends USDT | PAYMENT_PENDING → buyer hits dispute → CLAIM_OPENED | claim timeline shown (~`CLAIM_MATURATION`) |
-| Seller sends partial USDT | blocked operationally ("send exactly N USDT in one tx"); if it happens, the oracle digest amount ≠ expected → release fails; claim path unaffected | flagged in dashboard dispute inbox |
-| Buyer claims without cause | CLAIM_OPENED → oracle signal lands → claim contested → seller presents the oracle digest alone → RELEASED (path C′) | dashboard shows "evidence attached" |
+| Seller sends partial USDT | blocked operationally ("send exactly N USDT in one tx"); if it happens, the oracle never attests it — its observer matches the exact `(recipient, amount)` registered at funding, so a partial/short payment simply stays unconfirmed → no release; claim path unaffected | flagged in dashboard dispute inbox |
+| Buyer claims without cause | CLAIM_OPENED → oracle signal lands → claim contested → seller presents the oracle's attestation alone → RELEASED (path C′) | dashboard shows "evidence attached" |
 | Buyer ghosts after USDT arrives | PAYMENT_CONFIRMED → (RECLAIM_TIMEOUT) → RECLAIMED | Buyer keeps USDT; seller recovers collateral |
 | Seller takes the cash and refuses to sign the record | Buyer app never released the cash (sequencing rule §3.2); if the buyer handed cash over anyway, they hold no artifact — procedurally the same exposure as any face-to-face cash trade | no on-chain case; off-chain escalation, not a contract case |
 | App dies mid-deal | recovery by deal-link token or deal-key seed; state re-derived from chain + backend | no server-side account to lose |

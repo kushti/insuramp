@@ -300,7 +300,7 @@ class VaultContractSpec {
     @Test
     fun `16 release from FUNDED oracle-only passes`() {
         // v2 path C: the oracle singleton box as a DATA INPUT (NFT == R7, R4 the
-        // 112-byte attestation payload) — no context vars, no oracle signature.
+        // 32-byte dealId attestation payload) — no context vars, no oracle signature.
         // The seller payout sits at OUTPUTS(0), paid in full.
         val fx = VaultFixture()
         assertTrue(
@@ -350,8 +350,8 @@ class VaultContractSpec {
 
     @Test
     fun `19 release from FUNDED with a data input carrying a different NFT fails`() {
-        // The payload is field-valid; only the token id differs — the data-input
-        // NFT pin (== R7) must reject it.
+        // The payload is this deal's dealId; only the token id differs — the
+        // data-input NFT pin (== R7) must reject it.
         val fx = VaultFixture()
         assertFalse(
             fx.verifySpend(
@@ -369,7 +369,7 @@ class VaultContractSpec {
         // HONEST SEMANTIC DOCUMENTATION of the data-input design: a data input's
         // script NEVER executes, so the vault cannot require oracle.es to govern
         // the attestation box — ANY box carrying the pinned NFT id as tokens(0)
-        // and a field-matching R4 payload releases the vault. NFT custody alone
+        // and this deal's dealId in R4 releases the vault. NFT custody alone
         // is the phase-1 trust root: whoever can mint/hold a box with the oracle
         // NFT can attest. (Phase 2 replaces this with the guard-set threshold.)
         val fx = VaultFixture()
@@ -398,37 +398,12 @@ class VaultContractSpec {
         )
     }
 
-    @Test
-    fun `22 release from FUNDED with digest amount different from R9 fails`() {
-        val fx = VaultFixture()
-        assertFalse(
-            fx.verifySpend(
-                fx.fundedTree, fx.fundedBox,
-                inputs = listOf(fx.fundedBox),
-                dataInputs = listOf(fx.oracleDataBox(payload = fx.paymentPayload(amount = fx.dealAmount + 1))),
-                outputs = listOf(fx.sellerOut()),
-                height = proofHeight,
-            ),
-        )
-    }
+    // Tests 22 (tampered amount) and 23 (tampered recipient) were removed
+    // 2026-09-21 with the dealId-only payload: the release path no longer
+    // checks amount/recipient fields (there are none).
 
     @Test
-    fun `23 release from FUNDED with digest recipient different from R9 fails`() {
-        val fx = VaultFixture()
-        val otherRecipient = ByteArray(21) { (it * 23 + 7).toByte() }
-        assertFalse(
-            fx.verifySpend(
-                fx.fundedTree, fx.fundedBox,
-                inputs = listOf(fx.fundedBox),
-                dataInputs = listOf(fx.oracleDataBox(payload = fx.paymentPayload(recipientAddr = otherRecipient))),
-                outputs = listOf(fx.sellerOut()),
-                height = proofHeight,
-            ),
-        )
-    }
-
-    @Test
-    fun `24 release from FUNDED with digest dealId different from R4 fails`() {
+    fun `24 release from FUNDED with attestation dealId different from R4 fails`() {
         val fx = VaultFixture()
         val otherDealId = ByteArray(32) { (it + 99).toByte() }
         assertFalse(
@@ -442,24 +417,9 @@ class VaultContractSpec {
         )
     }
 
-    @Test
-    fun `25 digest srcTxId is not bound on-chain and passes`() {
-        // Documentation of the checked-field set: only dealId, chainId, tokenId,
-        // recipient and amount are pinned against R4/R9; srcTxId/srcHeight/srcTime ride
-        // along for audit and the dashboard but are NOT checked in-script (R9 has no
-        // field for them). The oracle's NFT custody is the trust root for those bytes.
-        val fx = VaultFixture()
-        val otherSrcTxId = ByteArray(32) { (it * 29 + 9).toByte() }
-        assertTrue(
-            fx.verifySpend(
-                fx.fundedTree, fx.fundedBox,
-                inputs = listOf(fx.fundedBox),
-                dataInputs = listOf(fx.oracleDataBox(payload = fx.paymentPayload(srcTxId = otherSrcTxId))),
-                outputs = listOf(fx.sellerOut()),
-                height = proofHeight,
-            ),
-        )
-    }
+    // Test 25 (srcTxId unbound passes) was removed 2026-09-21 with the
+    // dealId-only payload: srcTxId/srcHeight/srcTime left the payload entirely,
+    // so there is nothing unbound to demonstrate.
 
     // ------------------------------------------------------------- PAYMENT_PROVEN box
 
@@ -509,23 +469,11 @@ class VaultContractSpec {
         )
     }
 
-    @Test
-    fun `29 release from PAYMENT_PROVEN with digest amount different from R9 fails`() {
-        val fx = VaultFixture()
-        val box = fx.provenBox(proofHeight)
-        assertFalse(
-            fx.verifySpend(
-                fx.provenTree, box,
-                inputs = listOf(box),
-                dataInputs = listOf(fx.oracleDataBox(payload = fx.paymentPayload(amount = fx.dealAmount + 1))),
-                outputs = listOf(fx.sellerOut()),
-                height = proofHeight + 1,
-            ),
-        )
-    }
+    // Test 29 (tampered amount, C′) was removed 2026-09-21 with the dealId-only
+    // payload: path C′ no longer checks amount/recipient fields (there are none).
 
     @Test
-    fun `30 release from PAYMENT_PROVEN with digest dealId different from R4 fails`() {
+    fun `30 release from PAYMENT_PROVEN with attestation dealId different from R4 fails`() {
         val fx = VaultFixture()
         val box = fx.provenBox(proofHeight)
         val otherDealId = ByteArray(32) { (it + 99).toByte() }
@@ -616,14 +564,14 @@ class VaultContractSpec {
     // ------------------------------------------------------------- cross-deal replay (36-37)
 
     @Test
-    fun `36 oracle digest from deal X applied to vault of deal Y fails`() {
+    fun `36 oracle attestation from deal X applied to vault of deal Y fails`() {
         val fx = VaultFixture()
         val dealX = VaultFixture()
         assertFalse(
             fx.verifySpend(
                 fx.fundedTree, fx.fundedBox,
                 inputs = listOf(fx.fundedBox),
-                dataInputs = listOf(fx.oracleDataBox(payload = dealX.paymentPayload(dealId = ByteArray(32) { 42 }))), // dealX digest
+                dataInputs = listOf(fx.oracleDataBox(payload = dealX.paymentPayload(dealId = ByteArray(32) { 42 }))), // dealX's dealId
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
             ),
@@ -796,7 +744,7 @@ class VaultContractSpec {
     @Test
     @Disabled(
         "Phase 2: swap oracleOk for a 2-of-3 GuardSign-style guard box (Rosen pattern) and " +
-            "rerun the release tests (16-31) — the digest field checks (22-24, 29-30) must " +
+            "rerun the release tests (16-31) — the dealId-equality checks (24, 30) must " +
             "be untouched (specs/vault-contract.md §7).",
     )
     fun `45 phase-2 GuardSign oracle swap reruns the release tests`() {

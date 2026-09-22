@@ -77,10 +77,8 @@ data class DealDto(
 @Serializable
 data class AttestationDto(
     val status: String,   // CONFIRMED | UNCONFIRMED
-    val digest: String? = null,
-    val srcTxId: String? = null,
-    val srcBlockHeight: Long? = null,
-    val srcBlockTime: Long? = null,
+    /** The attested deal id hex — the evidence pointer, once confirmed. */
+    val dealId: String? = null,
 )
 
 @Serializable
@@ -219,7 +217,7 @@ data class DisputeRowDto(
     val handoffRecordRef: String? = null,
     val geoRef: String? = null,
     val oracleConfirmed: Boolean,
-    val attestationDigest: String? = null,
+    val attestationDealId: String? = null,
     val actioned: Boolean,
     val action: String? = null,
 )

@@ -476,7 +476,7 @@ class ApiSpec {
         val after = client.get("/v1/deals/$dealId/attestation") { header(HttpHeaders.Authorization, "Bearer $token") }
         val body = json.parseToJsonElement(after.bodyAsText()).jsonObject
         assertEquals("CONFIRMED", body["status"]!!.jsonPrimitive.content)
-        assertTrue(body["digest"]!!.jsonPrimitive.content.isNotEmpty())
+        assertEquals(dealId, body["dealId"]!!.jsonPrimitive.content)
     }
 
     @Test

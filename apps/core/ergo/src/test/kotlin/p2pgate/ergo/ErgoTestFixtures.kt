@@ -39,9 +39,6 @@ object ErgoTestFixtures {
     /** The phase-1 dev oracle pinned to this fixture set's oracle NFT id (M3). */
     fun devOracle(): DevOracle = DevOracle(oracleKeys.secret, oracleNftId = trees.oracleNftId)
 
-    /** The raw 21-byte Tron recipient payload the fixture funding binding pins. */
-    val recipientRaw: ByteArray = ByteArray(21) { (it * 19 + 6).toByte() }
-
     fun p2pkAddress(pubKeyCompressed: ByteArray): String =
         Address.fromSigmaBoolean(ProveDlog.apply(ErgoValues.decodePoint(pubKeyCompressed)), networkType).toString()
 
@@ -76,10 +73,6 @@ object ErgoTestFixtures {
 
     // ---------------------------------------------------------------- chain boxes
 
-    /** R9 funding binding: srcChainId(1) tokenId(1) recipientAddr(21) expectedAmount(8 BE). */
-    fun fundingBinding(amount: Long = DEAL_AMOUNT): ByteArray =
-        byteArrayOf(1, 1) + recipientRaw + amount.toBe(8)
-
     fun fundedChainBox(
         terms: DealTerms,
         timeoutHeight: Int = CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS,
@@ -103,7 +96,7 @@ object ErgoTestFixtures {
             ChainRegister.CollBytes(buyerKeys.pubKeyCompressed),
             ChainRegister.CollBytes(trees.oracleNftId),
             ChainRegister.Int64(timeoutHeight.toLong()),
-            ChainRegister.CollBytes(fundingBinding()),
+            null,
         ),
         spentTransactionId = spentTxId,
     )
@@ -131,7 +124,7 @@ object ErgoTestFixtures {
             ChainRegister.CollBytes(buyerKeys.pubKeyCompressed),
             ChainRegister.Int64(proofHeight.toLong()),
             ChainRegister.CollBytes(recordId),
-            ChainRegister.CollBytes(fundingBinding()),
+            null,
         ),
         spentTransactionId = spentTxId,
     )
@@ -219,8 +212,4 @@ object ErgoTestFixtures {
             return delegate.sign(tx)
         }
     }
-
-    // ---------------------------------------------------------------- byte helpers
-
-    fun Long.toBe(n: Int): ByteArray = ByteArray(n) { i -> (this shr (8 * (n - 1 - i))).toByte() }
 }

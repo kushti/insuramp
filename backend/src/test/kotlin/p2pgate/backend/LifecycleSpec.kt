@@ -53,7 +53,7 @@ class LifecycleSpec {
 
     /** fund → handoff → claim → oracle confirmation → contest → RELEASED with contested flag */
     @Test
-    fun `dispute lifecycle contests with the oracle digest and records the contested flag`() {
+    fun `dispute lifecycle contests with the oracle attestation and records the contested flag`() {
         val env = env()
         val deal = env.quotedDeal()
         env.forceFund(deal)
