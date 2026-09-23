@@ -183,9 +183,11 @@ Consequences, stated plainly:
   with it.
 - Key management: `oracleKey` in an HSM or encrypted keystore; the oracle box is
   self-recreated as `OUTPUTS(0)` of each attestation posting (rotation spend; NFT
-  preserved by its script). The script's rotation rules (NFT id + amount and `value`
-  preserved into `OUTPUTS(0)` — the reproduction position is pinned on the oracle's own
-  spends; fixed 2026-09-17, see `specs/vault-contract.md` §8.4) are tested in
+  preserved by its script — value is not pinned: the box is `proveDlog(oracleKey)`-gated,
+  so value preservation was belt-and-braces and was removed 2026-09-23, owner decision).
+  The script's rotation rules (NFT id + amount preserved into `OUTPUTS(0)` — the
+  reproduction position is pinned on the oracle's own spends; fixed 2026-09-17, see
+  `specs/vault-contract.md` §8.4) are tested in
   `contracts/src/test/kotlin/p2pgate/contracts/OracleContractSpec.kt`.
 
 ### 3.2 Phase 2 — k-of-n guard threshold (Rosen-derived, post-launch)

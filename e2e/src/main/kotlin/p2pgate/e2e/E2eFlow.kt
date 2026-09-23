@@ -207,7 +207,7 @@ class E2eFlow(
     /**
      * Posts the [dealId] attestation on-chain: an `oracle.es` rotation spend
      * recreating the singleton box with R4 = the 32-byte dealId (oracle.es pins
-     * NFT + value reproduction at OUTPUTS(0); registers are unconstrained).
+     * NFT reproduction at OUTPUTS(0); registers are unconstrained).
      * Returns the posted box — the release's DATA INPUT. Live: broadcast
      * through the real explorer-parsed box (ids and heights must match the
      * network); dry-run: the synthetic spend is recorded, not broadcast.

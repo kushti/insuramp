@@ -25,7 +25,8 @@ import java.math.BigInteger
  * the release/contest tx, and a data input's script never executes, so the
  * oracle does NOT co-sign releases. The oracle's on-chain involvement is
  * posting the attestation: it spends its singleton box (governed by
- * `oracle.es`, which pins the NFT + value reproduction at `OUTPUTS(0)`; its
+ * `oracle.es`, which pins the NFT reproduction at `OUTPUTS(0)` (value is not
+ * pinned — the box is oracle-key-gated; removed 2026-09-23); its
  * registers are unconstrained) and recreates it with R4 = the 32-byte dealId
  * — the single per-deal signal "this deal's USDT transfer seller→buyer is
  * done and non-tainted" (specs/oracle-integration.md §2). [attestationBox]

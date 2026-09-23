@@ -3,9 +3,7 @@ package p2pgate.ergo
 import org.ergoplatform.appkit.SignedTransaction
 import org.ergoplatform.appkit.UnsignedTransaction
 import org.junit.jupiter.api.Test
-import sigma.exceptions.InterpreterException
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -103,38 +101,38 @@ class DevOracleSpec {
     }
 
     @Test
-    fun `oracle box rotation draining value below SELF value fails the prover`() {
+    fun `oracle box rotation draining value below SELF value passes the prover`() {
+        // Value is NOT pinned (removed 2026-09-23, owner decision): the box is
+        // proveDlog(oracleKey)-gated, so value siphoning is a signed act of the
+        // oracle operator — only NFT custody is enforced.
         val box = oracle.oracleChainBox()
         val fee = f.feeChainBox()
         val signer = ErgoTestFixtures.ProverSigner(f.oracleKeys.secret, f.dealKeys.secret)
-        assertFailsWith<InterpreterException> {
-            TxAssembly.assemble(
-                inputs = listOf(
-                    TxAssembly.toErgoBox(box, oracle.tree),
-                    TxAssembly.toErgoBox(fee, TxAssembly.decodeTree(fee)),
+        val signed = TxAssembly.assemble(
+            inputs = listOf(
+                TxAssembly.toErgoBox(box, oracle.tree),
+                TxAssembly.toErgoBox(fee, TxAssembly.decodeTree(fee)),
+            ),
+            contextVars = emptyMap(),
+            contextVarInputIndex = 0,
+            candidates = listOf(
+                TxAssembly.candidateRaw(
+                    value = box.value - 1,
+                    tree = oracle.tree,
+                    tokens = box.tokens,
+                    registers = emptyList(),
+                    creationHeight = 100,
                 ),
-                contextVars = emptyMap(),
-                contextVarInputIndex = 0,
-                candidates = listOf(
-                    // NFT preserved (token balance holds) but value drained
-                    // below SELF value — oracle.es's `out.value >= SELF.value`.
-                    TxAssembly.candidateRaw(
-                        value = box.value - 1,
-                        tree = oracle.tree,
-                        tokens = box.tokens,
-                        registers = emptyList(),
-                        creationHeight = 100,
-                    ),
-                ),
-                minerFeeNanoErg = 1_000_000L,
-                minChangeNanoErg = 1_000_000L,
-                currentHeight = 100,
-                txTimestampMs = null,
-                changeAddress = f.dealKeysAddress,
-                networkType = f.networkType,
-                signer = signer,
-            )
-        }
+            ),
+            minerFeeNanoErg = 1_000_000L,
+            minChangeNanoErg = 1_000_000L,
+            currentHeight = 100,
+            txTimestampMs = null,
+            changeAddress = f.dealKeysAddress,
+            networkType = f.networkType,
+            signer = signer,
+        )
+        assertTrue(signed.id.isNotBlank())
     }
 
     @Test

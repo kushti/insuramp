@@ -6,8 +6,9 @@ import kotlin.test.assertTrue
 
 /**
  * Oracle box progression (contracts/src/main/ergoscript/oracle.es): every spend must
- * carry proveDlog(oracleKey) and preserve the NFT (id + amount) and value into
- * OUTPUTS(0) — a FIXED position (v2, 2026-09-17), the shape of the oracle's
+ * carry proveDlog(oracleKey) and preserve the NFT (id + amount) into
+ * OUTPUTS(0) — a FIXED position (v2, 2026-09-17); value is NOT pinned
+ * (the box is oracle-key-gated — removed 2026-09-23, owner decision), the shape of the oracle's
  * attestation-posting rotation (R4 = payload is allowed; registers are
  * unconstrained — specs/vault-contract.md §8.4). The vault contracts consume
  * the posted box as a release DATA INPUT, where this script never executes.
@@ -16,7 +17,7 @@ import kotlin.test.assertTrue
 class OracleContractSpec {
 
     @Test
-    fun `1 rotation by oracle key preserving NFT and value passes`() {
+    fun `1 rotation by oracle key preserving NFT passes`() {
         val fx = VaultFixture()
         assertTrue(
             fx.verifySpend(
@@ -133,9 +134,13 @@ class OracleContractSpec {
     }
 
     @Test
-    fun `8 rotation draining value below SELF value fails`() {
+    fun `8 rotation draining value below SELF value passes`() {
+        // Value is NOT pinned (removed 2026-09-23, owner decision): the box is
+        // proveDlog(oracleKey)-gated, so siphoning ERG out of the oracle box is
+        // a signed, self-inflicted act of the oracle operator — there is no
+        // counterparty to guard against. Only NFT custody is enforced.
         val fx = VaultFixture()
-        assertFalse(
+        assertTrue(
             fx.verifySpend(
                 fx.oracleTree, fx.oracleBox,
                 inputs = listOf(fx.oracleBox),

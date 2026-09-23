@@ -433,8 +433,8 @@ the phase-2 guard-set box. Test matrix:
     not a claim-path hole).
 
 **Oracle box (oracle.es) — box progression**
-O1. Rotation by the oracle key, NFT + value preserved into `OUTPUTS(0)` (pinned position) — passes.
-O2. Rotation with increased value (refill/fee-tolerant `out.value >= SELF.value`) — passes.
+O1. Rotation by the oracle key, NFT preserved into `OUTPUTS(0)` (pinned position) — passes.
+O2. Rotation with increased value — passes (value is **not** pinned; any value passes).
 O3. Spend by a key other than `oracleKey` — fails.
 O4. Spend with no oracle signature — fails.
 O5. Rotation output missing the NFT — fails.
@@ -442,7 +442,10 @@ O6. Rotation output carrying a different token id — fails.
 O7. Rotation with the NFT reproduced at `OUTPUTS(1)` instead of `OUTPUTS(0)` — fails (the
     reproduction position is pinned on the oracle's own spends: every rotation spend —
     i.e. every attestation posting — re-creates the singleton at `OUTPUTS(0)`; §8.4).
-O8. Rotation draining value below `SELF.value` — fails.
+O8. Rotation draining value below `SELF.value` — **passes** (value pinning removed
+    2026-09-23, owner decision: the box is `proveDlog(oracleKey)`-gated, so value
+    siphoning is a signed act of the oracle operator, not a counterparty exploit;
+    only NFT custody is enforced).
 
 **Phase-2 readiness**
 45. Swap the oracle-authentication check for a 2-of-3 GuardSign-style guard box and rerun

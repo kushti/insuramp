@@ -2,13 +2,15 @@
 //
 // The oracle posts an attestation by spending this singleton box and
 // recreating it at OUTPUTS(0) with R4 = the 32-byte dealId (its registers
-// are unconstrained; only the NFT id + amount and value are pinned). The
+// are unconstrained; only the NFT id + amount is pinned — value is NOT: the
+// box is proveDlog(oracleKey)-gated, so value preservation was belt-and-
+// braces and was removed 2026-09-23, owner decision). The
 // vault contracts then take that box as a DATA INPUT of the release tx and
 // authenticate it by NFT custody (vault_funded.es path C / vault_payment_proven.es
 // path C′) — a data input's script never executes, so no oracle signature
 // rides in buyer/operator txs; NFT custody alone is the phase-1 trust root.
 // This script guards the oracle box itself: any spend (attestation posting
-// or rotation) must preserve the NFT (id + amount) and value into OUTPUTS(0)
+// or rotation) must preserve the NFT (id + amount) into OUTPUTS(0)
 // — a FIXED position (see specs/vault-contract.md §8.4). The first-token-id
 // check relies on the NFT always living at tokens(0).
 //
@@ -27,7 +29,7 @@
 // confirm before the next posting, §3.1).
 //
 // Trust boundary, stated plainly: this script does NOT parse R4 (any register
-// contents are accepted as long as the NFT and value survive into OUTPUTS(0)),
+// contents are accepted as long as the NFT survives into OUTPUTS(0)),
 // and NO contract anywhere can check the preconditions — confirmation, taint,
 // and the sender's identity are the trusted oracle's off-chain assertions. The
 // vault contracts (paths C/C′) check only NFT custody + dealId equality
@@ -47,7 +49,6 @@
   proveDlog(decodePoint(%%ORACLE_KEY%%)) && sigmaProp(
     OUTPUTS(0).tokens.size > 0 &&
     OUTPUTS(0).tokens(0)._1 == %%ORACLE_NFT_ID%% &&
-    OUTPUTS(0).tokens(0)._2 == SELF.tokens(0)._2 &&
-    OUTPUTS(0).value >= SELF.value
+    OUTPUTS(0).tokens(0)._2 == SELF.tokens(0)._2
   )
 }
