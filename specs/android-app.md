@@ -105,7 +105,7 @@ Renders the state machine as one vertical timeline; pending states greyed. The t
 Per-state UI rules:
 
 - **PAYMENT_PENDING:** meeting details + the handoff flow. The **"safe to leave the meeting" indicator** stays red until the seller-signed handoff record is received, validated against the deal terms, and persisted: the screen shows *"don't leave without the record — it is your only proof"* until then, and the countdown to `RECLAIM_TIMEOUT` (24h) runs underneath. Once cash is collected, a stall on the USDT leg is a dispute case (§3.4), not a wait state.
-- **PAYMENT_CONFIRMED:** the oracle has confirmed the seller's USDT transfer to the buyer's registered receive address; the "USDT confirmed" indicator turns green and the release follows automatically (the oracle's attestation alone, submitted by the seller side — no buyer action). The app suggests checking the receiving wallet as guidance; nothing is gated on it.
+- **PAYMENT_CONFIRMED:** the oracle has confirmed the seller's USDT transfer to the buyer's registered receive address; the "USDT confirmed" indicator lights up (success state) and the release follows automatically (the oracle's attestation alone, submitted by the seller side — no buyer action). The app suggests checking the receiving wallet as guidance; nothing is gated on it.
 - **RELEASED:** closes with a summary screen: hash-linked, storable, deletable (§5).
 - **RECLAIMED** (timeout branch): the buyer no-show (`FUNDED → RECLAIMED`). The deal card closes silently; no penalty copy — ghosting is the expected mode of a no-reputation market (`onramp-ux.md` §6).
 
