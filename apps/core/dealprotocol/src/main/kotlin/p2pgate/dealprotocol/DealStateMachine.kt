@@ -5,7 +5,8 @@ import java.time.Instant
 
 /**
  * Pure-function deal state machine for the cash→USDT on-ramp, `specs/deal-protocol.md`
- * §1 + §4 (v2: single seller-signed handoff record, oracle-only release).
+ * §1 + §4 (v2: single seller-signed handoff record, oracle-gated release with the
+ * seller co-signing the payout).
  *
  * `transition(state, evidence) → newState | Invalid` (`specs/android-app.md` §2.1):
  * every guard is here, including the on-ramp ordering (cash is collected before the
@@ -103,7 +104,8 @@ data class DealStateMachine(
         }
 
         // Box spent by the seller: path C (FUNDED box) or C′ (PAYMENT_PROVEN box),
-        // in v2 both gated on the oracle attestation alone. C′ from a claim is the
+        // in v2 both gated on the oracle attestation with the seller co-signing the
+        // payout. C′ from a claim is the
         // seller's counter to a without-cause claim. From PAYMENT_PENDING the spend
         // subsumes the off-chain oracle signal (the tx carries the oracle box).
         // The buyer app never builds this tx (specs/android-app.md §2.1).

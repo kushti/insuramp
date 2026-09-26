@@ -20,7 +20,9 @@ import kotlin.test.assertTrue
  * release/contest path takes the oracle attestation box (R4 = the vault's
  * dealId, the oracle's per-deal signal) as a DATA INPUT
  * ([DevOracle.attestationBox]) and signs with a plain [DealTxSigner] — no
- * oracle co-signature exists (the data input's script never executes).
+ * oracle co-signature exists (the data input's script never executes), but
+ * the seller's R5 deal key co-signs the payout: the attestation alone must
+ * never direct funds.
  */
 class OperatorTxBuilderSpec {
 
@@ -196,7 +198,9 @@ class OperatorTxBuilderSpec {
 
     // ---------------------------------------------------------------- release (path C)
 
-    private val releaseSigner = ErgoTestFixtures.ProverSigner(f.dealKeys.secret)
+    // The seller's R5 deal key co-signs release/contest (the attestation alone
+    // must never direct funds); the deal key pays the miner fee / change.
+    private val releaseSigner = ErgoTestFixtures.ProverSigner(f.sellerKeys.secret, f.dealKeys.secret)
 
     private fun releaseTx(
         terms: p2pgate.dealprotocol.DealTerms,
@@ -313,7 +317,7 @@ class OperatorTxBuilderSpec {
     // ---------------------------------------------------------------- contest (path C′)
 
     @Test
-    fun `contest counters a real claim-open with the oracle attestation alone`() {
+    fun `contest counters a real claim-open with the oracle attestation and the seller signature`() {
         val terms = f.dealTerms()
 
         // 1) The buyer opens a claim on the FUNDED box (ClaimTxBuilder, path B).
@@ -332,7 +336,7 @@ class OperatorTxBuilderSpec {
         )
 
         // 2) The honest seller counters from the PAYMENT_PROVEN box with the
-        //    oracle attestation alone (OperatorTxBuilder, path C′).
+        //    oracle attestation plus the seller signature (OperatorTxBuilder, path C′).
         val proven = f.provenChainBox(
             terms,
             proofHeight = 1500,

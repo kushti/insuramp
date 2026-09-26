@@ -489,7 +489,7 @@ function renderDisputeRow(row) {
       btn.className = action === "contest" ? "" : "secondary";
       btn.textContent = action;
       btn.title = action === "contest"
-        ? "Present the oracle attestation alone (path C′). The phase-1 oracle's attestation alone releases the vault — it is trusted, period, on the release path."
+        ? "Present the oracle attestation (path C′; the seller co-signs the payout). The phase-1 oracle's attestation gates the vault's release — it is trusted, period, on the release path."
         : action === "accept" ? "Accept the loss (no on-chain action)." : "Route to manual review (changes nothing on-chain).";
       btn.addEventListener("click", () => actOnDispute(row.dealId, action, btn));
       actions.appendChild(btn);

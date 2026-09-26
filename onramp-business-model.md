@@ -25,7 +25,7 @@ BUYER ──hands cash at the meeting───────┐
  infrastructure cost, not fee recipients.
 
  USE minters: lock ERG ──▶ mint USE ──▶ collateral pool (operators' vaults)
- Oracle: confirms the seller's USDT transfer to the buyer — its attestation alone releases the vault
+ Oracle: confirms the seller's USDT transfer to the buyer — its attestation gates the vault's release
  Rosen: provides the guard-threshold upgrade path (phase 2) and rsBTC wrapping (BTC leg)
 ```
 
@@ -40,7 +40,7 @@ BUYER ──hands cash at the meeting───────┐
   protocol revenue is undefined/deferred [spec].
 - **Watchers/guards** (the oracle layers) do the verification work that makes the
   USDT/XMR legs possible — on-ramp: confirming the seller's USDT transfer to the
-  buyer, whose attestation alone gates the vault's release. At launch they are paid
+  buyer, whose attestation gates the vault's release. At launch they are paid
   from the protocol side as fixed infrastructure cost, not from a per-deal fee
   (`specs/oracle-integration.md` §6); their ongoing compensation is an open
   question [spec], deferred with the fee model.
@@ -108,7 +108,7 @@ denominated in the operating asset, bridging into recurring revenue only when vo
 
 **Collusion economics.** The attack to worry about on-ramp: the oracle attests to a fake
 payment — the seller's own "USDT transfer" — releasing the vault without payment. In v2 the attestation
-alone is sufficient for release, so in phase 1 there is **no on-chain defense** against a
+is the sole gate on release, so in phase 1 there is **no independent on-chain check** against a
 compromised or seller-captured oracle — that is accepted at launch and must be priced in
 honestly. The defense stack is operational and economic: (a) oracle operator ≠ marketplace
 operator, so a fake attestation is never self-certifying; (b) every attestation is publicly auditable
@@ -172,7 +172,7 @@ The Reddit post's "billions in USE turnover from 1% of the cash market" is achie
 ## 8. Risks to the model
 
 - **Fee compression:** uninsured competitors price lower; the insurance premium only survives where counterparty risk is salient. Expect viability in premium/sanctioned/capital-controlled markets first, commodity markets never.
-- **Dispute-payout losses:** vault payouts on buyer-side fraud are covered by collateral by construction. The oracle side is the honest loss case: the attestation alone releases the vault, so an oracle **error** (a false payment confirmation) now *does* release wrongly — and a **compromised** oracle can steal collateral outright; there is no on-chain defense in phase 1. The bound is operational, not cryptographic: deal-size caps while the oracle is centralized (`specs/oracle-integration.md` §5.3) keep any single false attestation small, and every attestation is publicly auditable, so oracle fraud is ex-post provable. Any residual loss lands on the oracle operator and reputationally on the protocol.
+- **Dispute-payout losses:** vault payouts on buyer-side fraud are covered by collateral by construction. The oracle side is the honest loss case: the attestation gates the vault's release (the seller's backend co-signs the payout automatically), so an oracle **error** (a false payment confirmation) now *does* release wrongly — and a **compromised** oracle can steal collateral outright; there is no independent on-chain check in phase 1. The bound is operational, not cryptographic: deal-size caps while the oracle is centralized (`specs/oracle-integration.md` §5.3) keep any single false attestation small, and every attestation is publicly auditable, so oracle fraud is ex-post provable. Any residual loss lands on the oracle operator and reputationally on the protocol.
 - **Cash-leg risk:** the handoff record is single-signed under the seller key — the same R5 key that reclaims the collateral — so a fake record is self-defeating on paper: the claim it unlocks pays the *buyer* the seller's own collateral. The risk that remains is behavioral and operational: a seller who pockets the cash and refuses to sign at the meeting (the buyer's sequencing rule — don't leave the meeting without the verified seller-signed record — is the primary defense), or a compromised seller key signing records for cash never collected. Mitigations are procedural and operational (the unmissable meeting rule, seller vetting/bonding, deal-identity blacklisting, key hygiene), not cryptographic — acknowledge in operator onboarding. The meeting itself is the trust boundary of the cash leg.
 - **Oracle cost floor:** below a volume threshold, verification costs exceed any protocol revenue —
   and there is none since the 2026-09-18 fee removal, so this is a pure subsidy question at launch.

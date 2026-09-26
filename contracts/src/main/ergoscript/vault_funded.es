@@ -1,11 +1,13 @@
 // P2PGATE vault — FUNDED box (collateral locked, deal live). v2 (specs/vault-contract.md
 // §8.4): the claim is gated on ONE Schnorr signature (the seller's signature over the
 // P2PH handoff record — the cash-received acknowledgment signed at the meeting under
-// the R5 seller key); release is oracle-only (the trusted phase-1 oracle's attestation
-// alone — no buyer receipt signature anywhere).
+// the R5 seller key); release is oracle-gated (the trusted phase-1 oracle's attestation
+// — no buyer receipt signature anywhere) with the seller co-signing the payout.
 //
 // Spending paths (see specs/vault-contract.md §3.3):
-//   A — reclaim: HEIGHT > timeoutHeight (R8), seller signs, paid in full
+//   A — reclaim: HEIGHT > timeoutHeight (R8), seller signs (proveDlog(R5 key)),
+//       paid in full to ANY seller-chosen address (key rotation: the signature
+//       authorizes the spend, so the payee is not pinned to the R5 key)
 //   B — open claim: the SELLER's Schnorr signature (R5 key) over the P2PH handoff
 //       record with freshness; spends into the PAYMENT_PROVEN box.
 //       No oracle input on this path
@@ -14,9 +16,12 @@
 //       that the seller's USDT transfer to the buyer is confirmed AND screened
 //       non-tainted; both preconditions (and "to the right address") are
 //       off-chain and unchecked here (semantics in oracle.es). Checked on-chain:
-//       NFT custody + dealId equality ONLY; seller paid in full. A data
-//       input's script never executes, so no oracle signature rides in the
-//       release tx
+//       NFT custody + dealId equality, full-collateral payout to ANY
+//       seller-chosen address, AND the seller's proveDlog(R5) signature — the
+//       attestation alone must never direct funds (anyone could otherwise pay
+//       themselves once an attestation box exists), so the seller co-signs and
+//       may pay a fresh key. A data input's script never executes, so no oracle
+//       signature rides in the release tx
 //
 // Registers:
 //   R4 Coll[Byte]              dealId (32 B)
@@ -36,32 +41,34 @@
 //   Path C (release):  none — the attestation (the dealId itself) rides in
 //                      the oracle data input's R4
 //
-// Path selection: path A is recognized by HEIGHT alone; of the two remaining
-// paths, path B supplies context variable 0 and path C supplies NONE, so the
-// discriminator is `getVar(0).isDefined` — safe on an absent var (unlike `.get`,
-// which the proof reducer would force and reject). Everything else — the
-// record's dealId binding, freshness, the PAYMENT_PROVEN output shape — is
-// checked in the branch body, which only evaluates when the discriminator
-// matches. (SigmaProp || would evaluate every branch during proof reduction,
-// hence the Boolean if.)
+// Path selection: path B is recognized FIRST, by context variable 0 presence
+// (safe on an absent var — unlike `.get`, which the proof reducer would force
+// and reject): the PAYMENT_PROVEN output also satisfies the payout conservation
+// check (same token, full collateral at OUTPUTS(0)), so a height-first
+// discriminator would swallow every post-timeout claim-open into path A.
+// Of the two remaining paths, A is recognized by HEIGHT and C is what is left.
+// Everything else — the record's dealId binding, freshness, the PAYMENT_PROVEN
+// output shape — is checked in the branch body, which only evaluates when the
+// discriminator matches. (SigmaProp || would evaluate every branch during
+// proof reduction, hence the Boolean if.)
 {
   val sellerKey = decodePoint(SELF.R5[Coll[Byte]].get)
   val collateral = SELF.tokens(0)._2
   val useTokenId = SELF.tokens(0)._1
   val timeoutH = SELF.R8[Long].get
-  // Paths A and C pay the seller in full at OUTPUTS(0) (reclaim and release
-  // are payout-identical): release txs carry the oracle box as a data input —
-  // its script never executes — so the old joint-spend OUTPUTS(1) convention
-  // is gone.
-  val sellerPaid =
-    OUTPUTS(0).propositionBytes == proveDlog(sellerKey).propBytes &&
+  // Paths A and C both pay out in full at OUTPUTS(0) (reclaim and release
+  // are payout-identical): the right token, the full collateral, ANY payee —
+  // each path's proveDlog signature authorizes the spend, so the payee is
+  // deliberately not pinned to a key (the seller may pay a fresh key for the
+  // next iteration). Path B's PAYMENT_PROVEN output satisfies this check too
+  // (same token, full collateral), which is why the branch order below puts
+  // B first. Release txs carry the oracle box as a data input — its
+  // script never executes — so the old joint-spend OUTPUTS(1) convention is gone.
+  val payoutOk =
     OUTPUTS(0).tokens(0)._1 == useTokenId &&
     OUTPUTS(0).tokens(0)._2 == collateral
 
-  if (HEIGHT > timeoutH && sellerPaid) {
-    // Path A — reclaim after timeout; the seller discharges proveDlog(sellerKey).
-    proveDlog(sellerKey)
-  } else if (getVar[Coll[Byte]](0).isDefined) {
+  if (getVar[Coll[Byte]](0).isDefined) {
     // Path B — open claim on the SELLER-signed handoff record (the cash-received
     // acknowledgment from the meeting); anyone may submit. Context vars 0..3.
     // NB: sigma-state 6 only typechecks byteArrayToBigInt when its
@@ -105,22 +112,32 @@
       OUTPUTS(0).tokens(0)._2 == collateral &&
       OUTPUTS(0).value == SELF.value
     sigmaProp(recordDealOk && freshOk && sellerSigOk && provenOutOk)
+  } else if (HEIGHT > timeoutH && payoutOk) {
+    // Path A — reclaim after timeout; the seller discharges proveDlog(sellerKey).
+    // A post-timeout release tx (no vars, full-collateral payout) lands here
+    // too: seller-signed and payout-identical to a reclaim, so it is spent as
+    // one — the attestation is no longer needed after the timeout.
+    proveDlog(sellerKey)
   } else {
-    // Path C — fast close, oracle-only: the oracle singleton box as a DATA
-    // INPUT, its R4 carrying exactly the 32-byte dealId of the SELLER's
-    // USDT transfer to the buyer. No receipt signature (v2 — the oracle is
-    // trusted, period) and no oracle signature: a data input's script never
-    // executes. NFT custody is the whole phase-1 trust root — ANY box
-    // carrying the pinned NFT id and this deal's dealId in R4 passes
-    // (documented as intended in VaultContractSpec test 20). The payload
-    // carries nothing but the dealId, so "from the seller", "to the right
-    // address", "confirmed", and "non-tainted" all remain the trusted
-    // oracle's off-chain assertions (semantics in oracle.es).
+    // Path C — fast close: the oracle singleton box as a DATA INPUT, its R4
+    // carrying exactly the 32-byte dealId of the SELLER's USDT transfer to the
+    // buyer. No receipt signature (v2 — the oracle is trusted, period) and no
+    // oracle signature: a data input's script never executes. NFT custody is
+    // the whole phase-1 trust root — ANY box carrying the pinned NFT id and
+    // this deal's dealId in R4 passes (documented as intended in
+    // VaultContractSpec test 20). The payload carries nothing but the dealId,
+    // so "from the seller", "to the right address", "confirmed", and
+    // "non-tainted" all remain the trusted oracle's off-chain assertions
+    // (semantics in oracle.es). The seller discharges proveDlog(sellerKey) on
+    // top: the attestation alone must never direct funds — without this
+    // signature ANYONE could pay themselves the collateral the moment an
+    // attestation box exists — and the seller may pay any address (key
+    // rotation; the payee is free, only the full collateral is conserved).
     val attestationBox = CONTEXT.dataInputs(0)
     // The data input must carry the oracle NFT pinned in R7.
     val oracleNftOk = attestationBox.tokens(0)._1 == SELF.R7[Coll[Byte]].get
     // The attestation must name THIS vault's deal (R4, the dealId).
     val fieldsOk = attestationBox.R4[Coll[Byte]].get == SELF.R4[Coll[Byte]].get
-    sigmaProp(oracleNftOk && fieldsOk && sellerPaid)
+    sigmaProp(oracleNftOk && fieldsOk && payoutOk) && proveDlog(sellerKey)
   }
 }

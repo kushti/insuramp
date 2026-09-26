@@ -8,7 +8,8 @@ and `/events` WebSocket this UI consumes (dashboard UI is explicitly out of that
 scope, its §2, so it gets this one); `specs/deal-protocol.md` (canonical state names §1,
 handoff record §3.2, QR payloads §3.3); `specs/vault-contract.md` (timings: `RECLAIM_TIMEOUT`
 24h, `CLAIM_MATURATION` 12h); `specs/oracle-integration.md` (the phase-1 oracle whose
-attestation alone gates release — the oracle is trusted, period, on the release path).
+attestation gates release — the seller co-signs the payout — and which is trusted,
+period, on the release path).
 Product context: `onramp-ux.md` §3 (seller flow), §4 (operator dashboard). Direction:
 cash→USDT only; the reverse direction is out of scope and not specified.*
 
@@ -108,10 +109,10 @@ posted on-chain, meaning "this deal's USDT transfer seller→buyer is done and s
 (did the seller's USDT transfer confirm?; the dispute row's `attestationDealId`). Exactly three actions (`POST /disputes/{id}/{action}` — the action names are
 the API's):
 
-- **Contest** (`contest`) — present the oracle attestation **alone** (path C′): mechanical whenever
+- **Contest** (`contest`) — present the oracle attestation (path C′; the seller co-signs the payout): mechanical whenever
   the attestation exists; an honest seller always counters a false claim. The UI copy is
-  honest about why it is one click: *the phase-1 oracle's attestation alone releases the
-  vault — it is trusted, period, on the release path.*
+  honest about why it is one click: *the phase-1 oracle's attestation gates the vault's
+  release — it is trusted, period, on the release path.*
 - **Accept** (`accept`) — concede the claim; the vault pays the buyer path.
 - **Investigate** (`investigate`) — route to manual review (key-compromise class; changes
   nothing on-chain).

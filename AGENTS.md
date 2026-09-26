@@ -73,8 +73,8 @@ pitch deck), but it lives outside this repo.
   defaults); testnet remains fully selectable via config/env (`P2P_NETWORK=testnet`,
   `E2E_EXPLORER_URL`, `E2E_FAUCET_URL`). No testnet capability was removed.
 - **First asset leg:** cash→USDT on-ramp (USE collateral; the seller acts
-  last and locks the vault; phase-1 centralized NFT oracle whose attestation alone
-  gates release, phase-2 Rosen-derived guard threshold). The reverse direction
+  last and locks the vault; phase-1 centralized NFT oracle whose attestation
+  gates release — the seller co-signs the payout, phase-2 Rosen-derived guard threshold). The reverse direction
   (USDT→cash off-ramp) is out of scope.
   BTC and XMR legs remain extension notes in `specs/vault-contract.md` §8.
 
@@ -116,7 +116,8 @@ has a "Cross-references" section linking the others.
   must be labeled; do not silently convert `[spec]` numbers into facts.
 - **Honest trust models.** Never claim "trustless" where trust is concentrated (e.g., the
   USDT/XMR legs trust the phase-1 centralized oracle — on the release path *solely*: its
-  attestation alone moves collateral). The docs' own rule: "not trustless, but the
+  attestation is the only gate on the payout; the seller's co-signature is its own
+  automation, not an independent check). The docs' own rule: "not trustless, but the
   cost-to-attack should exceed the extractable value per deal" — that framing applies
   only once the phase-2 guard threshold ships; for phase 1, say "trusted" and mean it.
 - **Diagrams** are plain fenced code blocks (ASCII/monospace), e.g., the value-chain flow
@@ -137,13 +138,18 @@ gone, so the handoff record is seller-signed): vault R7 holds the bare 32-byte `
 65-byte two-key packing is gone; Ergo boxes have R4–R9 only, no R10), path B is gated on
 the seller-signed handoff record (a single Schnorr half under the R5 seller key, no
 oracle on the claim path), and paths C/C′ take the oracle box as a **data input** — the
-oracle's attestation alone releases the vault (NFT custody is the authenticity anchor;
-no oracle signature exists in release txs); there is no receipt signature anywhere in
-the protocol. On 2026-09-21 (pre-launch, owner decision) the attestation payload was
+oracle's attestation gates release, co-signed by the seller (NFT custody is the authenticity anchor;
+no oracle signature exists in release txs). Since 2026-09-24 every payout path (A, C, C′, D)
+leaves the payee free — the signing side's `proveDlog` authorizes the spend and only the full
+collateral is conserved (key rotation); there is no receipt signature anywhere in
+the protocol. A 2026-09-26 follow-up fixed the branch discriminators the payee pin
+had been doing double duty as: path B is discriminated first (context-var-0 presence)
+so post-timeout claim-opens stay possible, and path D requires no data inputs so
+post-maturation contests (C′) stay reachable. On 2026-09-21 (pre-launch, owner decision) the attestation payload was
 simplified to the bare 32-byte `dealId`: the oracle box's R4 carries only the dealId
 (the 112-byte `PaymentAttestation` field codec is deleted), the vault's R9 31-byte
 funding binding is deleted from both boxes, and release paths check only NFT custody +
-`dataInput.R4 == vault.R4 (dealId)`. The buyer's receive address is no longer pinned
+`dataInput.R4 == vault.R4 (dealId)` plus the seller's payout co-signature. The buyer's receive address is no longer pinned
 on-chain; "the USDT went to the right address" is wholly the oracle's off-chain
 assertion (`specs/oracle-integration.md` §2.2). The in-contract protocol fee was removed on 2026-09-18 (owner
 decision): `ContractParams.PROTOCOL_FEE_BPS` (25 bps, in-contract since
@@ -164,10 +170,12 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   `~/.local/opt/jdk-17.0.20.1+1`, so run:
   `export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1 && ./gradlew :contracts:test`
   (optionally `--tests 'p2pgate.contracts.VaultContractSpec'`). Expected test counts:
-  `VaultContractSpec` 40 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
+  `VaultContractSpec` 47 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
   the 2026-09-18 fee removal deleted the old 35a–35e fee tests; the 2026-09-21
-  dealId-only payload removed tests 22, 23, 25, 29) plus
-  `OracleContractSpec` 8 → contracts 48; dealprotocol module: DealStateMachine 44,
+  dealId-only payload removed tests 22, 23, 25, 29; the 2026-09-24 payout-freedom
+  change added tests 46–48 and inverted test 21; the 2026-09-26
+  branch-discriminator fix added tests 49–52) plus
+  `OracleContractSpec` 8 → contracts 55; dealprotocol module: DealStateMachine 44,
   Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7 → 94; ergo module:
   ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9,
   VaultBoxTracker 17; plus (M3-A/C): OperatorTxBuilder 15,
@@ -175,10 +183,10 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   (the 2026-09-21 payload simplification deleted `PaymentAttestation` and its
   9-test suite, and collapsed the five per-field release-tamper tests into one);
   backend 117 (11 suites); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 365; plus the Android buyer app
+  E2eConfig 2, SchnorrPort 3) → JVM modules 372; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
   multi-quote currency-filtered list, offer-cash flow 2026-09-20): 62 JVM
-  unit tests (`:app:testDebugUnitTest`) → **427 total**.
+  unit tests (`:app:testDebugUnitTest`) → **434 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).
@@ -198,8 +206,9 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   observers (no Rosen dependency); Rosen catches up at phase 2.
 - **Phase-1 oracle** — a trusted centralized entity, authenticated on-chain by NFT
   (owner decision, 2026-09); see `specs/oracle-integration.md`. Trust-model language must
-  call it trusted — and on the release path *solely* trusted (its attestation alone
-  moves collateral) — with no "cost-to-attack" framing until the phase-2 threshold ships.
+  call it trusted — and on the release path *solely* trusted (its attestation is the only
+  gate on the payout; the seller co-signs automatically, which is not an independent
+  check) — with no "cost-to-attack" framing until the phase-2 threshold ships.
 - **USE stablecoin** — over-collateralized by locked ERG; the vault collateral asset for USDT deals.
 - **Bitcoin relay on Ergo** — research implementation at `github.com/ross-weir/ergohack-sidechain`.
 - **Basis** — p2p cash framework (pillar 4), described only in `pillars.md`.

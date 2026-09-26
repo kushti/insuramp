@@ -27,7 +27,7 @@ Canonical states. Every component uses these names verbatim.
               │                │                             ▲
               │                │ (buyer opens claim: cash     │ path C′ — the seller
               │                │  collected, seller never    │ counters with the oracle's
-              │                │  paid)                      │ attestation alone; an oracle
+              │                │  paid)                      │ attestation; an oracle
               │                ▼                             │ signal landing during
               │ (RECLAIM_   CLAIM_OPENED ──▶ CLAIMABLE ──▶ CLAIMED
               │  TIMEOUT)        └──▶ RELEASED (contested) ──┘  kills the claim

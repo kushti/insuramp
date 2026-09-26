@@ -36,7 +36,7 @@ specified.*
 
 | # | File | Covers | Status |
 |---|---|---|---|
-| 1 | `specs/vault-contract.md` | ErgoScript vault: box layout, registers, spending paths, test matrix | **phase 1 implemented + tested** (`contracts/`); v2 landed (2026-09-13: single-signed claim, oracle-only release); in-contract protocol fee removed 2026-09-18 (every path pays in full) |
+| 1 | `specs/vault-contract.md` | ErgoScript vault: box layout, registers, spending paths, test matrix | **phase 1 implemented + tested** (`contracts/`); v2 landed (2026-09-13: single-signed claim, oracle-gated release; 2026-09-24: seller co-signs the payout, payee free for key rotation); in-contract protocol fee removed 2026-09-18 (every path pays in full) |
 | 2 | `specs/deal-protocol.md` | Canonical deal state machine, wire formats (deal terms, handoff record, QR), key management, privacy requirements | **landed** (`apps/core/dealprotocol/`, 94 tests green) |
 | 3 | `specs/oracle-integration.md` | Payment-proof oracle: permanent 32-byte `dealId` payload (simplified from the 112-byte field layout pre-launch, 2026-09-21), phase-1 centralized NFT-authenticated oracle, taint screening, phase-2 Rosen-derived guard threshold, liveness/safety | draft; dealId payload + dev oracle landed in code (`DevOracle.attest(terms) = terms.dealId` — the `PaymentAttestation` codec is deleted — plus the `DevOracle` attestation-box builder, backend `OracleClient`/`DevOracleClient` with `attestationBoxFor`) — the deployed HTTP attestation service is still future work |
 | 4 | `specs/seller-dashboard.md` | seller/operator dashboard front-end: login, vault lane kanban, the meeting screen (counted-cash gate, handoff QR), pool view, dispute inbox, infra status; handoff sign/QR endpoints | **landed** (2026-09-17/18, M4; static vanilla JS/CSS app at `/dashboard/`, handoff sign + QR endpoints live, backend runnable via `./gradlew :backend:run`) |
@@ -76,7 +76,8 @@ specified.*
    tested; the **v2 rework has landed** (2026-09-13): R7 holds the bare 32-byte
    `oracleNftId` (the old two-key packing is gone); path B is gated
    on the single seller-signed handoff record; paths C/C′ gate release on the oracle's
-   attestation alone; `CLAIM_MATURATION` 12h.
+   attestation, with the seller co-signing the payout (2026-09-24 — the attestation
+   alone must never direct funds; payee free, key rotation); `CLAIM_MATURATION` 12h.
 2. **Deal protocol library** — pure-Kotlin `:core:dealprotocol` implementing
    `deal-protocol.md` wire formats + state machine, shared by all apps and the backend.
    **Landed** (2026-09).

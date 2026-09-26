@@ -12,7 +12,10 @@ import kotlin.test.assertTrue
  * Test matrix from specs/vault-contract.md §7 (v2). Test numbering follows that section.
  * Convention: inputs are ordered [vaultBox, ...] so the vault is SELF. The release
  * paths C/C′ take the oracle box as a DATA INPUT (its script never executes — no
- * oracle signature in the tx); the driver proves/verifies SELF only, with the
+ * oracle signature in the tx) and additionally require the seller's
+ * proveDlog(sellerKey) — the attestation alone must never direct funds. Payout
+ * addresses are free on A/C/C′/D (key rotation): only the full collateral is
+ * conserved. The driver proves/verifies SELF only, with the
  * data inputs attached to the unsigned transaction exactly as on-chain.
  */
 class VaultContractSpec {
@@ -298,10 +301,12 @@ class VaultContractSpec {
     }
 
     @Test
-    fun `16 release from FUNDED oracle-only passes`() {
+    fun `16 release from FUNDED with the oracle data input and seller signature passes`() {
         // v2 path C: the oracle singleton box as a DATA INPUT (NFT == R7, R4 the
-        // 32-byte dealId attestation payload) — no context vars, no oracle signature.
-        // The seller payout sits at OUTPUTS(0), paid in full.
+        // 32-byte dealId attestation payload) — no context vars, no oracle
+        // signature. The seller co-signs proveDlog(sellerKey) (the attestation
+        // alone must never direct funds) and the payout sits at OUTPUTS(0),
+        // paid in full.
         val fx = VaultFixture()
         assertTrue(
             fx.verifySpend(
@@ -310,6 +315,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -325,6 +331,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -344,6 +351,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox, fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -360,6 +368,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.wrongNftBox),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -380,20 +389,25 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.foreignOracleBox),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
 
     @Test
-    fun `21 release from FUNDED paying collateral to a non-seller address fails`() {
+    fun `21 release from FUNDED paying collateral to a non-seller address passes with the seller signature`() {
+        // The payee is deliberately unpinned (key rotation): the seller's
+        // proveDlog(sellerKey) authorizes the spend, OUTPUTS(0) may pay ANY
+        // address as long as the full collateral is conserved.
         val fx = VaultFixture()
-        assertFalse(
+        assertTrue(
             fx.verifySpend(
                 fx.fundedTree, fx.fundedBox,
                 inputs = listOf(fx.fundedBox),
                 dataInputs = listOf(fx.oracleDataBox()),
-                outputs = listOf(fx.buyerOut()), // buyer's address, not the seller's
+                outputs = listOf(fx.buyerOut()), // any address, not the R5 key's
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -413,6 +427,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox(payload = fx.paymentPayload(dealId = otherDealId))),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -424,7 +439,7 @@ class VaultContractSpec {
     // ------------------------------------------------------------- PAYMENT_PROVEN box
 
     @Test
-    fun `26 release from PAYMENT_PROVEN oracle-only passes`() {
+    fun `26 release from PAYMENT_PROVEN with the oracle data input and seller signature passes`() {
         val fx = VaultFixture()
         val box = fx.provenBox(proofHeight)
         assertTrue(
@@ -434,6 +449,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -448,6 +464,7 @@ class VaultContractSpec {
                 inputs = listOf(box),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -465,6 +482,7 @@ class VaultContractSpec {
                 inputs = listOf(box, fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -484,15 +502,17 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox(payload = fx.paymentPayload(dealId = otherDealId))),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
 
     @Test
-    fun `31 oracle-only release counters a live claim`() {
+    fun `31 oracle-attested release counters a live claim`() {
         // The v2 residual fix (spec §4.2): the buyer opens a claim with a VALID record
-        // (leg 1, path B); the seller resolves it with the oracle attestation alone
-        // (leg 2, path C′) — no buyer receipt signature exists to withhold.
+        // (leg 1, path B); the seller resolves it with the oracle attestation plus the
+        // seller signature (leg 2, path C′) — no buyer receipt signature exists to
+        // withhold, and the attestation alone never directs funds.
         val fx = VaultFixture()
         val sr = SignedRecord(fx, fx.handoffRecord())
         assertTrue(
@@ -512,6 +532,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -574,6 +595,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox(payload = dealX.paymentPayload(dealId = ByteArray(32) { 42 }))), // dealX's dealId
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -717,6 +739,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }
@@ -735,6 +758,139 @@ class VaultContractSpec {
                 outputs = listOf(fx.provenOut(proofHeight, sr.id), fx.changeOut()),
                 height = proofHeight,
                 vars = sr.vars(),
+            ),
+        )
+    }
+
+    // ------------------------------------------------------------- payout freedom (46-48)
+
+    @Test
+    fun `46 release from FUNDED without the seller signature fails`() {
+        // The release path is sigmaProp(attestation conditions) && proveDlog(sellerKey):
+        // the attestation alone must NEVER direct funds — without the seller's
+        // signature anyone could pay themselves the collateral the moment an
+        // attestation box exists on-chain.
+        val fx = VaultFixture()
+        assertFalse(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                dataInputs = listOf(fx.oracleDataBox()),
+                outputs = listOf(fx.sellerOut()),
+                height = proofHeight,
+            ),
+        )
+    }
+
+    @Test
+    fun `47 claim payout to an arbitrary buyer-chosen address passes`() {
+        // Path D mirrors the release: the buyer's proveDlog(buyerKey) authorizes
+        // the spend, so the payout may go to any address (key rotation).
+        val fx = VaultFixture()
+        val box = fx.provenBox(proofHeight)
+        assertTrue(
+            fx.verifySpend(
+                fx.provenTree, box,
+                inputs = listOf(box),
+                outputs = listOf(fx.sellerOut()), // any address, not the R6 key's
+                height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
+            ),
+        )
+    }
+
+    @Test
+    fun `48 reclaim paying to an arbitrary seller-chosen address passes`() {
+        // Path A: the seller's proveDlog(sellerKey) authorizes the spend, so the
+        // reclaim may pay any address (key rotation for the next iteration).
+        val fx = VaultFixture()
+        assertTrue(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox, fx.oracleBox),
+                outputs = listOf(fx.buyerOut()), // any address, not the R5 key's
+                height = fx.timeoutHeight + 1,
+                secrets = listOf(fx.sellerKey),
+            ),
+        )
+    }
+
+    // ------------------------------------------------------------- branch reachability (49-52)
+
+    @Test
+    fun `49 open claim after the reclaim timeout passes`() {
+        // The branch order puts B before A (context-var-0 presence beats HEIGHT):
+        // the PAYMENT_PROVEN output satisfies the payout conservation check too,
+        // so a height-first discriminator would swallow every post-timeout
+        // claim-open into path A (proveDlog(sellerKey)) — late disputes must
+        // stay possible.
+        val fx = VaultFixture()
+        val lateHeight = fx.timeoutHeight + 10
+        val sr = SignedRecord(fx, fx.handoffRecord())
+        assertTrue(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                outputs = listOf(fx.provenOut(lateHeight, sr.id), fx.changeOut()),
+                height = lateHeight,
+                vars = sr.vars(),
+            ),
+        )
+    }
+
+    @Test
+    fun `50 contest after maturation passes`() {
+        // Path C′ stays reachable past CLAIM_MATURATION (the D/C′ discriminator
+        // is the data input, not height alone): an attested-but-slow honest
+        // seller must always be able to counter a false claim.
+        val fx = VaultFixture()
+        val box = fx.provenBox(proofHeight)
+        assertTrue(
+            fx.verifySpend(
+                fx.provenTree, box,
+                inputs = listOf(box),
+                dataInputs = listOf(fx.oracleDataBox()),
+                outputs = listOf(fx.sellerOut()),
+                height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 10,
+                secrets = listOf(fx.sellerKey),
+            ),
+        )
+    }
+
+    @Test
+    fun `51 release after the reclaim timeout passes as a seller-signed spend`() {
+        // A post-timeout release tx (no vars, full-collateral payout) lands in
+        // the path A branch: seller-signed and payout-identical to a reclaim,
+        // so the attestation is no longer required after the timeout.
+        val fx = VaultFixture()
+        assertTrue(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                dataInputs = listOf(fx.oracleDataBox()),
+                outputs = listOf(fx.sellerOut()),
+                height = fx.timeoutHeight + 10,
+                secrets = listOf(fx.sellerKey),
+            ),
+        )
+    }
+
+    @Test
+    fun `52 claim payout with a stray data input fails`() {
+        // A claim-payout tx carrying a data input trips the D/C′ discriminator
+        // into the C′ branch, which demands the seller key — the buyer's
+        // signature alone cannot save it. (Honest claim txs carry no data
+        // inputs; ClaimTxBuilder attaches none.)
+        val fx = VaultFixture()
+        val box = fx.provenBox(proofHeight)
+        assertFalse(
+            fx.verifySpend(
+                fx.provenTree, box,
+                inputs = listOf(box),
+                dataInputs = listOf(fx.oracleDataBox()),
+                outputs = listOf(fx.buyerOut()),
+                height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
             ),
         )
     }

@@ -138,12 +138,13 @@ class DevOracleSpec {
     @Test
     fun `release with the attestation box as oracle data input prover-signs and pays seller at OUTPUTS 0`() {
         // The release carries the oracle box as a DATA INPUT (no oracle
-        // signature — its script never executes); the seller payout sits at
-        // OUTPUTS(0), paid in full.
+        // signature — its script never executes); the seller co-signs with the
+        // R5 key (the attestation alone must never direct funds) and the
+        // payout sits at OUTPUTS(0), paid in full.
         val terms = f.dealTerms()
         val builder = OperatorTxBuilder(f.trees)
         val dataInput = oracle.attestationBox(terms.dealId)
-        val recording = RecordingSigner(ErgoTestFixtures.ProverSigner(f.dealKeys.secret))
+        val recording = RecordingSigner(ErgoTestFixtures.ProverSigner(f.sellerKeys.secret, f.dealKeys.secret))
         val signed = builder.buildRelease(
             fundedBox = f.fundedChainBox(terms),
             oracleDataInput = dataInput,

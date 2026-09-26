@@ -28,7 +28,7 @@ that never funded, with no on-chain footprint; the timeout branch FUNDED → REC
 no-show); the dispute branch PAYMENT_PENDING →
 CLAIM_OPENED → CLAIMABLE → CLAIMED (claim opens once cash is collected and the seller has not
 paid; claims without cause from PAYMENT_CONFIRMED are possible and are countered with the
-oracle attestation alone). PAYMENT_CONFIRMED means the oracle confirmed the seller's USDT transfer;
+oracle attestation). PAYMENT_CONFIRMED means the oracle confirmed the seller's USDT transfer;
 the release follows without any buyer action.
 On-chain vault box states: FUNDED box → spent (routine release via path C or reclaim via
 path A), or FUNDED box → PAYMENT_PROVEN box → spent (dispute: contest via path C′ or
@@ -61,29 +61,34 @@ The oracle's job is narrow:
 The oracle never holds Ergo-side collateral funds, never sees fiat or cash, and never
 decides a dispute outcome — it only attests that a source-chain event happened. The
 contract does the payout math. In phase 1 the trust concentration is total and explicit:
-the oracle is a single trusted entity for the payment leg, and its attestation is **solely
-sufficient** on the release paths (§5.3 says this without euphemism).
+the oracle is a single trusted entity for the payment leg, and its attestation is the
+**sole gate** on the release paths (§5.3 says this without euphemism; the seller
+co-signs the payout with its own R5 key — its own automation, not a new trust
+dependency).
 
 The clean flip versus the off-ramp reading: the off-ramp gated the *claim* on the oracle
 (proof the buyer paid); the on-ramp gates the *claim* on the **seller-signed handoff record**
 (proof cash was collected — there is no payment for an oracle to attest at claim time) and
-gates *release* on the oracle's attestation alone (the dealId signal: the seller's USDT
+gates *release* on the oracle's attestation (the dealId signal: the seller's USDT
 arrived,
-`specs/deal-protocol.md` §1). Path B therefore involves the oracle **not at all**.
+`specs/deal-protocol.md` §1; the seller co-signs the payout — see below). Path B
+therefore involves the oracle **not at all**.
 
 The attestation is consumed two ways:
 
 1. **Off-chain:** the oracle's confirmation signal advances the deal from
    PAYMENT_PENDING to PAYMENT_CONFIRMED — the buyer's "USDT confirmed" indicator. The
    FUNDED box is untouched.
-2. **On-chain:** the attestation box is a **data input** to the release (path C: the
-   attestation alone, routine close; path C′: the same attestation from the PAYMENT_PROVEN
+2. **On-chain:** the attestation box is a **data input** to the release (path C:
+   routine close on the attestation; path C′: the same attestation from the PAYMENT_PROVEN
    box, contesting a claim). The attested `dealId` rides in the data input's R4 — the
    PAYMENT_PROVEN
    box carries the handoff record, not the attestation. Data-input scripts never execute, so
    **the release transaction contains no oracle signature**; NFT custody is the
-   authenticity anchor (§3.1, §5.3). **The attestation alone is sufficient on both
-   paths: there is no receipt signature anywhere in the protocol.** The release follows
+   authenticity anchor (§3.1, §5.3). **The attestation is the only gate on both
+   paths: the seller co-signs the payout with its R5 key (the attestation alone must
+   never direct funds), and there is no receipt signature anywhere in the protocol.**
+   The release follows
    the attestation without any buyer action — which is exactly why the phase-1 oracle is
    trusted, period (§5.3).
 
@@ -152,7 +157,10 @@ Consequences, stated plainly:
   transaction** — authenticity reduces to NFT custody, and any box carrying the oracle
   NFT with R4 equal to the vault's `dealId` passes, foreign-script boxes included
   (`specs/vault-contract.md`
-  §7 test 20; §5.3 states this honestly). The claim path (B) takes no oracle input at
+  §7 test 20; §5.3 states this honestly). The release paths additionally require the
+  seller's `proveDlog(R5)` co-signature — the attestation alone must never direct
+  funds — and leave the payee free (key rotation). The claim path (B) takes no oracle
+  input at
   all: it is gated on the seller-signed handoff record.
 - **One attestation in flight (hard serialization constraint).** The attestation box is
   a singleton: posting the attestation for deal Y **spends** the box holding deal X's
@@ -167,9 +175,10 @@ Consequences, stated plainly:
   seller's USDT transfer to the buyer's registered receive address (the watch-set entry
   created at funding) per §4.2 **and** the transfer has passed
   the §4.3 taint screen. Refusing to attest is the oracle's only *honest* power; it
-  cannot redirect funds (the vault's own paths fix every output) — but note its
-  attestation alone releases the vault, so a *dishonest* posting moves collateral with
-  no on-chain check (§5.3).
+  cannot redirect funds (only the seller's key signs the payout, and the vault's own
+  paths fix the amount) — but note its attestation still releases the vault (the
+  seller's backend co-signs the payout automatically), so a *dishonest* posting moves
+  collateral with no independent on-chain check (§5.3).
 - Flow: the operator backend builds the release transaction itself (operator wallet
   only — no oracle co-signature, no oracle-key fee inputs) and attaches the oracle's
   current attestation box as the data input, fetched via the oracle's attestation API
@@ -391,12 +400,18 @@ seller-signed handoff record, not the oracle). Only *new* insurance sales stop.
 
 **Phase 1 makes the oracle a single trusted third party for the payment leg — and on the
 release path it is trusted *completely*.** On-ramp, the oracle gates *release*, and its
-attestation is **solely sufficient**: a malicious or compromised oracle can attest a
-payment that never happened — a seller-run oracle could publish a fake attestation of
-its own "payment", and since the release path's authenticity anchor is NFT custody alone
+attestation is **solely sufficient** as the payment gate: a malicious or compromised
+oracle can attest a payment that never happened — a seller-run oracle could publish a
+fake attestation of its own "payment" (the seller's backend co-signs the payout
+automatically), and since the release path's authenticity anchor is NFT custody alone
 (data-input scripts never execute), any box carrying the NFT with R4 equal to the
-vault's `dealId` moves the collateral — with **no on-chain defense of any kind**. There is no buyer
+vault's `dealId` satisfies the oracle side of the release — with **no independent
+on-chain check of the attestation**. There is no buyer
 signature on the release paths to withhold, and none to save a cheated buyer.
+(The seller's `proveDlog(R5)` co-signature, 2026-09-24, stops third parties from
+redirecting a release transaction — the attestation alone must never direct funds —
+but it is not an independent check: the seller's automation signs whatever its oracle
+client reports.)
 This is a deliberate launch trade-off, not a discovery, and it is accepted for phase 1.
 It is exactly why:
 

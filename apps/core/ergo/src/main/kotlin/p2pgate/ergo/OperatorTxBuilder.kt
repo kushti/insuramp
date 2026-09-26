@@ -11,12 +11,15 @@ import sigma.ast.ErgoTree
  *
  *  - [buildFund] — create the FUNDED box (R4–R8 per `specs/vault-contract.md`
  *    §3.1), collateral in, deal parameters pinned;
- *  - [buildReclaim] — path A: `HEIGHT > timeoutHeight` (R8), seller-signed,
- *    seller paid in full;
+ *  - [buildReclaim] — path A: `HEIGHT > timeoutHeight` (R8), seller-signed
+ *    (proveDlog of the R5 key), full collateral paid to any seller-chosen
+ *    address (default: the R5 key — the payee is free because the signature,
+ *    not the destination, authorizes the spend; key rotation);
  *  - [buildRelease] — path C from the FUNDED box: the oracle box as a DATA
  *    INPUT (NFT pinned in R7), its R4 carrying this vault's dealId — the
- *    oracle's per-deal attestation signal; no oracle signature anywhere
- *    (v2: the phase-1 oracle's attestation alone releases the vault);
+ *    oracle's per-deal attestation signal; no oracle signature anywhere, but
+ *    the seller co-signs (proveDlog of the R5 key): the attestation alone
+ *    must never direct funds;
  *  - [buildContest] — path C′: the same from the PAYMENT_PROVEN box (the
  *    oracle NFT id is the compile-time pin of the proven tree, §8.3 item 3).
  *
@@ -29,11 +32,12 @@ import sigma.ast.ErgoTree
  *
  * The vault authenticates the release by NFT presence on
  * `CONTEXT.dataInputs(0)` and checks that box's R4 against its own R4 dealId.
- * A data input's script never executes, so release/contest txs are
- * operator-wallet-only — the oracle does NOT co-sign (the oracle's
- * involvement is posting the attestation box on-chain in the first place,
- * via its own `oracle.es` rotation spend). The seller payout therefore
- * sits at `OUTPUTS(0)`, sharing the slot convention with every other path.
+ * A data input's script never executes, so release/contest txs need no oracle
+ * signature (the oracle's involvement is posting the attestation box on-chain
+ * in the first place, via its own `oracle.es` rotation spend). The seller
+ * payout sits at `OUTPUTS(0)`, sharing the slot convention with every other
+ * path; the payee is any seller-chosen address — only the full collateral is
+ * conserved, and the seller's proveDlog(R5) signature authorizes the spend.
  */
 class OperatorTxBuilder(
     /** Compiled vault parameter set the boxes are expected to carry. */
@@ -121,8 +125,10 @@ class OperatorTxBuilder(
 
     /**
      * Reclaim (path A): spends the FUNDED box once `HEIGHT > timeoutHeight`
-     * (R8), paying the full collateral to the seller's R5 deal key (the
-     * contract pins OUTPUTS(0) to `proveDlog(sellerPubKey)`). The seller signs.
+     * (R8), paying the full collateral to [sellerPayoutAddress] (default: the
+     * seller's R5 deal key). The contract leaves the payee free — the
+     * seller's proveDlog(R5) signature authorizes the spend — so a fresh key
+     * may be used (key rotation for the next iteration).
      */
     fun buildReclaim(
         fundedBox: ChainBox,
@@ -130,6 +136,7 @@ class OperatorTxBuilder(
         currentHeight: Int,
         changeAddress: String,
         signer: DealTxSigner,
+        sellerPayoutAddress: String? = null,
     ): SignedTransaction {
         require(fundedBox.ergoTreeHex.equals(trees.fundedPropositionHex, ignoreCase = true)) {
             "input box is not a FUNDED vault box of this contract"
@@ -151,12 +158,12 @@ class OperatorTxBuilder(
             "collateral $sellerAmount — the reclaim tx would carry a zero-amount token"
         }
 
-        // The contract pays the R5 seller key — reclaim is seller-signed.
-        val sellerTree = ErgoValues.p2pkTree(sellerPk)
+        // The contract leaves the payee free — default to the R5 seller key.
+        val payoutErgoTree = sellerPayoutAddress?.let { payoutTree(it) } ?: ErgoValues.p2pkTree(sellerPk)
         val candidates = listOf(
             TxAssembly.candidate(
                 value = fundedBox.value,
-                tree = sellerTree,
+                tree = payoutErgoTree,
                 tokens = listOf(ChainToken(useToken.tokenId, sellerAmount)),
                 registers = emptyList(),
                 creationHeight = currentHeight,
@@ -184,8 +191,10 @@ class OperatorTxBuilder(
      * singleton box attached as a read-only data input — it must carry the
      * NFT pinned in the box's R7 and this vault's dealId in its R4 (build-time
      * mirror checks fail fast, exactly the in-script conditions). No oracle
-     * co-signature: the tx is [signer]-signed (operator wallet) and pays the
-     * full collateral to the seller's R5 key at OUTPUTS(0).
+     * co-signature: the tx is [signer]-signed (the seller's R5 key via the
+     * operator wallet — the attestation alone must never direct funds) and
+     * pays the full collateral to [sellerPayoutAddress] (default: the R5 key;
+     * the payee is free — key rotation).
      */
     fun buildRelease(
         fundedBox: ChainBox,
@@ -194,6 +203,7 @@ class OperatorTxBuilder(
         currentHeight: Int,
         changeAddress: String,
         signer: DealTxSigner,
+        sellerPayoutAddress: String? = null,
     ): SignedTransaction {
         require(fundedBox.ergoTreeHex.equals(trees.fundedPropositionHex, ignoreCase = true)) {
             "input box is not a FUNDED vault box of this contract"
@@ -210,13 +220,15 @@ class OperatorTxBuilder(
             changeAddress = changeAddress,
             nftPin = nftPin,
             signer = signer,
+            sellerPayoutAddress = sellerPayoutAddress,
         )
     }
 
     /**
      * Contest (path C′) from the PAYMENT_PROVEN box: same gate as
-     * [buildRelease] — the oracle attestation alone counters any claim. The
-     * oracle NFT id is the compile-time pin of the proven tree (§8.3 item 3).
+     * [buildRelease] — the oracle attestation counters any claim, with the
+     * seller co-signing the payout. The oracle NFT id is the compile-time pin
+     * of the proven tree (§8.3 item 3).
      */
     fun buildContest(
         provenBox: ChainBox,
@@ -225,6 +237,7 @@ class OperatorTxBuilder(
         currentHeight: Int,
         changeAddress: String,
         signer: DealTxSigner,
+        sellerPayoutAddress: String? = null,
     ): SignedTransaction {
         require(provenBox.ergoTreeHex.equals(trees.provenPropositionHex, ignoreCase = true)) {
             "input box is not a PAYMENT_PROVEN vault box of this contract"
@@ -238,6 +251,7 @@ class OperatorTxBuilder(
             changeAddress = changeAddress,
             nftPin = trees.oracleNftId,
             signer = signer,
+            sellerPayoutAddress = sellerPayoutAddress,
         )
     }
 
@@ -252,6 +266,7 @@ class OperatorTxBuilder(
         changeAddress: String,
         nftPin: ByteArray,
         signer: DealTxSigner,
+        sellerPayoutAddress: String?,
     ): SignedTransaction {
         require(feeInputs.isNotEmpty()) { "at least one fee input is required" }
 
@@ -278,11 +293,14 @@ class OperatorTxBuilder(
             "collateral $sellerAmount — the release tx would carry a zero-amount token"
         }
 
-        // OUTPUTS(0): seller payout — the contract pins R5's key and the full collateral.
+        // OUTPUTS(0): seller payout — the contract leaves the payee free (the
+        // seller's proveDlog(R5) signature authorizes the spend); default the
+        // R5 key, override for key rotation.
+        val payoutErgoTree = sellerPayoutAddress?.let { payoutTree(it) } ?: ErgoValues.p2pkTree(sellerPk)
         val candidates = listOf(
             TxAssembly.candidate(
                 value = vaultBox.value,
-                tree = ErgoValues.p2pkTree(sellerPk),
+                tree = payoutErgoTree,
                 tokens = listOf(ChainToken(useToken.tokenId, sellerAmount)),
                 registers = emptyList(),
                 creationHeight = currentHeight,
@@ -306,4 +324,7 @@ class OperatorTxBuilder(
             signer = signer,
         )
     }
+
+    private fun payoutTree(address: String): ErgoTree =
+        org.ergoplatform.appkit.Address.create(address).ergoAddress.script()
 }

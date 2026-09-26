@@ -155,9 +155,9 @@ class EmbeddedVaultSigner(
  * built. (On-chain a FUNDED box cannot tell these states apart — the
  * exclusion is deliberately off-chain.)
  *
- * Release is automatic on [DealEvent.PaymentConfirmed] (path C, oracle
- * attestation alone — v2; no receipt signature exists) and contest (path C′)
- * is triggered by the dispute inbox.
+ * Release is automatic on [DealEvent.PaymentConfirmed] (path C, gated on the
+ * oracle attestation with the seller co-signing the payout — v2; no receipt
+ * signature exists) and contest (path C′) is triggered by the dispute inbox.
  */
 class VaultManager(
     private val trees: ErgoContracts.VaultTrees,
@@ -265,9 +265,10 @@ class VaultManager(
 
     /**
      * Automatic release on payment confirmation (path C). The oracle
-     * attestation alone gates the spend (v2): the tx carries the oracle box
+     * attestation gates the spend (v2): the tx carries the oracle box
      * as a DATA INPUT (its R4 the 32-byte dealId, its tokens the
-     * pinned NFT) and is operator-wallet-only — no oracle signature exists.
+     * pinned NFT), the seller co-signs the payout with the vault R5 key (the
+     * attestation alone must never direct funds), and no oracle signature exists.
      */
     fun releaseIfConfirmed(dealId: String, at: Instant = Instant.now()): Outcome {
         val deal = store.getDeal(dealId) ?: return Rejected("unknown deal $dealId")

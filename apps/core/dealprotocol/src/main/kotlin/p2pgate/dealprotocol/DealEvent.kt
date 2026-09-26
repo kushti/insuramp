@@ -40,7 +40,8 @@ sealed interface DealEvent {
 
     /**
      * Path C / C′ spend observed: box spent, full collateral to the seller.
-     * In v2 the spend is gated on the oracle attestation alone — the oracle is
+     * In v2 the spend is gated on the oracle attestation (the seller co-signs
+     * the payout) — the oracle is
      * trusted, period (`specs/vault-contract.md` §3.3, §4.2).
      */
     data object ReleaseObserved : DealEvent
