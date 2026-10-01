@@ -129,4 +129,22 @@ class DealTimelineSpec {
         assertFalse(DealTimeline.claimAvailable(DealState.RELEASED))
         assertFalse(DealTimeline.claimAvailable(DealState.RECLAIMED))
     }
+
+    @Test
+    fun `the meeting flow is available from FUNDED, when the meeting happens`() {
+        // Regression: the handoff card was gated on PAYMENT_PENDING, which only
+        // arrives *after* the seller signed the record — the buyer had no route
+        // into the meeting screen at the moment they needed it.
+        assertTrue(DealTimeline.handoffAvailable(DealState.FUNDED))
+        assertTrue(DealTimeline.handoffAvailable(DealState.PAYMENT_PENDING))
+        assertTrue(DealTimeline.handoffAvailable(DealState.PAYMENT_CONFIRMED))
+        // Through the dispute branch an unverified record still has to be fixed.
+        assertTrue(DealTimeline.handoffAvailable(DealState.CLAIM_OPENED))
+        assertTrue(DealTimeline.handoffAvailable(DealState.CLAIMABLE))
+        // Nothing to collect before funding, and nothing left to do after a close.
+        assertFalse(DealTimeline.handoffAvailable(DealState.QUOTED))
+        assertFalse(DealTimeline.handoffAvailable(DealState.RELEASED))
+        assertFalse(DealTimeline.handoffAvailable(DealState.RECLAIMED))
+        assertFalse(DealTimeline.handoffAvailable(DealState.CLAIMED))
+    }
 }

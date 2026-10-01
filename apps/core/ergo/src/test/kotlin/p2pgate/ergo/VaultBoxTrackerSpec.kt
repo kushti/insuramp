@@ -16,8 +16,10 @@ import kotlin.test.assertTrue
 /**
  * Vault box monitoring, `specs/android-app.md` §4.2: every classification row
  * (unspent, claim successor, release spend, reclaim spend, claim-paid spend,
- * timeout detection) plus the contested-claim sequence through the real
- * [DealStateMachine], proving the v2 contested-flag semantics end to end.
+ * timeout detection), the key-rotated payees every payout path now allows
+ * (2026-09-24 — the destination tree carries no information), plus the
+ * contested-claim sequence through the real [DealStateMachine], proving the v2
+ * contested-flag semantics end to end.
  */
 class VaultBoxTrackerSpec {
 
@@ -31,6 +33,10 @@ class VaultBoxTrackerSpec {
     private val buyerTreeHex = ErgoValues.treeHex(ErgoValues.p2pkTree(f.buyerKeys.pubKeyCompressed))
     private val oracleNftHex = Base16.encode(f.trees.oracleNftId)
     private val timeoutHeight = ErgoTestFixtures.CREATION_HEIGHT + ContractParams.RECLAIM_TIMEOUT_BLOCKS
+
+    /** A payout to a FRESH key — key rotation, valid on every payout path since 2026-09-24. */
+    private val rotatedTreeHex =
+        ErgoValues.treeHex(ErgoValues.p2pkTree(TestKeys.of(0x9999).pubKeyCompressed))
 
     /** In-memory [ChainSource] — pollOnce's view of the chain. */
     private class FakeChain : ChainSource {
@@ -87,9 +93,11 @@ class VaultBoxTrackerSpec {
         height: Int,
         outputs: List<ChainBox>,
         inputTokens: List<String> = emptyList(),
+        dataInputs: Int = 0,
+        dataInputTokens: List<String> = emptyList(),
     ): Pair<String, ChainSpend> {
         val txId = "b1".repeat(32)
-        return txId to ChainSpend(txId, height, outputs, inputTokens)
+        return txId to ChainSpend(txId, height, outputs, inputTokens, dataInputs, dataInputTokens)
     }
 
     // ---------------------------------------------------------------- §4.2 rows (classify)
@@ -171,21 +179,130 @@ class VaultBoxTrackerSpec {
         assertEquals(listOf(DealEvent.ClaimPaid), events)
     }
 
+    // ------------------------------------------- key-rotated payees (2026-09-24)
+
+    @Test
+    fun `release paying a ROTATED key is classified from the attestation data input`() {
+        // Path C: the payee is free since the payout-freedom change, so the
+        // release is recognized by the full-collateral payout plus the
+        // attestation data input — not by a destination tree.
+        val (txId, spend) = spendOf(
+            fundedBox(), 1400,
+            listOf(payoutBox(rotatedTreeHex, "d1".repeat(32))),
+            dataInputs = 1, dataInputTokens = listOf(oracleNftHex),
+        )
+        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(fundedBox(txId), spend), now)
+        assertEquals(listOf(DealEvent.ReleaseObserved), events)
+    }
+
+    @Test
+    fun `post-timeout release paying a ROTATED key stays a release, not a reclaim`() {
+        // Past the timeout a release and a reclaim are seller-signed and
+        // payout-identical on chain; the attestation riding as a data input is
+        // the only thing that tells them apart, so it must win over the height.
+        val (txId, spend) = spendOf(
+            fundedBox(), timeoutHeight + 7,
+            listOf(payoutBox(rotatedTreeHex, "d2".repeat(32))),
+            dataInputs = 1, dataInputTokens = listOf(oracleNftHex),
+        )
+        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(fundedBox(txId), spend), now)
+        assertEquals(listOf(DealEvent.ReleaseObserved), events)
+    }
+
+    @Test
+    fun `claim payout to a ROTATED key is classified as ClaimPaid`() {
+        val proven = f.provenChainBox(terms)
+        val (txId, spend) = spendOf(proven, 2000, listOf(payoutBox(rotatedTreeHex, "d3".repeat(32))))
+        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(proven.copySpent(txId), spend), now)
+        assertEquals(listOf(DealEvent.ClaimPaid), events)
+    }
+
+    @Test
+    fun `post-maturation contest paying a ROTATED key is a release, not a claim payout`() {
+        // Path D requires NO data input, C' always carries the attestation one,
+        // so the spend's shape — not its destination, and not the height — is
+        // what keeps a contested claim the seller won out of CLAIMED.
+        val proven = f.provenChainBox(terms, proofHeight = 1500)
+        val (txId, spend) = spendOf(
+            proven, 2000, // long past proofHeight + CLAIM_MATURATION
+            listOf(payoutBox(rotatedTreeHex, "d4".repeat(32))),
+            dataInputs = 1, dataInputTokens = listOf(oracleNftHex),
+        )
+        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(proven.copySpent(txId), spend), now)
+        assertEquals(listOf(DealEvent.ReleaseObserved), events)
+    }
+
+    @Test
+    fun `proven spend before maturation with no data input cannot be the claim payout`() {
+        // Path D is unprovable before proofHeight + CLAIM_MATURATION, so the only
+        // path left is C' — even with the collateral gone to the buyer-key tree.
+        val proven = f.provenChainBox(terms, proofHeight = 1800)
+        val (txId, spend) = spendOf(proven, 1900, listOf(payoutBox(buyerTreeHex, "d5".repeat(32))))
+        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(proven.copySpent(txId), spend), now)
+        assertEquals(listOf(DealEvent.ReleaseObserved), events)
+    }
+
+    @Test
+    fun `a payout that does not conserve the full collateral is not a payout`() {
+        val short = ChainBox(
+            boxId = "d6".repeat(32),
+            transactionId = "e2".repeat(32),
+            index = 0,
+            value = f.BOX_VALUE_NANO_ERG,
+            creationHeight = 1400,
+            ergoTreeHex = sellerTreeHex,
+            address = "short",
+            tokens = listOf(ChainToken(f.useTokenIdHex, f.DEAL_AMOUNT - 1)),
+            registers = List(6) { null },
+        )
+        val (txId, spend) = spendOf(
+            fundedBox(), timeoutHeight + 1, listOf(short),
+            dataInputs = 1, dataInputTokens = listOf(oracleNftHex),
+        )
+        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(fundedBox(txId), spend), now)
+        assertEquals(emptyList(), events)
+    }
+
     @Test
     fun `unrecognized spend yields no events`() {
-        val foreign = ChainBox(
+        // Neither our vault trees nor a conserved collateral: nothing to report.
+        val feeOnly = ChainBox(
             boxId = "c6".repeat(32),
             transactionId = "e1".repeat(32),
+            index = 1,
+            value = 1_000_000L,
+            creationHeight = 1500,
+            ergoTreeHex = ErgoValues.treeHex(ErgoValues.p2pkTree(TestKeys.of(0x4242).pubKeyCompressed)),
+            address = "fee",
+            tokens = emptyList(),
+            registers = List(6) { null },
+        )
+        val (txId, spend) = spendOf(fundedBox(), 1500, listOf(feeOnly))
+        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(fundedBox(txId), spend), now)
+        assertEquals(emptyList(), events)
+    }
+
+    @Test
+    fun `a spent box that is not one of ours yields no events`() {
+        val foreign = ChainBox(
+            boxId = fundedBoxId,
+            transactionId = "ab".repeat(32),
             index = 0,
             value = f.BOX_VALUE_NANO_ERG,
             creationHeight = 1500,
-            ergoTreeHex = ErgoValues.treeHex(ErgoValues.p2pkTree(TestKeys.of(0x4242).pubKeyCompressed)),
+            ergoTreeHex = rotatedTreeHex,
             address = "foreign",
             tokens = listOf(ChainToken(f.useTokenIdHex, f.DEAL_AMOUNT)),
-            registers = List(6) { null },
+            registers = listOf(
+                ChainRegister.CollBytes(terms.dealId),
+                ChainRegister.CollBytes(f.sellerKeys.pubKeyCompressed),
+                ChainRegister.CollBytes(f.buyerKeys.pubKeyCompressed),
+                null, null, null,
+            ),
+            spentTransactionId = "b1".repeat(32),
         )
-        val (txId, spend) = spendOf(fundedBox(), 1500, listOf(foreign))
-        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(fundedBox(txId), spend), now)
+        val (txId, spend) = spendOf(foreign, 1400, listOf(payoutBox(rotatedTreeHex, "c7".repeat(32))))
+        val events = tracker().classify(VaultBoxTracker.VaultBoxState.Spent(foreign, spend), now)
         assertEquals(emptyList(), events)
     }
 

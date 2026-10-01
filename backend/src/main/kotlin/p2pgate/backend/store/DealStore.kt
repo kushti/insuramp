@@ -23,13 +23,15 @@ data class AmlRecord(
 data class StoredEvent(val dealId: String?, val kind: String, val detail: String, val at: Instant)
 
 /**
- * The published quote terms (`specs/operator-backend.md` §5): spread (bps
- * over reference), ETA promise (minutes from FUNDED to the meeting), and the
- * deal-size bounds — [minAmount] keeps uneconomically small deals out,
- * [maxAmount] is a hard capacity cap (never publish above free collateral).
- * [version] increments on every publish; [expiresAt] bounds the TTL.
- * [lat]/[lon] are the optional seller meeting location (WGS-84) the buyer app
- * renders on its map — both set or neither.
+ * The published quote terms (`specs/operator-backend.md` §5): the quoted
+ * **rate** ([fiatPerUsdtMicros]), spread (bps over reference, seller-side
+ * metadata — owner decision 2026-09-27: the margin is folded into the rate, so
+ * nothing applies the spread), ETA promise (minutes from FUNDED to the
+ * meeting), and the deal-size bounds — [minAmount] keeps uneconomically
+ * small deals out, [maxAmount] is a hard capacity cap (never publish above
+ * free collateral). [version] increments on every publish; [expiresAt] bounds
+ * the TTL. [lat]/[lon] are the optional seller meeting location (WGS-84) the
+ * buyer app renders on its map — both set or neither.
  */
 data class QuoteRecord(
     val id: String,
@@ -40,6 +42,14 @@ data class QuoteRecord(
     val maxAmount: Long,
     /** The fiat leg's currency — 3-letter code, uppercase (e.g. INR, USD). */
     val fiatCurrency: String,
+    /**
+     * The rate the buyer is quoted: micros of this quote's fiat currency per
+     * **1 USDT**, margin included (e.g. 92 INR/USDT → `92_000_000`). The buyer
+     * types the USDT leg; the cash leg is derived with
+     * [p2pgate.dealprotocol.FiatAmounts.cashFor] on both sides of the wire, so
+     * a submitted pair is always self-consistent.
+     */
+    val fiatPerUsdtMicros: Long,
     val createdAt: Instant,
     val expiresAt: Instant,
     val lat: Double? = null,

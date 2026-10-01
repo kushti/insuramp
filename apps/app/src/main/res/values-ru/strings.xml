@@ -13,8 +13,13 @@
     <string name="fiat_ksh">Кенийский шиллинг</string>
     <string name="fiat_rub">Российский рубль</string>
     <string name="fiat_currency_option">%1$s — %2$s</string>
-    <string name="quote_amount_label">Вы отдаёте (целыми единицами, без копеек)</string>
     <string name="quote_address_label">Ваш адрес получения USDT (сеть Tron)</string>
+    <string name="quote_usdt_amount_label">Вы получите (USDT, целыми единицами)</string>
+    <string name="quote_you_hand">Вы отдаёте %1$s %2$s наличными по курсу 1 USDT = %3$s %2$s</string>
+    <string name="quote_rate">1 USDT = %1$s %2$s</string>
+    <string name="quote_address_invalid">Это недействительный адрес Tron — он начинается с T и содержит 34 символа.</string>
+    <string name="quote_amount_invalid">Введите целую сумму USDT больше нуля.</string>
+    <string name="quote_rate_unusable">Курс этого предложения не может оценить эту сумму — выберите другое предложение.</string>
     <string name="quote_best">Лучшие котировки</string>
     <string name="quote_view_list">Список</string>
     <string name="quote_view_map">Карта</string>
@@ -26,13 +31,13 @@
     <string name="quote_unlocated">Продавец не опубликовал местоположение для этой котировки — переключитесь на список, чтобы выбрать её.</string>
     <string name="quote_creating">Создание сделки…</string>
     <string name="quote_eta">~%1$d мин</string>
-    <string name="quote_amount_range">%1$d – %2$d USDT за сделку</string>
+    <string name="quote_amount_range">%1$s – %2$s USDT за сделку</string>
     <string name="quote_collateral_line">Продавец заблокировал залог для покрытия этих сделок — вы можете получить его, если ваши USDT так и не придут.</string>
     <string name="offer_action">Предложить наличные</string>
     <string name="offer_fields_required">Сначала введите сумму и ваш адрес получения USDT.</string>
     <string name="quote_create_error">Не удалось создать сделку: %1$s</string>
-    <string name="quote_amount_out_of_range">Сумма для этой котировки должна быть от %1$d до %2$d.</string>
-    <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d мин</string>
+    <string name="quote_amount_out_of_range">Сумма для этой котировки должна быть от %1$s до %2$s USDT.</string>
+    <string name="quote_marker_title">%1$s – %2$s USDT · ~%3$d мин</string>
 
     <!-- Canonical protocol states → human labels -->
     <string name="state_quoted">Сделка оценена — ждём, пока продавец заблокирует залог</string>
@@ -122,4 +127,28 @@
     <!-- Welcome screen -->
     <string name="welcome_text">Добро пожаловать в Insuramp! Некастодиальное, без KYC, безопасное, застрахованное приложение для обмена наличных на крипто!</string>
     <string name="welcome_get_started">Начать</string>
+
+
+    <!-- deal list / settings -->
+    <string name="deal_recovery_title">Ссылка для восстановления</string>
+    <string name="deal_recovery_body">Сохраните ссылку. Это единственный способ вернуть сделку, если вы потеряете приложение — в ней ваш токен доступа.</string>
+    <string name="deal_recovery_copy">Скопировать ссылку</string>
+    <string name="nav_deals">Сделки</string>
+    <string name="nav_settings">Настройки</string>
+    <string name="deals_title">Ваши сделки</string>
+    <string name="deals_empty">На этом устройстве пока нет сделок — выберите котировку, чтобы начать.</string>
+    <string name="deals_delete">Удалить сделку</string>
+    <string name="deals_deleted">Сделка удалена с устройства.</string>
+    <string name="deals_open">Открыть сделку</string>
+    <string name="settings_title">Настройки</string>
+    <string name="settings_data_title">Ваши данные</string>
+    <string name="settings_delete_all">Удалить все данные о сделках</string>
+    <string name="settings_delete_all_warning">Это сотрёт все сделки на устройстве, включая токены доступа и ключи, которыми можно подписать claim. Отменить нельзя — после этого сделку, которую вы не экспортировали, восстановить не удастся.</string>
+    <string name="settings_delete_all_confirm">Удалить всё?</string>
+    <string name="settings_delete_all_confirm_yes">Удалить всё</string>
+    <string name="settings_delete_all_done">Все данные о сделках удалены с устройства.</string>
+    <string name="action_cancel">Отмена</string>
+    <string name="deals_row_amounts">%1$s USDT · %2$d %3$s</string>
+    <string name="deals_delete_confirm">Удалить эту сделку?</string>
+    <string name="deals_delete_warning">Сделка и её токен доступа будут стёрты с устройства, а ключ подписи уничтожен. Отменить нельзя.</string>
 </resources>

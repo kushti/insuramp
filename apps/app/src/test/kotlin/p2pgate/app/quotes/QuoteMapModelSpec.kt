@@ -21,6 +21,7 @@ class QuoteMapModelSpec {
         fiatCurrency = fiatCurrency,
         minAmount = 100L,
         maxAmount = 1_000_000L,
+        fiatPerUsdtMicros = 92_000_000L,
         createdAtEpochMs = 1_000L,
         expiresAtEpochMs = 2_000L,
         lat = lat,

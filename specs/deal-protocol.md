@@ -11,10 +11,58 @@ USDT; the seller holds the USDT, physically collects the cash, and locks the vau
 collateral (it acts last). The reverse direction is out of scope and not specified.*
 
 *v2 (owner decision, 2026-09-13): the buyer's receipt signature is gone from the protocol
-entirely — release paths C/C′ are gated on the oracle attestation **alone** (the phase-1
+entirely — release paths C/C′ need the oracle attestation and nothing else (the phase-1
 oracle is trusted, period), and the handoff record is single-signed by the seller under
 the deal's seller key (verified in path B against the vault's R5). The two-role design
 stands: the seller meets the buyer, collects the cash, and signs.*
+
+## Key concepts
+
+*A glossary, not a numbered section — the section numbers below are unchanged and are
+referenced from other files. The same words appear in the `.es` sources, the other specs and
+the code, and they are used here in exactly these senses.*
+
+**The deal.** One buyer, one seller, one amount of USDT, one meeting. The seller is also the
+marketplace operator: they collect the cash and send the USDT, so they act *last* and put their
+own collateral at risk. `dealId` is the hash of the agreed terms — the 32-byte name every
+message in the protocol refers to.
+
+**Vault / collateral.** An Ergo box holding the seller's tokens (USE in phase 1). Locking it is
+the seller's promise; the contract pays it out only against proof of how the deal ended. The
+*deal window* is `RECLAIM_TIMEOUT` (24h) from funding.
+
+**Handoff record.** What the seller signs at the meeting to acknowledge receiving the cash:
+a 52-byte message carrying the `dealId`, the fiat amount and a timestamp. The buyer keeps it.
+It is the buyer's evidence if the USDT never arrives, and its signature is the only thing
+path B requires.
+
+**Attestation.** The oracle's on-chain statement that this deal's USDT payment went through —
+a box carrying the `dealId` and an NFT the vault recognises. Phase 1 the oracle is *trusted*:
+it is the sole requirement for a release, which is stated plainly wherever the trust model is
+discussed (`onramp-insurance.md` §2).
+
+The three ways collateral leaves, and what each needs:
+
+| Word | Plain meaning | Needs | Spends |
+|---|---|---|---|
+| **claim** | the buyer demanding the locked collateral, because the cash was handed over and the USDT never came | the seller's signature on the handoff record | FUNDED box → `PAYMENT_PROVEN` box (path B) |
+| **release** | the seller taking the collateral back, because the oracle confirmed the USDT arrived | the oracle's attestation **+** the seller's signature | the box, paid to the seller (paths C, C′) |
+| **reclaim** | the seller taking the collateral back because the deal window closed with nothing claimed | only the passage of time + the seller's key | the box, paid to the seller (path A) |
+
+**Maturation (`CLAIM_MATURATION`, 12h).** After a claim opens, the seller gets this long to
+answer it before the buyer may take the collateral. It counts from `proofHeight` — the block
+the claim landed in — which is why the claim creates a second box.
+
+**Contest (path C′).** A release that lands while a claim is maturing. The oracle's attestation
+disproves the claim, so the claim dies and the seller takes the collateral. This is why an
+attestation is needed on the claim side of the protocol too, not only the release side.
+
+**Data input.** An Ergo transaction input that is read but not spent. The attestation rides
+this way, so release transactions carry no oracle signature — only the seller signs.
+
+**Proof of payment.** For the on-ramp this is the oracle's attestation, not a signature or an
+on-chain hash: the USDT moves on Tron or Ethereum, and Ergo only ever learns that it happened.
+Cash collection has no such proof, which is what the handoff record is for.
 
 ## 1. Deal state machine
 
@@ -59,11 +107,11 @@ Rules:
   one release/reclaim tx). The oracle's attestation (the bare `dealId`, §3.4) only goes
   on-chain when the seller releases
   (path C/C′) — it is the seller's *proof of performance*.
-- **Claim gating flipped vs. a naive mirror:** a claim asserts "I handed over cash and the
-  seller never paid". There is no payment for an oracle to attest at that point, so the
-  claim is gated on the **seller-signed handoff record** (one Schnorr under the deal's
-  seller key over the cash-received message), verified in path B against the vault's R5.
-  The oracle instead gates *release*: path C/C′ present the oracle's attestation — the
+- **What each side must produce is the mirror image of what you'd expect:** a claim asserts
+  "I handed over cash and the seller never paid". There is no payment for an oracle to attest
+  at that point, so the claim needs only the **seller-signed handoff record** (one Schnorr
+  under the deal's seller key over the cash-received message), verified in path B against the
+  vault's R5. The oracle is what *release* needs instead: path C/C′ present the attestation — the
   bare `dealId` signal that the seller's USDT transfer to the buyer is done and screened
   (the buyer's receive address is registered off-chain at funding, §3.3/§3.4 — it is no
   longer pinned on-chain). `PAYMENT_CONFIRMED`
@@ -194,8 +242,8 @@ the dispute artifact — a record missing the seller's signature is worthless, s
 - a seller signature without collected cash unlocks nothing the seller side could want:
   the claim it would open pays the *buyer* the seller's own collateral (§2).
 
-The handoff record is the on-ramp's replacement for the off-ramp's oracle-gated claim: it
-gates path B and anchors maturation.
+The handoff record is the on-ramp's stand-in for what the off-ramp would ask an oracle to
+prove: it is what path B requires, and it anchors maturation.
 
 ### 3.3 QR payloads
 

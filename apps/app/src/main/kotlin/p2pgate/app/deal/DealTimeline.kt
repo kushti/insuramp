@@ -122,4 +122,20 @@ object DealTimeline {
         state == DealState.PAYMENT_PENDING ||
             state == DealState.PAYMENT_CONFIRMED ||
             state in claimBranch
+
+    /**
+     * Whether the meeting / handoff flow is on screen and needs the buyer
+     * (`onramp-ux.md` §2.3 — the one hard moment, and the record is the buyer's
+     * only dispute artifact).
+     *
+     * True from **FUNDED**, not from PAYMENT_PENDING: the meeting happens at
+     * FUNDED, and the seller signs the record there. PAYMENT_PENDING only
+     * arrives once that record is registered, so gating the screen on it showed
+     * the buyer the meeting flow *after* the moment it was for. It stays true
+     * through the claim branch — if the record is not verified locally, the
+     * claim path cannot be built from it either — and off once the deal closes,
+     * when there is no meeting left to attend.
+     */
+    fun handoffAvailable(state: DealState): Boolean =
+        state != DealState.QUOTED && !state.isTerminal
 }

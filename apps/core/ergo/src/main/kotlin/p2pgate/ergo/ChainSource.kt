@@ -98,9 +98,31 @@ class ChainSpend(
      * Token ids carried by the spending tx's inputs (best-effort, as reported
      * by the chain backend). Legacy release discriminator: releases used to
      * carry the oracle box as a full input (its NFT among the input tokens);
-     * since the oracle box became a release DATA input this signal no longer
-     * fires on backends that report only spent inputs — the spend-height
-     * fallback discriminates release from reclaim instead.
+     * since the oracle box became a release DATA input this signal only fires
+     * for pre-2026-09-17 spends.
      */
     val inputTokenIds: List<String> = emptyList(),
+    /**
+     * Number of DATA inputs in the spending tx (best-effort; `0` when the
+     * backend serves none, or none exist).
+     *
+     * This is the contract's own discriminator between the claim payout and the
+     * oracle-attested contest: path D requires `CONTEXT.dataInputs.size == 0`,
+     * path C′ always carries the attestation box as a data input. With the
+     * payee unpinned since 2026-09-24 it is the only shape signal that tells
+     * `CLAIMED` from `RELEASED` on a spent PAYMENT_PROVEN box, so
+     * [VaultBoxTracker] keys on it. Both shipped backends report it (the
+     * explorer's and the node's transaction payloads carry `dataInputs`).
+     */
+    val dataInputCount: Int = 0,
+    /**
+     * Token ids carried by the spending tx's DATA inputs (best-effort). The
+     * release attestation rides here on paths C/C′, so the pinned oracle NFT id
+     * among them marks a release even past the reclaim timeout, where the spend
+     * is otherwise payout- and signature-identical to a reclaim. Empty on
+     * backends that serve data inputs without their assets (a full node reports
+     * data inputs by box id only), which downgrades the tracker to the
+     * spend-shape and height fallbacks.
+     */
+    val dataInputTokenIds: List<String> = emptyList(),
 )

@@ -100,6 +100,9 @@ dependencies {
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    // The Ktor client's own test engine — the only way to exercise the buyer
+    // `/v1` client (paths, headers, error bodies) off-device.
+    testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
     testImplementation(kotlin("test"))
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

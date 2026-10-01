@@ -24,6 +24,12 @@ data class QuoteDto(
     val maxAmount: Long,
     /** The fiat leg's currency — 3-letter code, uppercase (e.g. INR, USD). */
     val fiatCurrency: String,
+    /**
+     * The quoted rate: micros of `fiatCurrency` per 1 USDT, margin included
+     * (92 INR/USDT → `92_000_000`). The buyer types the USDT leg; the cash leg
+     * is derived from this on both sides of the wire.
+     */
+    val fiatPerUsdtMicros: Long,
     val createdAtEpochMs: Long,
     val expiresAtEpochMs: Long,
     /** Optional seller meeting location (WGS-84); both set or neither. */
@@ -38,12 +44,18 @@ data class QuoteFeedDto(val quotes: List<QuoteDto>)
 @Serializable
 data class CreateDealRequest(
     val quoteId: String,
+    /** The USDT leg in base units (6 decimals) — the leg the quote's min/max bound. */
     val amount: Long,
+    /** The buyer's USDT receive address, a TRON base58check string (`T…`). */
     val receiveAddress: String,
     val buyerPubKey: String,
     /** The fiat leg's currency — must match the quote's currency. */
     val fiatCurrency: String,
-    /** Cash amount in whole basic units (no decimals) — the deal terms pin it. */
+    /**
+     * Cash amount in whole basic units (no decimals) — the deal terms pin it.
+     * Re-derived from the quote's rate and [amount]; a mismatch is a rejection,
+     * so the two legs can never disagree in the terms.
+     */
     val fiatAmount: Long,
 )
 
@@ -193,6 +205,12 @@ data class PutQuoteRequest(
     val maxAmount: Long,
     /** The fiat leg's currency — exactly 3 letters (normalized to uppercase). */
     val fiatCurrency: String,
+    /**
+     * The rate to quote: micros of `fiatCurrency` per 1 USDT, margin included
+     * (e.g. `92_000_000` = 92 INR per USDT). Required and positive — a quote
+     * with no rate cannot price a deal.
+     */
+    val fiatPerUsdtMicros: Long,
     /** Optional seller meeting location (WGS-84); both set or neither. */
     val lat: Double? = null,
     val lon: Double? = null,

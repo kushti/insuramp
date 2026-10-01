@@ -59,6 +59,20 @@ The buyer app module (`apps/app`, native Android, `specs/android-app.md`) and th
 seller dashboard front-end (`specs/seller-dashboard.md`, a static web app served by the
 Ktor backend at `/dashboard/`) landed in M4 (2026-09-17/18); the rest of `apps/` remains
 reserved-only.
+**The buyer app was unblocked end-to-end on 2026-09-27:** deal creation works against a
+real backend (it previously sent a base58 address where hex was expected, and sent the
+buyer's single input as *both* legs of the deal). The offer is now "you get N USDT" with
+the cash leg derived from the quote's rate — quotes publish a `fiatPerUsdtMicros` rate
+and the backend re-derives the cash leg, rejecting a mismatch; the seller's `spreadBps`
+is metadata and is applied nowhere (owner decision). `TronAddress` and `FiatAmounts` in
+`:core:dealprotocol` are the single implementations of the address codec and the cash
+derivation, shared by the app and the backend. The same pass made the meeting flow
+reachable at FUNDED (it was gated behind PAYMENT_PENDING, i.e. after the moment it was for),
+routed `p2pgate://handoff?m=…` links into the meeting screen, showed the recovery link
+(built from the configured operator, not a hardcoded domain), and added the deal list and
+delete-all-data flow. The claim path is still unbuilt — the app has no chain layer and
+returns instruction strings instead of transactions; see the open backlog in
+`specs/README.md`.
 There is no `pyproject.toml`,
 `package.json`, or `Cargo.toml`. Likewise,
 there is no `rosen/` directory: the docs cross-reference `rosen/deck.html` (a Rosen bridge
@@ -73,8 +87,8 @@ pitch deck), but it lives outside this repo.
   defaults); testnet remains fully selectable via config/env (`P2P_NETWORK=testnet`,
   `E2E_EXPLORER_URL`, `E2E_FAUCET_URL`). No testnet capability was removed.
 - **First asset leg:** cash→USDT on-ramp (USE collateral; the seller acts
-  last and locks the vault; phase-1 centralized NFT oracle whose attestation
-  gates release — the seller co-signs the payout, phase-2 Rosen-derived guard threshold). The reverse direction
+  last and locks the vault; phase-1 centralized NFT oracle whose attestation alone
+  releases the collateral, the seller co-signing the payout, phase-2 Rosen-derived guard threshold). The reverse direction
   (USDT→cash off-ramp) is out of scope.
   BTC and XMR legs remain extension notes in `specs/vault-contract.md` §8.
 
@@ -86,7 +100,7 @@ outcome (Rosen oracle confirmation, trustless Bitcoin relay inclusion proof, Mon
 tx-key reveal, or the seller-signed handoff record proving cash collection). This
 substitutes for counterparty reputation. On-ramp: the buyer hands cash to the seller at
 an in-person meeting first and the seller sends USDT afterwards, so the seller locks the
-vault; the claim is gated on the seller-signed handoff record (the seller's R5 key, the
+vault; the claim needs the seller-signed handoff record (the seller's R5 key, the
 same key that reclaims the collateral) and the release on the oracle's attestation
 **alone** — the phase-1 oracle is trusted,
 period, on the release path. The broader vision is Ergo as pillar 3 of
@@ -100,7 +114,7 @@ period, on the release path. The broader vision is Ergo as pillar 3 of
 | `onramp-insurance.md` | **Core design doc — read this first.** Vault contract skeleton, per-asset designs (USDT oracle-verified, BTC trustless via Bitcoin relay, XMR oracle-verified via tx-key reveal), trust-model comparison, limitations, sources. |
 | `onramp-ux.md` | Product design for the two sides of the marketplace — buyer app (native Android app) and seller meeting flow — plus the operator dashboard. Flow timings must stay consistent with the contract design (24h timeout, 12h claim maturation, ~6h BTC deadline). |
 | `onramp-business-model.md` | Protocol-layer economics: fee model (the in-contract protocol fee was removed 2026-09-18; protocol revenue is undefined/deferred [spec]), capital dynamics (protocol TVL ≈ outstanding deal volume; collateral availability is the binding constraint), volume scenarios, risks, bootstrapping sequence. |
-| `specs/` | Implementation specs (index: `specs/README.md`): vault contract, deal protocol, oracle integration, seller dashboard, buyer app, operator backend. Canonical constants live in `specs/vault-contract.md` §2; canonical state names in `specs/deal-protocol.md` §1. |
+| `specs/` | Implementation specs (index: `specs/README.md`): vault contract, deal protocol, oracle integration, seller dashboard, buyer app, operator backend. Canonical constants live in `specs/vault-contract.md` §2; canonical state names in `specs/deal-protocol.md` §1. `specs/vault-contract-review.md` is a 2026-09-26 adversarial review of the shipped vault contracts — **findings open, not normative**; its §8 lists the spec edits it asks for (not applied). |
 
 The docs form a strict reading order: `pillars.md` (why) → `onramp-insurance.md` (contracts
 and trust) → `onramp-ux.md` (product) → `onramp-business-model.md` (economics). Each file
@@ -135,10 +149,10 @@ Phase-1 vault contracts are implemented and tested here. **Scope note:** the `.e
 implement the on-ramp reading of `specs/vault-contract.md` — the **v2 rework has landed**
 (2026-09-13, and the two-role refactor followed on 2026-09-17: the old third-party cash-side role is
 gone, so the handoff record is seller-signed): vault R7 holds the bare 32-byte `oracleNftId` (the old
-65-byte two-key packing is gone; Ergo boxes have R4–R9 only, no R10), path B is gated on
+65-byte two-key packing is gone; Ergo boxes have R4–R9 only, no R10), path B needs
 the seller-signed handoff record (a single Schnorr half under the R5 seller key, no
 oracle on the claim path), and paths C/C′ take the oracle box as a **data input** — the
-oracle's attestation gates release, co-signed by the seller (NFT custody is the authenticity anchor;
+oracle's attestation alone releases, co-signed by the seller (NFT custody is the authenticity anchor;
 no oracle signature exists in release txs). Since 2026-09-24 every payout path (A, C, C′, D)
 leaves the payee free — the signing side's `proveDlog` authorizes the spend and only the full
 collateral is conserved (key rotation); there is no receipt signature anywhere in
@@ -176,17 +190,24 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   change added tests 46–48 and inverted test 21; the 2026-09-26
   branch-discriminator fix added tests 49–52) plus
   `OracleContractSpec` 8 → contracts 55; dealprotocol module: DealStateMachine 44,
-  Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7 → 94; ergo module:
-  ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 10, SchnorrVerifier 9,
-  VaultBoxTracker 17; plus (M3-A/C): OperatorTxBuilder 15,
-  DevOracle 6, FastContracts 4; plus (2026-09-17): NodeChainSource 12 → ergo 96
+  Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7, plus (2026-09-27)
+  TronAddress 8 + FiatAmounts 10 → 113; ergo module:
+  ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 12, SchnorrVerifier 9,
+  VaultBoxTracker 24; plus (M3-A/C): OperatorTxBuilder 15,
+  DevOracle 6, FastContracts 4; plus (2026-09-17): NodeChainSource 13 → ergo 106
   (the 2026-09-21 payload simplification deleted `PaymentAttestation` and its
-  9-test suite, and collapsed the five per-field release-tamper tests into one);
-  backend 117 (11 suites); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 372; plus the Android buyer app
+  9-test suite, and collapsed the five per-field release-tamper tests into one;
+  the 2026-10-01 tracker fix re-derived payout classification from collateral
+  conservation + spend shape instead of the payout tree, so it also added the
+  key-rotated-payee and conservation cases — see `specs/android-app.md` §4.2);
+  backend 120 (11 suites); e2e 10 (E2eFlow 5,
+  E2eConfig 2, SchnorrPort 3) → JVM modules 404; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
-  multi-quote currency-filtered list, offer-cash flow 2026-09-20): 62 JVM
-  unit tests (`:app:testDebugUnitTest`) → **434 total**.
+  multi-quote currency-filtered list, offer-cash flow 2026-09-20, and the
+  2026-09-27 pass: USDT-leg offer math with a rate-derived cash leg, TRON
+  address validation, meeting reachable at FUNDED, handoff deep links, deal list
+  + delete-all, recovery link, reconnecting sockets): 95 JVM
+  unit tests (`:app:testDebugUnitTest`) → **499 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

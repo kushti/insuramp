@@ -169,6 +169,36 @@ class NodeChainSourceSpec {
         assertEquals(1, spend.outputs.size)
         assertEquals("bb".repeat(32), spend.outputs[0].boxId)
         assertEquals(listOf(oracleNftHex), spend.inputTokenIds)
+        assertEquals(0, spend.dataInputCount, "the canned tx carries no data inputs")
+        assertEquals(emptyList(), spend.dataInputTokenIds)
+    }
+
+    @Test
+    fun `getSpendingTransaction counts data inputs the node serves without assets`() {
+        // IndexedErgoTransaction serializes data inputs as bare DataInputs
+        // (boxId/value/ergoTree), so the COUNT is readable and the attestation's
+        // token ids are not — enough for the claim-payout vs contest read.
+        val spendTxId = "ef".repeat(32)
+        val txJson = """
+        {
+            "id": "$spendTxId",
+            "inputs": [ { "boxId": "${"11".repeat(32)}" } ],
+            "dataInputs": [
+                { "boxId": "${"22".repeat(32)}", "value": 1000000, "ergoTreeHex": "00" }
+            ],
+            "outputs": [ ${boxJson(boxId = "bb".repeat(32))} ],
+            "inclusionHeight": 12345
+        }
+        """.trimIndent()
+        val stub = StubTransport(
+            mapOf(
+                "$NODE/blockchain/box/byId/${"aa".repeat(32)}" to boxJson(spentTxId = spendTxId),
+                "$NODE/blockchain/transaction/byId/$spendTxId" to txJson,
+            ),
+        )
+        val spend = NodeChainSource(NODE, stub).getSpendingTransaction("aa".repeat(32))!!
+        assertEquals(1, spend.dataInputCount)
+        assertEquals(emptyList(), spend.dataInputTokenIds, "no assets served, no token ids")
     }
 
     @Test

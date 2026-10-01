@@ -33,6 +33,7 @@ import p2pgate.backend.vault.TxSubmitter
 import p2pgate.backend.vault.VaultManager
 import p2pgate.backend.vault.VaultSigner
 import p2pgate.backend.watcher.ChainWatcher
+import p2pgate.dealprotocol.TronAddress
 import p2pgate.dealprotocol.DealEvent
 import p2pgate.dealprotocol.DealTerms
 import p2pgate.dealprotocol.HandoffRecord
@@ -69,8 +70,21 @@ object Fx {
     fun devOracle(): DevOracle = DevOracle(oracle.secret, oracleNftId = trees.oracleNftId)
 
     val useTokenIdHex: String = Hex.encode(ByteArray(32) { (it * 7 + 3).toByte() })
-    val recipientRaw: ByteArray = ByteArray(21) { (it * 19 + 6).toByte() }
+    /**
+     * The buyer's declared receive address as the 21-byte TRON payload
+     * (`0x41 ‖ account hash`) — the shape the AML scorer and the off-chain watch
+     * set identify the account by.
+     */
+    val recipientRaw: ByteArray = ByteArray(21) { i ->
+        (if (i == 0) 0x41 else i * 19 + 6).toByte()
+    }
+    /** The same address as a TRON base58check string — what the buyer sends. */
+    val recipientAddress: String = TronAddress.encode(recipientRaw)
     const val AMOUNT: Long = 500_000_000L       // 500 USDT, 6 decimals
+    /** Demo quote rate: 1 USDT = 1.00 USD, margin included. */
+    const val RATE_USD: Long = 1_000_000L
+    /** The cash leg for [AMOUNT] at [RATE_USD] — what a create-deal must send. */
+    const val CASH_USD: Long = 500L
     const val FUNDING_HEIGHT: Int = 1000
 
     fun p2pkAddress(pk: ByteArray): String = SigmaTrees.p2pkAddress(pk, networkType)

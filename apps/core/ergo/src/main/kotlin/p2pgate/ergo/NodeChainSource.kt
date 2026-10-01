@@ -33,7 +33,8 @@ data class NodeRequest(val url: String, val body: String? = null)
  *    register decoding reuses [ErgoValues.decodeRegister].
  *  - `GET /blockchain/transaction/byId/{txId}` — `IndexedErgoTransaction`
  *    (`id`, `inputs`/`outputs` as `IndexedErgoBox` so inputs carry `assets`,
- *    `inclusionHeight`).
+ *    `inclusionHeight`, `dataInputs` as bare `DataInput`s — boxId/value/ergoTree,
+ *    no assets).
  *  - `GET /blockchain/indexedHeight` — `{indexedHeight, fullHeight}`; the
  *    full height is the node's best chain, which is what "current height"
  *    means for the deal protocol.
@@ -111,11 +112,17 @@ class NodeChainSource(
         val outputs = tx.arr("outputs")?.items?.map { parseBox(it) }
             ?: throw IllegalArgumentException("node transaction $spendTxId has no outputs")
         // Best-effort: inputs' token ids (IndexedErgoBox inputs carry assets;
-        // see ChainSpend.inputTokenIds for why this signal is legacy-only).
+        // only pre-2026-09-17 releases put the oracle NFT among them — see
+        // ChainSpend.inputTokenIds).
         val inputTokenIds = tx.arr("inputs")?.items?.flatMap { input ->
             input.arr("assets")?.items?.mapNotNull { it.str("tokenId")?.lowercase() } ?: emptyList()
         } ?: emptyList()
-        return ChainSpend(spendTxId, height, outputs, inputTokenIds)
+        // Data inputs: IndexedErgoTransaction carries them (boxId/value/ergoTree,
+        // no assets), so the COUNT is available — enough for the claim-payout vs
+        // contest discriminator — but the attestation's token ids are not, so the
+        // tracker falls back to the spend shape and height on this backend.
+        val dataInputCount = tx.arr("dataInputs")?.items?.size ?: 0
+        return ChainSpend(spendTxId, height, outputs, inputTokenIds, dataInputCount)
     }
 
     override fun getCurrentHeight(): Int {

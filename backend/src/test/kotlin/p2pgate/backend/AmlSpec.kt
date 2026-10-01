@@ -56,7 +56,7 @@ class AmlSpec {
                 decisions = mapOf(Hex.encode(Fx.recipientRaw).lowercase() to AmlDecision.REJECT),
             ),
         )
-        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", T0)
+        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", Fx.RATE_USD, T0)
         val outcome = env.app.createDeal(dealRequest(), T0)
         val rejected = assertInstanceOf(CreateDealOutcome.Rejected::class.java, outcome)
         assertTrue(rejected.reason.contains("REJECT"))
@@ -70,7 +70,7 @@ class AmlSpec {
             override fun score(address: ByteArray, chainId: Int): AmlDecision =
                 throw RiskScorerException("unreachable")
         })
-        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", T0)
+        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", Fx.RATE_USD, T0)
         val outcome = env.app.createDeal(dealRequest(), T0)
         assertTrue((outcome as CreateDealOutcome.Rejected).reason.contains("fail-closed"))
         assertTrue(env.store.allDeals().isEmpty())
@@ -79,7 +79,7 @@ class AmlSpec {
     @Test
     fun `an accepting scorer creates the deal with a decision-only record`() {
         val env = TestEnv()
-        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", T0)
+        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", Fx.RATE_USD, T0)
         val outcome = env.app.createDeal(dealRequest(), T0)
         val created = assertInstanceOf(CreateDealOutcome.Created::class.java, outcome)
         val stored = env.store.getDeal(created.deal.dealId)!!
@@ -92,10 +92,10 @@ class AmlSpec {
     private fun dealRequest() = CreateDealRequest(
         quoteId = envQuoteId(),
         amount = Fx.AMOUNT,
-        receiveAddress = Hex.encode(Fx.recipientRaw),
+        receiveAddress = Fx.recipientAddress,
         buyerPubKey = Hex.encode(Fx.buyer.pubKeyCompressed),
         fiatCurrency = "USD",
-        fiatAmount = Fx.AMOUNT,
+        fiatAmount = Fx.CASH_USD,
     )
 
     private fun envQuoteId() = "quote-1"

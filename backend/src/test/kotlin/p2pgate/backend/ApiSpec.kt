@@ -62,12 +62,12 @@ class ApiSpec {
         // routes, which evaluate `active()` against wall-clock now — a quote
         // published at T0 is already TTL-expired by the time the suite runs
         // in the afternoon.
-        val outcome = env.quotes.publish(50, 60, minAmount, maxAmount, "USD", java.time.Instant.now())
+        val outcome = env.quotes.publish(50, 60, minAmount, maxAmount, "USD", Fx.RATE_USD, java.time.Instant.now())
         return (outcome as p2pgate.backend.quotes.QuotePublisher.PublishOutcome.Published).quote.id
     }
 
     private fun dealJson(env: TestEnv, quoteId: String) = """
-        {"quoteId":"$quoteId","amount":${Fx.AMOUNT},"receiveAddress":"${Hex.encode(Fx.recipientRaw)}","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}","fiatCurrency":"USD","fiatAmount":1000}
+        {"quoteId":"$quoteId","amount":${Fx.AMOUNT},"receiveAddress":"${Fx.recipientAddress}","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}","fiatCurrency":"USD","fiatAmount":${Fx.CASH_USD}}
     """.trimIndent()
 
     // ---------------------------------------------------------------- quotes
@@ -92,28 +92,29 @@ class ApiSpec {
         val client = createClient { }
         val put = client.put("/v1/dashboard/quotes") {
             contentType(ContentType.Application.Json)
-            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","minAmount":1000000,"maxAmount":500000000}""")
+            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","fiatPerUsdtMicros":${Fx.RATE_USD},"minAmount":1000000,"maxAmount":500000000}""")
         }
         assertEquals(HttpStatusCode.Unauthorized, put.status) // no key
         val forbidden = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer wrong")
             contentType(ContentType.Application.Json)
-            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","minAmount":1000000,"maxAmount":50000000}""")
+            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","fiatPerUsdtMicros":${Fx.RATE_USD},"minAmount":1000000,"maxAmount":50000000}""")
         }
         assertEquals(HttpStatusCode.Unauthorized, forbidden.status)
         val overCapacity = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer op-secret")
             contentType(ContentType.Application.Json)
-            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","minAmount":1000000,"maxAmount":500000000}""")
+            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","fiatPerUsdtMicros":${Fx.RATE_USD},"minAmount":1000000,"maxAmount":500000000}""")
         }
         assertEquals(HttpStatusCode.Conflict, overCapacity.status)
         val ok = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer op-secret")
             contentType(ContentType.Application.Json)
-            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","minAmount":1000000,"maxAmount":50000000}""")
+            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","fiatPerUsdtMicros":${Fx.RATE_USD},"minAmount":1000000,"maxAmount":50000000}""")
         }
         assertEquals(HttpStatusCode.OK, ok.status)
-        // A legacy payload without the required minAmount is a 400, not a 500.
+        // A legacy payload missing the required fields (minAmount, fiatCurrency,
+        // rate) is a 400, not a 500.
         val legacy = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer op-secret")
             contentType(ContentType.Application.Json)
@@ -131,7 +132,7 @@ class ApiSpec {
             val put = client.put("/v1/dashboard/quotes") {
                 header(HttpHeaders.Authorization, "Bearer op-secret")
                 contentType(ContentType.Application.Json)
-                setBody("""{"spreadBps":${50 + i},"etaMinutes":${30 * i},"fiatCurrency":"USD","minAmount":1000000,"maxAmount":100000000,"lat":30.044,"lon":31.235}""")
+                setBody("""{"spreadBps":${50 + i},"etaMinutes":${30 * i},"fiatCurrency":"USD","fiatPerUsdtMicros":${Fx.RATE_USD},"minAmount":1000000,"maxAmount":100000000,"lat":30.044,"lon":31.235}""")
             }
             assertEquals(HttpStatusCode.OK, put.status)
         }
@@ -184,7 +185,7 @@ class ApiSpec {
         val put = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer op-secret")
             contentType(ContentType.Application.Json)
-            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","minAmount":1000000,"maxAmount":500000000,"lat":55.75,"lon":37.61}""")
+            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","fiatPerUsdtMicros":${Fx.RATE_USD},"minAmount":1000000,"maxAmount":500000000,"lat":55.75,"lon":37.61}""")
         }
         assertEquals(HttpStatusCode.OK, put.status)
         val body = json.parseToJsonElement(client.get("/v1/quotes").bodyAsText()).jsonObject
@@ -197,13 +198,85 @@ class ApiSpec {
     }
 
     @Test
+    fun `deal creation requires a TRON address and a cash leg that matches the quote rate`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        val id = publishQuote(env) // a USD quote at 1.00 USD/USDT
+        fun dealWith(address: String, fiat: Long) = """
+            {"quoteId":"$id","amount":${Fx.AMOUNT},"receiveAddress":"$address","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}","fiatCurrency":"USD","fiatAmount":$fiat}
+        """.trimIndent()
+        suspend fun post(address: String, fiat: Long) = client.post("/v1/deals") {
+            contentType(ContentType.Application.Json)
+            setBody(dealWith(address, fiat))
+        }
+
+        // Hex was never the wire format — the buyer pastes a base58check address.
+        val hexAddress = post(Hex.encode(Fx.recipientRaw), Fx.CASH_USD)
+        assertEquals(HttpStatusCode.UnprocessableEntity, hexAddress.status)
+        assertTrue(hexAddress.bodyAsText().contains("not a valid TRON address"), hexAddress.bodyAsText())
+
+        // A corrupted checksum is refused too, not silently accepted.
+        val badChecksum = post("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6u", Fx.CASH_USD)
+        assertEquals(HttpStatusCode.UnprocessableEntity, badChecksum.status)
+        assertTrue(badChecksum.bodyAsText().contains("not a valid TRON address"), badChecksum.bodyAsText())
+
+        // The two legs must agree with the quote's rate: the backend is the
+        // authority on what gets pinned in the terms.
+        val wrongCash = post(Fx.recipientAddress, Fx.CASH_USD + 1)
+        assertEquals(HttpStatusCode.UnprocessableEntity, wrongCash.status)
+        assertTrue(wrongCash.bodyAsText().contains("does not match the quote's rate"), wrongCash.bodyAsText())
+
+        val oneToOne = post(Fx.recipientAddress, Fx.CASH_USD)
+        assertEquals(HttpStatusCode.OK, oneToOne.status)
+        val dealId = json.parseToJsonElement(oneToOne.bodyAsText()).jsonObject["dealId"]!!.jsonPrimitive.content
+        assertEquals(Fx.CASH_USD, env.store.getDeal(dealId)!!.fiatAmount)
+        assertEquals(Fx.AMOUNT, env.store.getDeal(dealId)!!.amount)
+    }
+
+    @Test
+    fun `a non-1 to-1 rate prices the cash leg`() = testApplication {
+        val env = env()
+        setup(env)
+        val client = createClient { }
+        // 1 USDT = 92 INR — the seeded Mumbai rate, sized to take a 500 USDT deal.
+        val outcome = env.quotes.publish(
+            120, 30, 1_000_000L, 500_000_000L, "INR", 92_000_000L, java.time.Instant.now(),
+        )
+        val id = (outcome as p2pgate.backend.quotes.QuotePublisher.PublishOutcome.Published).quote.id
+        val usdt = 500_000_000L // 500 USDT
+        val cash = p2pgate.dealprotocol.FiatAmounts.cashFor(usdt, 92_000_000L) // 46,000 INR
+        val r = client.post("/v1/deals") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {"quoteId":"$id","amount":$usdt,"receiveAddress":"${Fx.recipientAddress}","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}","fiatCurrency":"INR","fiatAmount":$cash}
+                """.trimIndent(),
+            )
+        }
+        assertEquals(HttpStatusCode.OK, r.status)
+        val dealId = json.parseToJsonElement(r.bodyAsText()).jsonObject["dealId"]!!.jsonPrimitive.content
+        val deal = env.store.getDeal(dealId)!!
+        assertEquals(46_000L, deal.fiatAmount)
+        assertEquals(usdt, deal.amount)
+        // The rate is published to buyers so they can derive the same number.
+        val quote = env.store.getQuote(id)!!
+        assertEquals(92_000_000L, quote.fiatPerUsdtMicros)
+        assertEquals(
+            "92000000",
+            json.parseToJsonElement(client.get("/v1/quotes").bodyAsText())
+                .jsonObject["quotes"]!!.jsonArray[0].jsonObject["fiatPerUsdtMicros"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
     fun `deal with a mismatched or malformed fiat currency is rejected`() = testApplication {
         val env = env()
         setup(env)
         val client = createClient { }
         val id = publishQuote(env) // a USD quote
         fun dealWith(currency: String) = """
-            {"quoteId":"$id","amount":${Fx.AMOUNT},"receiveAddress":"${Hex.encode(Fx.recipientRaw)}","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}","fiatCurrency":"$currency","fiatAmount":1000}
+            {"quoteId":"$id","amount":${Fx.AMOUNT},"receiveAddress":"${Fx.recipientAddress}","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}","fiatCurrency":"$currency","fiatAmount":${Fx.CASH_USD}}
         """.trimIndent()
         val mismatch = client.post("/v1/deals") {
             contentType(ContentType.Application.Json)
@@ -235,7 +308,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env, maxAmount = 100_000_000L, minAmount = 10_000_000L)
         fun dealAt(amount: Long) = """
-            {"quoteId":"$id","amount":$amount,"receiveAddress":"${Hex.encode(Fx.recipientRaw)}","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}","fiatCurrency":"USD","fiatAmount":1000}
+            {"quoteId":"$id","amount":$amount,"receiveAddress":"${Fx.recipientAddress}","buyerPubKey":"${Hex.encode(Fx.buyer.pubKeyCompressed)}","fiatCurrency":"USD","fiatAmount":${p2pgate.dealprotocol.FiatAmounts.cashFor(amount, Fx.RATE_USD)}}
         """.trimIndent()
         val tooSmall = client.post("/v1/deals") {
             contentType(ContentType.Application.Json)
@@ -259,7 +332,7 @@ class ApiSpec {
         val latOnly = client.put("/v1/dashboard/quotes") {
             header(HttpHeaders.Authorization, "Bearer op-secret")
             contentType(ContentType.Application.Json)
-            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","minAmount":1000000,"maxAmount":500000000,"lat":55.75}""")
+            setBody("""{"spreadBps":50,"etaMinutes":60,"fiatCurrency":"USD","fiatPerUsdtMicros":${Fx.RATE_USD},"minAmount":1000000,"maxAmount":500000000,"lat":55.75}""")
         }
         assertEquals(HttpStatusCode.Conflict, latOnly.status)
         assertTrue(latOnly.bodyAsText().contains("lat/lon pair"))
@@ -443,7 +516,7 @@ class ApiSpec {
         val client = createClient { install(WebSockets) }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         client.webSocket("/v1/deals/${outcome.deal.dealId}/stream?token=${outcome.dealToken}") {
@@ -486,7 +559,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
@@ -535,7 +608,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
@@ -560,7 +633,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         env.forceFund(outcome.deal)
@@ -581,7 +654,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         // Fund "now": the HTTP endpoint reclaims against Instant.now(), and a
@@ -601,7 +674,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
@@ -673,7 +746,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
@@ -700,7 +773,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
@@ -738,7 +811,7 @@ class ApiSpec {
         val r = client.post("/v1/aml/check") {
             header(HttpHeaders.Authorization, "Bearer op-secret")
             contentType(ContentType.Application.Json)
-            setBody("""{"address":"${Hex.encode(Fx.recipientRaw)}","chainId":1}""")
+            setBody("""{"address":"${Fx.recipientAddress}","chainId":1}""")
         }
         assertEquals(HttpStatusCode.OK, r.status)
         val body = json.parseToJsonElement(r.bodyAsText()).jsonObject
@@ -754,7 +827,7 @@ class ApiSpec {
         val client = createClient { }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         val dealId = outcome.deal.dealId
@@ -794,7 +867,7 @@ class ApiSpec {
         setup(env)
         val client = createClient { install(WebSockets) }
         client.webSocket("/v1/events?token=op-secret") {
-            env.quotes.publish(50, 60, 1L, 100_000_000L, "USD")
+            env.quotes.publish(50, 60, 1L, 100_000_000L, "USD", Fx.RATE_USD)
             val frame = withTimeout(5_000) { incoming.receive() } as Frame.Text
             assertTrue(frame.readText().contains("quote.published"))
         }
@@ -807,7 +880,7 @@ class ApiSpec {
         val client = createClient { install(WebSockets) }
         val id = publishQuote(env)
         val outcome = env.app.createDeal(
-            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Hex.encode(Fx.recipientRaw), Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.AMOUNT),
+            p2pgate.backend.api.CreateDealRequest(id, Fx.AMOUNT, Fx.recipientAddress, Hex.encode(Fx.buyer.pubKeyCompressed), "USD", Fx.CASH_USD),
             T0,
         ) as CreateDealOutcome.Created
         client.webSocket("/v1/deals/${outcome.deal.dealId}/stream?token=${outcome.dealToken}") {

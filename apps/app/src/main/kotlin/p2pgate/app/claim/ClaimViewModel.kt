@@ -34,7 +34,9 @@ class ClaimViewModel(
     init {
         viewModelScope.launch {
             val snapshot = repository.refresh(dealId)
-            val state = DealState.valueOf(snapshot.state)
+            // An unrecognised state must not throw out of init and take the
+            // process with it — the screen simply shows no claim action.
+            val state = runCatching { DealState.valueOf(snapshot.state) }.getOrNull()
             _uiState.value = ClaimUiState(
                 dealState = snapshot.state,
                 maturesAtEpochMs = snapshot.claimMaturesAtEpochMs,

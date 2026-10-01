@@ -37,7 +37,9 @@ class AppContainer(
             val baseUrl = prefs.getString("backend_url", null) ?: DEFAULT_BACKEND_URL
             val backend = KtorBackendClient(baseUrl)
             val db = Room.databaseBuilder(context, DealDatabase::class.java, "p2pgate-deals.db").build()
-            val repository = DealRepository(backend, RoomDealSnapshotStore(db))
+            // The recovery link points at the operator the app is configured
+            // for, not a hardcoded domain.
+            val repository = DealRepository(backend, RoomDealSnapshotStore(db), backendBaseUrl = baseUrl)
             return AppContainer(
                 backendClient = backend,
                 dealRepository = repository,

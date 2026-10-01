@@ -120,6 +120,56 @@ class ExplorerChainSourceSpec {
         assertEquals(1, spend.outputs.size)
         assertEquals("bb".repeat(32), spend.outputs[0].boxId)
         assertEquals(listOf(oracleNftHex), spend.inputTokenIds)
+        assertEquals(0, spend.dataInputCount, "no data inputs in the canned tx")
+        assertEquals(emptyList(), spend.dataInputTokenIds)
+    }
+
+    @Test
+    fun `getSpendingTransaction parses data inputs - the attestation release signal`() {
+        val spendTxId = "ef".repeat(32)
+        val txJson = """
+        {
+            "id": "$spendTxId",
+            "blockHeight": 12345,
+            "inputs": [ { "boxId": "${"11".repeat(32)}" } ],
+            "dataInputs": [
+                { "boxId": "${"22".repeat(32)}", "assets": [ { "tokenId": "$oracleNftHex", "amount": 1 } ] }
+            ],
+            "outputs": [ ${boxJson(boxId = "bb".repeat(32))} ]
+        }
+        """.trimIndent()
+        val stub = StubTransport(
+            mapOf(
+                "$MAIN/api/v1/boxes/${"aa".repeat(32)}" to boxJson(spentTxId = spendTxId),
+                "$MAIN/api/v1/transactions/$spendTxId" to txJson,
+            ),
+        )
+        val spend = ExplorerChainSource(MAIN, stub).getSpendingTransaction("aa".repeat(32))!!
+        assertEquals(1, spend.dataInputCount)
+        assertEquals(listOf(oracleNftHex), spend.dataInputTokenIds)
+    }
+
+    @Test
+    fun `getSpendingTransaction counts data inputs served without assets`() {
+        val spendTxId = "ef".repeat(32)
+        val txJson = """
+        {
+            "id": "$spendTxId",
+            "blockHeight": 12345,
+            "inputs": [ { "boxId": "${"11".repeat(32)}" } ],
+            "dataInputs": [ { "boxId": "${"22".repeat(32)}" } ],
+            "outputs": [ ${boxJson(boxId = "bb".repeat(32))} ]
+        }
+        """.trimIndent()
+        val stub = StubTransport(
+            mapOf(
+                "$MAIN/api/v1/boxes/${"aa".repeat(32)}" to boxJson(spentTxId = spendTxId),
+                "$MAIN/api/v1/transactions/$spendTxId" to txJson,
+            ),
+        )
+        val spend = ExplorerChainSource(MAIN, stub).getSpendingTransaction("aa".repeat(32))!!
+        assertEquals(1, spend.dataInputCount)
+        assertEquals(emptyList(), spend.dataInputTokenIds, "no assets served, no token ids")
     }
 
     @Test

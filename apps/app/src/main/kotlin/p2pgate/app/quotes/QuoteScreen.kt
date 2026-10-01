@@ -55,15 +55,19 @@ import p2pgate.app.locale.initialCurrency
 import p2pgate.app.net.CreateDealRequest
 import p2pgate.app.net.QuoteDto
 import p2pgate.app.verify.Hex
+import p2pgate.dealprotocol.FiatAmounts
 
 /**
- * Quote discovery (`onramp-ux.md` §2.1): the buyer enters the cash amount,
- * currency and their USDT receive address, sees the operator's pre-published
- * quote with the collateral line (actual vault capacity — never a marketing
- * string), and chooses it to create the deal. A refresh action + the quote WS
- * keep the row live (the pull-to-refresh gesture is deliberately a plain
- * button — one job per screen). The quote can be browsed as a list (default)
- * or as seller-location pins on a map; a pin tap is the same Choose action.
+ * Quote discovery (`onramp-ux.md` §2.1): the buyer enters the USDT amount they
+ * want, their USDT receive address and the cash currency, sees the operator's
+ * pre-published quote with the rate and the collateral line (actual vault
+ * capacity — never a marketing string), and chooses it to create the deal. The
+ * cash leg is *derived* from the quote's rate (`QuoteOffer`), never typed — a
+ * buyer who typed both legs could disagree with the seller's rate, and the
+ * backend rejects that. A refresh action + the quote WS keep the row live (the
+ * pull-to-refresh gesture is deliberately a plain button — one job per
+ * screen). The quote can be browsed as a list (default) or as seller-location
+ * pins on a map; a pin tap is the same Choose action.
  */
 /** The cash currencies offered (owner decision, 2026-09-19; RUB added 2026-09-19). Codes are never translated. */
 private data class FiatCurrency(val code: String, @StringRes val labelRes: Int)
@@ -85,7 +89,7 @@ fun QuoteScreen(
     val ui by viewModel.uiState.collectAsState()
     val scope = rememberCoroutineScope()
 
-    var fiatAmount by remember { mutableStateOf("") }
+    var usdtAmount by remember { mutableStateOf("") }
     // Currency default follows the effective locale until the user picks one
     // explicitly; an explicit pick is persisted and wins across locale
     // switches and process death. A stale stored code falls back to the
@@ -106,18 +110,12 @@ fun QuoteScreen(
     var createError by remember { mutableStateOf<String?>(null) }
 
     // One selection handler for both views: the list's Choose button and a
-    // map-pin tap land here. The amount is checked against the quote's
-    // [minAmount, maxAmount] before the backend is called (it enforces the
-    // same limits); createError holds a fully resolved localized message.
+    // map-pin tap land here. The composed offer is validated against the
+    // chosen quote (its min/max bounds and its rate) before the backend is
+    // called; createError holds a fully resolved localized message.
     val context = LocalContext.current
     val chooseQuote: (QuoteDto) -> Unit = choose@{ q ->
         if (creating) return@choose
-        // The button is always tappable — empty inputs get an explicit
-        // message instead of a silently dead button.
-        if (fiatAmount.isEmpty() || receiveAddress.isEmpty()) {
-            createError = context.getString(R.string.offer_fields_required)
-            return@choose
-        }
         // Cards/pins are currency-filtered, so this cannot mismatch; the
         // backend enforces the same equality — guard anyway.
         if (q.fiatCurrency != fiatCurrency) return@choose
@@ -125,21 +123,23 @@ fun QuoteScreen(
             creating = true
             createError = null
             try {
-                val amount = fiatAmount.toLongOrNull()
-                if (amount == null || !amountInRange(amount, q.minAmount, q.maxAmount)) {
-                    createError = context.getString(
-                        R.string.quote_amount_out_of_range, q.minAmount, q.maxAmount,
-                    )
+                val problem = QuoteOffer.problem(usdtAmount, receiveAddress, q)
+                if (problem != null) {
+                    createError = problemText(context, problem, q)
                     return@launch
                 }
+                // The cash leg is the seller's rate applied to the typed USDT
+                // amount — the same derivation the backend re-runs on arrival.
+                val usdtBase = QuoteOffer.parseUsdtBase(usdtAmount)!!
+                val cash = QuoteOffer.cashFor(usdtBase, q)!!
                 val deal = createDeal(
                     container.dealRepository,
                     container,
                     q.id,
-                    amount,
-                    amount,
+                    usdtBase,
+                    cash,
                     fiatCurrency,
-                    receiveAddress,
+                    receiveAddress.trim(),
                     q.expiresAtEpochMs,
                 )
                 onDealCreated(deal.dealId)
@@ -207,12 +207,12 @@ fun QuoteScreen(
             }
         }
         OutlinedTextField(
-            value = fiatAmount,
-            onValueChange = { fiatAmount = it.filter(Char::isDigit) },
-            label = { Text(stringResource(R.string.quote_amount_label)) },
+            value = usdtAmount,
+            onValueChange = { usdtAmount = it.filter(Char::isDigit) },
+            label = { Text(stringResource(R.string.quote_usdt_amount_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            // Whole units only — open the numeric keypad, not the text layout.
+            // Whole USDT units only — open the numeric keypad, not the text layout.
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         )
         OutlinedTextField(
@@ -221,6 +221,15 @@ fun QuoteScreen(
             label = { Text(stringResource(R.string.quote_address_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
+            isError = QuoteOffer.addressProblem(receiveAddress) == QuoteOffer.Problem(
+                QuoteOffer.Field.ADDRESS,
+                QuoteOffer.Kind.NOT_TRON,
+            ),
+            supportingText = {
+                if (QuoteOffer.addressProblem(receiveAddress)?.kind == QuoteOffer.Kind.NOT_TRON) {
+                    Text(stringResource(R.string.quote_address_invalid))
+                }
+            },
         )
 
         Row(
@@ -270,6 +279,23 @@ fun QuoteScreen(
             stringResource(R.string.quote_none)
         } else {
             stringResource(R.string.quote_none_for_currency, fiatCurrency)
+        }
+        // The best-ETA quote in this currency is the one the derived cash leg
+        // below is priced against — the buyer sees what they will hand over
+        // before choosing a seller.
+        val previewQuote = remember(currencyQuotes) { bestFirst(currencyQuotes).firstOrNull() }
+        val derivedCash = previewQuote?.let { QuoteOffer.cashLabel(QuoteOffer.parseUsdtBase(usdtAmount), it) }
+        if (previewQuote != null && derivedCash != null) {
+            Text(
+                stringResource(
+                    R.string.quote_you_hand,
+                    derivedCash,
+                    fiatCurrency,
+                    QuoteOffer.rateLabel(previewQuote),
+                ),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
 
         when (ui.viewMode) {
@@ -371,9 +397,21 @@ private fun QuoteCard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(stringResource(R.string.quote_eta, quote.etaMinutes), fontWeight = FontWeight.Bold)
-            // The per-deal amount range the seller honors.
+            // The rate the cash leg is derived from — the quote's own number,
+            // not a marketing claim.
             Text(
-                stringResource(R.string.quote_amount_range, quote.minAmount, quote.maxAmount),
+                stringResource(R.string.quote_rate, QuoteOffer.rateLabel(quote), quote.fiatCurrency),
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            // The per-deal amount range the seller honors, in whole USDT (the
+            // DTO carries base units).
+            Text(
+                stringResource(
+                    R.string.quote_amount_range,
+                    FiatAmounts.formatUsdt(quote.minAmount),
+                    FiatAmounts.formatUsdt(quote.maxAmount),
+                ),
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -396,12 +434,37 @@ private fun QuoteCard(
 }
 
 /**
+ * Resolves a [QuoteOffer.Problem] into a localized message. Out-of-range is the
+ * only one that needs the chosen quote (its bounds are per seller); the rest
+ * are about the inputs alone.
+ */
+private fun problemText(
+    context: android.content.Context,
+    problem: QuoteOffer.Problem,
+    quote: QuoteDto,
+): String = when (problem.field to problem.kind) {
+    QuoteOffer.Field.ADDRESS to QuoteOffer.Kind.EMPTY -> context.getString(R.string.offer_fields_required)
+    QuoteOffer.Field.ADDRESS to QuoteOffer.Kind.NOT_TRON -> context.getString(R.string.quote_address_invalid)
+    QuoteOffer.Field.AMOUNT to QuoteOffer.Kind.EMPTY -> context.getString(R.string.offer_fields_required)
+    QuoteOffer.Field.AMOUNT to QuoteOffer.Kind.ZERO,
+    QuoteOffer.Field.AMOUNT to QuoteOffer.Kind.UNPARSEABLE -> context.getString(R.string.quote_amount_invalid)
+    QuoteOffer.Field.AMOUNT to QuoteOffer.Kind.OUT_OF_RANGE -> context.getString(
+        R.string.quote_amount_out_of_range,
+        FiatAmounts.formatUsdt(quote.minAmount),
+        FiatAmounts.formatUsdt(quote.maxAmount),
+    )
+    QuoteOffer.Field.AMOUNT to QuoteOffer.Kind.RATE_UNUSABLE -> context.getString(R.string.quote_rate_unusable)
+    else -> context.getString(R.string.quote_create_error, "")
+}
+
+/**
  * Deal creation (`specs/android-app.md` §3.1): an OFFER to the seller — the
  * deal sits in QUOTED until the seller funds the vault or the offer expires
  * (the quote's `expiresAtEpochMs` is persisted for the pending-offer
  * countdown). Mint the deal key first (it is keyed by a pending id and moved
  * once the server assigns the deal id), then POST /v1/deals with the buyer
- * pubkey and the pinned receive address.
+ * pubkey, the typed USDT leg, the rate-derived cash leg and the receive
+ * address.
  */
 private suspend fun createDeal(
     repository: DealRepository,

@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,13 +47,22 @@ import java.time.format.DateTimeFormatter
  * the seller's screen shows. The "safe to leave" banner appears ONLY after
  * the record verified AND was persisted AND uploaded — until then the screen
  * says plainly that leaving means no verified dispute record.
+ *
+ * [prefill] is the same QR payload arriving as an intent instead of a scan
+ * (the seller sends the link, `specs/android-app.md` §3.3). It takes exactly
+ * the same path as a scan: the record is displayed, the gate stays pending
+ * until the signature halves are in.
  */
 @Composable
-fun HandoffScreen(dealId: String, container: AppContainer) {
+fun HandoffScreen(dealId: String, container: AppContainer, prefill: String? = null) {
     val viewModel: HandoffViewModel = viewModel(key = "handoff-$dealId") {
         HandoffViewModel(dealId, container.dealRepository, container.backendClient)
     }
     val ui by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(prefill) {
+        if (!prefill.isNullOrBlank()) viewModel.onQrScanned(prefill)
+    }
 
     val context = LocalContext.current
     var cameraGranted by remember {

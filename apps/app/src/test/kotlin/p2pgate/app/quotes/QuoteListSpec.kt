@@ -17,6 +17,7 @@ class QuoteListSpec {
         fiatCurrency = fiatCurrency,
         minAmount = 100L,
         maxAmount = 1_000_000L,
+        fiatPerUsdtMicros = 92_000_000L,
         createdAtEpochMs = 1_000L,
         expiresAtEpochMs = 2_000L,
     )
@@ -43,20 +44,6 @@ class QuoteListSpec {
             ),
         )
         assertEquals(listOf("third", "first", "second"), ordered.map { it.id })
-    }
-
-    @Test
-    fun `amount range is inclusive at both bounds`() {
-        assertTrue(amountInRange(100L, minAmount = 100L, maxAmount = 1_000_000L))
-        assertTrue(amountInRange(500_000L, minAmount = 100L, maxAmount = 1_000_000L))
-        assertTrue(amountInRange(1_000_000L, minAmount = 100L, maxAmount = 1_000_000L))
-    }
-
-    @Test
-    fun `amounts outside the range are rejected before the backend call`() {
-        assertFalse(amountInRange(99L, minAmount = 100L, maxAmount = 1_000_000L))
-        assertFalse(amountInRange(1_000_001L, minAmount = 100L, maxAmount = 1_000_000L))
-        assertFalse(amountInRange(0L, minAmount = 100L, maxAmount = 1_000_000L))
     }
 
     @Test

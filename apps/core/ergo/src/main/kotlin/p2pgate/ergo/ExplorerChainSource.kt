@@ -18,6 +18,7 @@ import java.net.http.HttpResponse
  * Endpoints used (v1):
  *  - `GET /api/v1/boxes/{boxId}` — box state incl. `spentTransactionId`
  *  - `GET /api/v1/transactions/{txId}` — outputs + `blockHeight` of the spend
+ *    (+ `inputs`/`dataInputs` token ids, best-effort)
  *  - `GET /api/v1/blocks?limit=1` — current best height
  *  - `GET /api/v1/boxes/unspent/byAddress/{address}` — unspent boxes (fee funding)
  *
@@ -72,11 +73,19 @@ class ExplorerChainSource(
             ?: throw IllegalArgumentException("explorer transaction $spendTxId has no blockHeight")
         val outputs = tx.arr("outputs")?.items?.map { parseBox(it) }
             ?: throw IllegalArgumentException("explorer transaction $spendTxId has no outputs")
-        // Best-effort: inputs' token ids (the oracle NFT among them marks a release).
+        // Best-effort: inputs' token ids (a pre-2026-09-17 release carried the
+        // oracle box as a full input, its NFT among them).
         val inputTokenIds = tx.arr("inputs")?.items?.flatMap { input ->
             input.arr("assets")?.items?.mapNotNull { it.str("tokenId")?.lowercase() } ?: emptyList()
         } ?: emptyList()
-        return ChainSpend(spendTxId, height, outputs, inputTokenIds)
+        // Data inputs: the release attestation rides here since 2026-09-17, and
+        // their COUNT is what separates a claim payout (path D takes no data
+        // input) from a contest (path C′ always carries one) — see ChainSpend.
+        val dataInputs = tx.arr("dataInputs")?.items ?: emptyList()
+        val dataInputTokenIds = dataInputs.flatMap { dataInput ->
+            dataInput.arr("assets")?.items?.mapNotNull { it.str("tokenId")?.lowercase() } ?: emptyList()
+        }
+        return ChainSpend(spendTxId, height, outputs, inputTokenIds, dataInputs.size, dataInputTokenIds)
     }
 
     override fun getCurrentHeight(): Int {

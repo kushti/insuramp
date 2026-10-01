@@ -1,5 +1,6 @@
 package p2pgate.ergo
 
+import p2pgate.contracts.ContractParams
 import p2pgate.dealprotocol.DealEvent
 import p2pgate.dealprotocol.ProtocolConstants
 import java.time.Duration
@@ -22,15 +23,30 @@ import java.time.Instant
  *  - box unspent, PAYMENT_PROVEN (the watcher was repointed at the successor)
  *    → [DealEvent.ClaimOpened];
  *  - box spent into a PAYMENT_PROVEN successor (path B) → [DealEvent.ClaimOpened];
- *  - box spent paying the seller → release (path C/C′, oracle-only) when the
- *    spend's height is within the reclaim window, reclaim (path A) once
- *    `height > timeoutHeight` (both pay the seller's P2PK; the height of the
- *    spend is the on-chain discriminator);
- *  - box spent paying the buyer → [DealEvent.ClaimPaid] (path D).
+ *  - box spent paying out the collateral → release (path C/C′, oracle-attested)
+ *    or reclaim (path A, past `timeoutHeight`), or [DealEvent.ClaimPaid] (path D);
+ *    the spend's shape decides which, not its destination.
  *
- * Payouts are recognized by their P2PK proposition (from the box's R5/R6) —
- * the contracts force `OUTPUTS(0)` to exactly `proveDlog(sellerKey/buyerKey)`,
- * so tree comparison is exact.
+ * Payouts are recognized by **conservation, not by destination**: since the
+ * 2026-09-24 payout-freedom change every collateral-moving path pays the full
+ * collateral to *any* address (key rotation — the signing side's `proveDlog`
+ * authorizes the spend), so the payout tree carries no information. What the
+ * contracts do pin is `OUTPUTS(0)` carrying the vault box's whole collateral, so
+ * that is the check ([conservesCollateral]), and the path is read off the spend
+ * itself:
+ *  - path B is a PAYMENT_PROVEN output with this deal's R4;
+ *  - paths C/C′ carry the attestation box as a DATA input (path C′ *always*
+ *    does; path D requires `dataInputs.size == 0`), which is what separates a
+ *    contested claim the seller won (`RELEASED`) from the buyer's claim payout
+ *    (`CLAIMED`) — a discrimination the destination tree used to make;
+ *  - path A is the only FUNDED payout that needs no data input, and it is
+ *    spendable only past `timeoutHeight`.
+ *
+ * Degraded backends: a backend that does not serve data inputs reports
+ * [ChainSpend.dataInputCount] `0`, so a post-timeout release reads as a reclaim
+ * and a post-maturation contest as a claim payout. Both shipped backends serve
+ * them; the release-vs-reclaim tie is then broken by the oracle NFT among the
+ * data-input token ids where available ([ChainSpend.dataInputTokenIds]).
  */
 class VaultBoxTracker(
     private val chain: ChainSource,
@@ -90,8 +106,9 @@ class VaultBoxTracker(
 
     private fun classifySpent(box: ChainBox, tx: ChainSpend, now: Instant): List<DealEvent> {
         val dealId = box.registerBytes(4) ?: return emptyList()
-        val sellerTreeHex = sellerTreeHex(box) ?: return emptyList()
-        val buyerTreeHex = buyerTreeHex(box) ?: return emptyList()
+        val funded = box.ergoTreeHex.equals(trees.fundedPropositionHex, ignoreCase = true)
+        val proven = box.ergoTreeHex.equals(trees.provenPropositionHex, ignoreCase = true)
+        if (!funded && !proven) return emptyList() // not one of our vault boxes
 
         // Path B: a PAYMENT_PROVEN successor of THIS deal exists among the outputs.
         tx.outputs.firstOrNull {
@@ -99,31 +116,56 @@ class VaultBoxTracker(
                 it.registerBytes(4)?.contentEquals(dealId) == true
         }?.let { return listOf(DealEvent.ClaimOpened(now)) }
 
-        // Path D: the buyer was paid (from the PAYMENT_PROVEN box).
-        if (tx.outputs.any { it.ergoTreeHex.equals(buyerTreeHex, ignoreCase = true) && it.tokens.isNotEmpty() }) {
-            return listOf(DealEvent.ClaimPaid)
+        // Everything left is a payout path (A, C, C′, D), and every one of them
+        // puts the vault box's whole collateral at OUTPUTS(0) while leaving the
+        // payee free. Recognize that conservation, then read the path off the
+        // spend's shape.
+        if (!conservesCollateral(box, tx)) return emptyList()
+
+        val oracleNftHex = Base16.encode(trees.oracleNftId)
+        val attested = tx.inputTokenIds.any { it.equals(oracleNftHex, ignoreCase = true) } ||
+            tx.dataInputTokenIds.any { it.equals(oracleNftHex, ignoreCase = true) }
+        if (attested) return listOf(DealEvent.ReleaseObserved)
+
+        if (proven) {
+            // Path D (the buyer's claim payout) requires NO data input and
+            // HEIGHT > proofHeight + CLAIM_MATURATION; path C′ (the seller's
+            // contest) always carries the attestation data input. So a spend
+            // with data inputs is C′, and one without can only be D if the
+            // claim had matured — below that the contract makes D impossible.
+            val claimSpendable = box.registerLong(7)
+                ?.let { tx.height.toLong() > it + ContractParams.CLAIM_MATURATION_BLOCKS } == true
+            return if (tx.dataInputCount > 0 || !claimSpendable) {
+                listOf(DealEvent.ReleaseObserved)
+            } else {
+                listOf(DealEvent.ClaimPaid)
+            }
         }
 
-        // Paths A / C / C′: the seller was paid. Both reclaim (A) and release
-        // (C/C′) pay the seller's P2PK. The release carries the oracle box as a
-        // DATA input, so the oracle NFT no longer appears among the spent
-        // inputs' token ids (inputTokenIds only fires for backends that report
-        // data inputs there); reclaim is only valid past the R8 timeout — the
-        // spend height discriminates what the NFT signal cannot.
-        if (tx.outputs.any { it.ergoTreeHex.equals(sellerTreeHex, ignoreCase = true) && it.tokens.isNotEmpty() }) {
-            val oracleNftHex = Base16.encode(trees.oracleNftId)
-            if (tx.inputTokenIds.any { it.equals(oracleNftHex, ignoreCase = true) }) {
-                return listOf(DealEvent.ReleaseObserved)
-            }
-            val timeoutHeight = timeoutHeight(box)
-            return if (timeoutHeight != null && tx.height > timeoutHeight) {
-                listOf(DealEvent.ReclaimTimeoutElapsed(now))
-            } else {
-                listOf(DealEvent.ReleaseObserved)
-            }
+        // FUNDED box: path A (reclaim) needs HEIGHT > timeoutHeight and is the
+        // only payout here that needs no data input; path C (release) needs the
+        // attestation, already handled above. Past the timeout the two are
+        // seller-signed and payout-identical on chain, so a data-input-free spend
+        // is read as the reclaim it can only be.
+        val timeout = timeoutHeight(box)
+        return if (tx.dataInputCount == 0 && timeout != null && tx.height > timeout) {
+            listOf(DealEvent.ReclaimTimeoutElapsed(now))
+        } else {
+            listOf(DealEvent.ReleaseObserved)
         }
-        return emptyList()
     }
+
+    /**
+     * Whether some output carries the watched box's whole collateral — the one
+     * thing every payout path pins (`OUTPUTS(0).tokens(0)` equals
+     * `SELF.tokens(0)` in both vault scripts). Compared per token kind and with
+     * `>=` so a top-up from another input in the same spend still counts. The
+     * destination is deliberately NOT checked: the payee is free (key rotation).
+     */
+    private fun conservesCollateral(box: ChainBox, tx: ChainSpend): Boolean =
+        box.tokens.all { token ->
+            tx.outputs.any { it.tokenAmount(token.tokenId) >= token.amount }
+        }
 
     /** `timeoutHeight` (the FUNDED box's plain-Long R8), or `null` for non-FUNDED boxes. */
     private fun timeoutHeight(box: ChainBox): Int? =
@@ -132,10 +174,4 @@ class VaultBoxTracker(
         } else {
             null
         }
-
-    private fun sellerTreeHex(box: ChainBox): String? =
-        box.registerBytes(5)?.let { ErgoValues.treeHex(ErgoValues.p2pkTree(it)) }
-
-    private fun buyerTreeHex(box: ChainBox): String? =
-        box.registerBytes(6)?.let { ErgoValues.treeHex(ErgoValues.p2pkTree(it)) }
 }

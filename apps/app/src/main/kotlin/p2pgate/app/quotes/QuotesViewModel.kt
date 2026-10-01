@@ -32,10 +32,6 @@ fun bestFirst(quotes: List<QuoteDto>): List<QuoteDto> = quotes.sortedBy { it.eta
 fun quotesForCurrency(quotes: List<QuoteDto>, fiatCurrency: String): List<QuoteDto> =
     quotes.filter { it.fiatCurrency == fiatCurrency }
 
-/** The seller's per-deal limits: an amount must sit inside [minAmount, maxAmount] (bounds inclusive). */
-fun amountInRange(amount: Long, minAmount: Long, maxAmount: Long): Boolean =
-    amount in minAmount..maxAmount
-
 class QuotesViewModel(private val backend: BackendClient) : ViewModel() {
 
     private val _uiState = MutableStateFlow(QuotesUiState())
@@ -66,9 +62,20 @@ class QuotesViewModel(private val backend: BackendClient) : ViewModel() {
         _uiState.value = _uiState.value.copy(viewMode = mode)
     }
 
+    /**
+     * The feed socket pushes a full snapshot per frame, so a frame is the new
+     * list — no re-fetch. The stream reconnects itself on a drop; it only ends
+     * when this ViewModel is cleared.
+     */
     private suspend fun watchStream() {
         try {
-            backend.quotesStream().collect { refresh() }
+            backend.quoteFeedStream().collect { feed ->
+                _uiState.value = QuotesUiState(
+                    quotes = feed.quotes,
+                    refreshing = false,
+                    viewMode = _uiState.value.viewMode,
+                )
+            }
         } catch (e: Exception) {
             _uiState.value = _uiState.value.copy(stale = true)
         }

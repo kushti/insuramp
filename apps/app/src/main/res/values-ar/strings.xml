@@ -13,8 +13,13 @@
     <string name="fiat_ksh">الشلن الكيني</string>
     <string name="fiat_rub">الروبل الروسي</string>
     <string name="fiat_currency_option">%1$s — %2$s</string>
-    <string name="quote_amount_label">المبلغ الذي تسلّمه (وحدات كاملة، بدون كسور)</string>
     <string name="quote_address_label">عنوان استلام USDT الخاص بك (شبكة Tron)</string>
+    <string name="quote_usdt_amount_label">ستحصل على (USDT، وحدات كاملة)</string>
+    <string name="quote_you_hand">تسلّم %1$s %2$s نقدًا بسعر 1 USDT = %3$s %2$s</string>
+    <string name="quote_rate">1 USDT = %1$s %2$s</string>
+    <string name="quote_address_invalid">هذا ليس عنوان Tron صالح — يبدأ بحرف T بطول 34 حرفًا.</string>
+    <string name="quote_amount_invalid">أدخل مبلغ USDT صحيحًا أكبر من صفر.</string>
+    <string name="quote_rate_unusable">لا يمكن لسعر هذا العرض تحديد ذلك المبلغ — اختر عرضًا آخر.</string>
     <string name="quote_best">أفضل العروض</string>
     <string name="quote_view_list">قائمة</string>
     <string name="quote_view_map">خريطة</string>
@@ -26,13 +31,13 @@
     <string name="quote_unlocated">لم ينشر البائع موقعًا لهذا العرض — بدّل إلى القائمة لاختياره.</string>
     <string name="quote_creating">جارٍ إنشاء الصفقة…</string>
     <string name="quote_eta">~%1$d دقيقة</string>
-    <string name="quote_amount_range">%1$d – %2$d USDT لكل صفقة</string>
+    <string name="quote_amount_range">%1$s – %2$s USDT لكل صفقة</string>
     <string name="quote_collateral_line">جمّد البائع ضمانًا لتغطية هذه الصفقات — يمكنك المطالبة به إذا لم تصلك USDT أبدًا.</string>
     <string name="offer_action">اعرض النقد</string>
     <string name="offer_fields_required">أدخل المبلغ وعنوان استلام USDT الخاص بك أولاً.</string>
     <string name="quote_create_error">تعذّر إنشاء الصفقة: %1$s</string>
-    <string name="quote_amount_out_of_range">يجب أن يكون المبلغ بين %1$d و%2$d لهذا العرض.</string>
-    <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d دقيقة</string>
+    <string name="quote_amount_out_of_range">يجب أن يكون المبلغ بين %1$s و%2$s USDT لهذا العرض.</string>
+    <string name="quote_marker_title">%1$s – %2$s USDT · ~%3$d دقيقة</string>
 
     <!-- Canonical protocol states → human labels -->
     <string name="state_quoted">تم عرض سعر الصفقة — بانتظار تجميد البائع للضمان</string>
@@ -122,4 +127,28 @@
     <!-- Welcome screen -->
     <string name="welcome_text">مرحبًا بك في Insuramp! تطبيق تحويل النقد إلى عملات رقمية — غير احتفاظي، بدون KYC، آمن ومؤمَّن!</string>
     <string name="welcome_get_started">ابدأ</string>
+
+
+    <!-- deal list / settings -->
+    <string name="deal_recovery_title">رابط الاسترداد</string>
+    <string name="deal_recovery_body">احفظ هذا الرابط. إنه الطريقة الوحيدة لاسترجاع هذه الصفقة إذا فقدت التطبيق — فهو يحمل رمز الوصول الخاص بك.</string>
+    <string name="deal_recovery_copy">نسخ رابط الاسترداد</string>
+    <string name="nav_deals">الصفقات</string>
+    <string name="nav_settings">الإعدادات</string>
+    <string name="deals_title">صفقاتك</string>
+    <string name="deals_empty">لا توجد صفقات على هذا الجهاز بعد — اختر عرضًا لبدء صفقة.</string>
+    <string name="deals_delete">احذف هذه الصفقة</string>
+    <string name="deals_deleted">حُذفت الصفقة من هذا الجهاز.</string>
+    <string name="deals_open">افتح الصفقة</string>
+    <string name="settings_title">الإعدادات</string>
+    <string name="settings_data_title">بياناتك</string>
+    <string name="settings_delete_all">احذف جميع بيانات الصفقات</string>
+    <string name="settings_delete_all_warning">سيؤدي هذا إلى محو كل صفقة على هذا الجهاز، بما في ذلك رموز الوصول والمفاتيح التي يمكنها توقيع مطالبة. لا يمكن التراجع عن ذلك — بعده لا يمكن استرداد أي صفقة لم تصدّرها.</string>
+    <string name="settings_delete_all_confirm">حذف كل شيء؟</string>
+    <string name="settings_delete_all_confirm_yes">حذف الكل</string>
+    <string name="settings_delete_all_done">حُذفت جميع بيانات الصفقات من هذا الجهاز.</string>
+    <string name="action_cancel">إلغاء</string>
+    <string name="deals_row_amounts">%1$s USDT · %2$d %3$s</string>
+    <string name="deals_delete_confirm">احذف هذه الصفقة؟</string>
+    <string name="deals_delete_warning">ستُحذف الصفقة ورمز الوصول من هذا الجهاز، ويُتلف مفتاح التوقيع الخاص بها. لا يمكن التراجع عن ذلك.</string>
 </resources>

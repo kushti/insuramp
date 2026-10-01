@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import p2pgate.app.AppContainer
 import p2pgate.app.R
+import p2pgate.app.ui.copyToClipboard
 import p2pgate.app.work.DealPollWorker
 import p2pgate.dealprotocol.DealState
 
@@ -178,7 +179,7 @@ fun DealTimelineScreen(
             }
         }
 
-        if (state == DealState.PAYMENT_PENDING && snapshot.verifiedRecordHex == null) {
+        if (state != null && DealTimeline.handoffAvailable(state) && snapshot.verifiedRecordHex == null) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                 modifier = Modifier.fillMaxWidth(),
@@ -195,13 +196,36 @@ fun DealTimelineScreen(
                 }
             }
         }
-        if (snapshot.verifiedRecordHex != null && state == DealState.PAYMENT_PENDING) {
+        if (snapshot.verifiedRecordHex != null && state != null && DealTimeline.handoffAvailable(state)) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(16.dp)) {
                     Text(stringResource(R.string.deal_record_verified), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // The recovery link (`specs/android-app.md` §5): the deal token is the
+        // only credential a buyer who loses the app has, so it stays reachable
+        // from every deal, not just the creation moment.
+        val recoveryLink = snapshot.recoveryLink
+        if (recoveryLink != null) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        stringResource(R.string.deal_recovery_title),
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        stringResource(R.string.deal_recovery_body),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(recoveryLink, style = MaterialTheme.typography.bodySmall)
+                    TextButton(
+                        onClick = { copyToClipboard(context, recoveryLink, context.getString(R.string.deal_recovery_title)) },
+                    ) { Text(stringResource(R.string.deal_recovery_copy)) }
                 }
             }
         }

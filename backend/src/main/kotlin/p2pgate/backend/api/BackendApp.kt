@@ -21,7 +21,9 @@ import p2pgate.backend.watcher.ChainWatcher
 import p2pgate.dealprotocol.DealEvent
 import p2pgate.dealprotocol.DealState
 import p2pgate.dealprotocol.DealTerms
+import p2pgate.dealprotocol.FiatAmounts
 import p2pgate.dealprotocol.ProtocolConstants
+import p2pgate.dealprotocol.TronAddress
 import p2pgate.ergo.ErgoContracts
 import java.time.Duration
 import java.time.Instant
@@ -189,12 +191,24 @@ class BackendApp(
         if (request.fiatAmount <= 0) {
             return CreateDealOutcome.Rejected("fiatAmount must be positive (whole units)")
         }
-        val recipient = try {
-            Hex.decode(request.receiveAddress)
+        // The two legs must agree with the quote's rate: the buyer app derives
+        // the cash leg to show it, the backend is the authority on what gets
+        // pinned in the terms. Both sides call the same FiatAmounts.cashFor.
+        val derivedFiat = try {
+            FiatAmounts.cashFor(request.amount, quote.fiatPerUsdtMicros)
         } catch (e: IllegalArgumentException) {
-            return CreateDealOutcome.Rejected("receiveAddress is not valid hex")
+            return CreateDealOutcome.Rejected("quote rate is unusable: ${e.message}")
         }
-        if (recipient.isEmpty()) return CreateDealOutcome.Rejected("receiveAddress is empty")
+        if (request.fiatAmount != derivedFiat) {
+            return CreateDealOutcome.Rejected(
+                "fiatAmount ${request.fiatAmount} does not match the quote's rate " +
+                    "(${derivedFiat} ${quote.fiatCurrency} for ${request.amount} USDT base units)",
+            )
+        }
+        val recipient = TronAddress.decodeOrNull(request.receiveAddress)
+            ?: return CreateDealOutcome.Rejected(
+                "receiveAddress is not a valid TRON address (expected a 34-char base58check \"T…\" address)",
+            )
         val buyerPubKey = try {
             Hex.decode(request.buyerPubKey)
         } catch (e: IllegalArgumentException) {

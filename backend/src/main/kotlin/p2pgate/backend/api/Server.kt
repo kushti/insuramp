@@ -53,9 +53,11 @@ import p2pgate.backend.vault.VaultManager
 import p2pgate.backend.watcher.ChainWatcher
 import p2pgate.dealprotocol.DealEvent
 import p2pgate.dealprotocol.DealState
+import p2pgate.dealprotocol.FiatAmounts
 import p2pgate.dealprotocol.HandoffRecord
 import p2pgate.dealprotocol.ProtocolConstants
 import p2pgate.dealprotocol.QrPayload
+import p2pgate.dealprotocol.TronAddress
 import p2pgate.ergo.ChainBox
 import p2pgate.ergo.ChainRegister
 import p2pgate.ergo.DevOracle
@@ -74,6 +76,7 @@ private fun ApplicationCall.bearer(): String? =
 private fun quoteDto(q: p2pgate.backend.store.QuoteRecord) = QuoteDto(
     id = q.id, version = q.version, spreadBps = q.spreadBps, etaMinutes = q.etaMinutes,
     minAmount = q.minAmount, maxAmount = q.maxAmount, fiatCurrency = q.fiatCurrency,
+    fiatPerUsdtMicros = q.fiatPerUsdtMicros,
     createdAtEpochMs = q.createdAt.toEpochMilli(), expiresAtEpochMs = q.expiresAt.toEpochMilli(),
     lat = q.lat, lon = q.lon,
 )
@@ -470,7 +473,8 @@ fun Application.module(app: BackendApp) {
                 when (
                     val outcome = app.quotes.publish(
                         request.spreadBps, request.etaMinutes, request.minAmount, request.maxAmount,
-                        request.fiatCurrency, lat = request.lat, lon = request.lon,
+                        request.fiatCurrency, request.fiatPerUsdtMicros,
+                        lat = request.lat, lon = request.lon,
                     )
                 ) {
                     is QuotePublisher.PublishOutcome.Published ->
@@ -491,8 +495,15 @@ fun Application.module(app: BackendApp) {
             post("/aml/check") {
                 call.authenticateOperator(app) ?: return@post
                 val request = call.receive<AmlCheckRequest>()
+                // Same format the buyer declares at QUOTED — the operator pastes
+                // the address from the deal, so one codec, one payload shape.
+                val payload = TronAddress.decodeOrNull(request.address)
+                    ?: return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorDto("address is not a valid TRON address (expected a 34-char base58check \"T…\" address)"),
+                    )
                 val decision = try {
-                    app.riskScorer.score(Hex.decode(request.address), request.chainId)
+                    app.riskScorer.score(payload, request.chainId)
                 } catch (e: p2pgate.backend.aml.RiskScorerException) {
                     call.respond(HttpStatusCode.ServiceUnavailable, ErrorDto("scorer unreachable (fail-closed)"))
                     return@post
@@ -782,25 +793,27 @@ internal fun seedDemoQuotes(quotes: QuotePublisher, mixReadyCollateral: Long, lo
         val numer: Long,
         val denom: Long,
         val fiatCurrency: String,
+        /** Demo rate [approx] — micros of fiat per USDT; placeholders, not market data. */
+        val fiatPerUsdtMicros: Long,
         val lat: Double,
         val lon: Double,
     )
     val seeds = listOf(
-        Seed("Cairo", spreadBps = 150, etaMinutes = 45, minAmount = 5_000_000, numer = 3, denom = 10, fiatCurrency = "USD", lat = 30.044, lon = 31.235),
-        Seed("Nairobi", spreadBps = 200, etaMinutes = 90, minAmount = 2_000_000, numer = 1, denom = 4, fiatCurrency = "KSH", lat = -1.292, lon = 36.821),
-        Seed("Mumbai", spreadBps = 120, etaMinutes = 30, minAmount = 1_000_000, numer = 1, denom = 5, fiatCurrency = "INR", lat = 19.076, lon = 72.877),
-        Seed("Moscow", spreadBps = 180, etaMinutes = 60, minAmount = 3_000_000, numer = 3, denom = 20, fiatCurrency = "RUB", lat = 55.755, lon = 37.617),
+        Seed("Cairo", spreadBps = 150, etaMinutes = 45, minAmount = 5_000_000, numer = 3, denom = 10, fiatCurrency = "USD", fiatPerUsdtMicros = 1_000_000, lat = 30.044, lon = 31.235),
+        Seed("Nairobi", spreadBps = 200, etaMinutes = 90, minAmount = 2_000_000, numer = 1, denom = 4, fiatCurrency = "KSH", fiatPerUsdtMicros = 130_000_000, lat = -1.292, lon = 36.821),
+        Seed("Mumbai", spreadBps = 120, etaMinutes = 30, minAmount = 1_000_000, numer = 1, denom = 5, fiatCurrency = "INR", fiatPerUsdtMicros = 92_000_000, lat = 19.076, lon = 72.877),
+        Seed("Moscow", spreadBps = 180, etaMinutes = 60, minAmount = 3_000_000, numer = 3, denom = 20, fiatCurrency = "RUB", fiatPerUsdtMicros = 95_000_000, lat = 55.755, lon = 37.617),
     )
     for (seed in seeds) {
         val maxAmount = mixReadyCollateral * seed.numer / seed.denom
         when (
             val outcome = quotes.publish(
                 seed.spreadBps, seed.etaMinutes, seed.minAmount, maxAmount, seed.fiatCurrency,
-                lat = seed.lat, lon = seed.lon,
+                seed.fiatPerUsdtMicros, lat = seed.lat, lon = seed.lon,
             )
         ) {
             is QuotePublisher.PublishOutcome.Published ->
-                log("demo quote seeded: ${seed.city} ${seed.fiatCurrency} (${outcome.quote.id}, ${seed.minAmount}..$maxAmount, ${seed.spreadBps} bps)")
+                log("demo quote seeded: ${seed.city} ${seed.fiatCurrency} (${outcome.quote.id}, ${seed.minAmount}..$maxAmount, ${seed.spreadBps} bps, ${FiatAmounts.formatMicros(seed.fiatPerUsdtMicros)} ${seed.fiatCurrency}/USDT)")
             is QuotePublisher.PublishOutcome.Rejected ->
                 log("demo quote ${seed.city} not seeded: ${outcome.reason}")
         }

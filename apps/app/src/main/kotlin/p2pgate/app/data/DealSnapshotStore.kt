@@ -10,6 +10,9 @@ interface DealSnapshotStore {
     suspend fun get(dealId: String): DealSnapshot?
     suspend fun all(): List<DealSnapshot>
     suspend fun delete(dealId: String)
+
+    /** Wipe every row — the "delete all deal data" path (§5). */
+    suspend fun deleteAll()
 }
 
 /** JVM/Android in-memory store — the unit-test double for [DealSnapshotStore]. */
@@ -26,5 +29,9 @@ class InMemoryDealSnapshotStore : DealSnapshotStore {
 
     override suspend fun delete(dealId: String) {
         deals.remove(dealId)
+    }
+
+    override suspend fun deleteAll() {
+        deals.clear()
     }
 }

@@ -21,6 +21,7 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import p2pgate.app.BuildConfig
 import p2pgate.app.R
+import p2pgate.dealprotocol.FiatAmounts
 
 /** Camera padding (px) when fitting the seller pins. */
 private const val FIT_PADDING_PX = 96
@@ -110,8 +111,9 @@ fun QuoteMapView(
                 marker.position = GeoPoint(m.lat, m.lon)
                 marker.title = context.getString(
                     R.string.quote_marker_title,
-                    m.minAmount,
-                    m.maxAmount,
+                    // The marker carries base units; the pin's label is in whole USDT.
+                    FiatAmounts.formatUsdt(m.minAmount),
+                    FiatAmounts.formatUsdt(m.maxAmount),
                     m.etaMinutes,
                 )
                 marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)

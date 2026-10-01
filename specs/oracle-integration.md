@@ -67,9 +67,9 @@ co-signs the payout with its own R5 key — its own automation, not a new trust
 dependency).
 
 The clean flip versus the off-ramp reading: the off-ramp gated the *claim* on the oracle
-(proof the buyer paid); the on-ramp gates the *claim* on the **seller-signed handoff record**
+(proof the buyer paid); the on-ramp needs only the **seller-signed handoff record** for a *claim*
 (proof cash was collected — there is no payment for an oracle to attest at claim time) and
-gates *release* on the oracle's attestation (the dealId signal: the seller's USDT
+decides *release*, on the oracle's attestation (the dealId signal: the seller's USDT
 arrived,
 `specs/deal-protocol.md` §1; the seller co-signs the payout — see below). Path B
 therefore involves the oracle **not at all**.
@@ -161,7 +161,7 @@ Consequences, stated plainly:
   seller's `proveDlog(R5)` co-signature — the attestation alone must never direct
   funds — and leave the payee free (key rotation). The claim path (B) takes no oracle
   input at
-  all: it is gated on the seller-signed handoff record.
+  all: it needs only the seller-signed handoff record.
 - **One attestation in flight (hard serialization constraint).** The attestation box is
   a singleton: posting the attestation for deal Y **spends** the box holding deal X's
   attestation, which invalidates any still-mempool release tx that referenced it as a
@@ -192,7 +192,7 @@ Consequences, stated plainly:
   with it.
 - Key management: `oracleKey` in an HSM or encrypted keystore; the oracle box is
   self-recreated as `OUTPUTS(0)` of each attestation posting (rotation spend; NFT
-  preserved by its script — value is not pinned: the box is `proveDlog(oracleKey)`-gated,
+  preserved by its script — value is not pinned: only `proveDlog(oracleKey)` can spend the box,
   so value preservation was belt-and-braces and was removed 2026-09-23, owner decision).
   The script's rotation rules (NFT id + amount preserved into `OUTPUTS(0)` — the
   reproduction position is pinned on the oracle's own spends; fixed 2026-09-17, see
@@ -393,13 +393,13 @@ whenever any
 active source chain's lag exceeds its threshold or the signing oracle is unreachable.
 Deals already FUNDED are unaffected — their USDT confirmations and release attestations
 land when the oracle recovers (subject to the one-attestation-in-flight serialization,
-§3.1), and the buyer's claim path never depends on oracle liveness (it is gated on the
+§3.1), and the buyer's claim path never depends on oracle liveness (it needs only the
 seller-signed handoff record, not the oracle). Only *new* insurance sales stop.
 
 ### 5.3 Trust model — stated honestly
 
 **Phase 1 makes the oracle a single trusted third party for the payment leg — and on the
-release path it is trusted *completely*.** On-ramp, the oracle gates *release*, and its
+release path it is trusted *completely*.** On-ramp, the oracle alone decides *release*, and its
 attestation is **solely sufficient** as the payment gate: a malicious or compromised
 oracle can attest a payment that never happened — a seller-run oracle could publish a
 fake attestation of its own "payment" (the seller's backend co-signs the payout

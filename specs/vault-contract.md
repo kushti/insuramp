@@ -9,9 +9,9 @@ and locks the vault. The phase-1 oracle is a
 guard threshold is the post-launch upgrade and changes exactly one check (§3.3, §5).
 BTC and XMR legs are extension notes (§8.1/§8.2), not full specs.
 **Scope note:** the v2 revision (§8.4) has landed — the `.es` contracts on disk
-implement it: R7 holds the bare 32-byte `oracleNftId`, path B is gated on ONE Schnorr
+implement it: R7 holds the bare 32-byte `oracleNftId`, path B needs ONE Schnorr
 signature (the seller half of the handoff record, under the seller key in R5), and
-paths C/C′ are oracle-gated (the oracle attestation box as a **data input** + a
+paths C/C′ need only the oracle's word (the attestation box as a **data input** + a
 `dealId` equality check) with the seller co-signing the payout (`proveDlog(R5)` — the
 attestation alone must never direct funds, and the payee stays free for key rotation).
 There is no buyer receipt signature anywhere in v2, and no oracle
@@ -48,11 +48,11 @@ timeout branch `FUNDED → RECLAIMED` (buyer no-show) or `PAYMENT_CONFIRMED → 
 (seller paid, buyer ghosted), dispute branch `PAYMENT_PENDING → CLAIM_OPENED →
 CLAIMABLE → CLAIMED`. On-chain, `CLAIM_OPENED`/`CLAIMABLE` are the PAYMENT_PROVEN box.
 
-The direction flip versus the off-ramp is a clean swap of proof roles: the off-ramp gated
-the *claim* on the oracle (proof the buyer paid) and the *release* on the buyer's signature
-(proof cash arrived); the on-ramp gates the *claim* on the seller-signed handoff record
-(proof cash was collected — there is no payment for an oracle to attest at claim time) and
-the *release* on the oracle's attestation (the dealId signal: the seller's USDT
+The direction flip versus the off-ramp is a clean swap of proof roles: the off-ramp needed
+the oracle for a *claim* (proof the buyer paid) and the buyer's signature for a *release*
+(proof cash arrived); the on-ramp instead needs the seller-signed handoff record for the
+*claim* (proof cash was collected — there is no payment for an oracle to attest at claim
+time) and the oracle's attestation for the *release* (the dealId signal: the seller's USDT
 arrived), with the seller co-signing the payout. In v2 the
 buyer's deal key signs nothing on the claim/release paths — it only authorizes the
 maturation payout on path D — and the seller's own signature alone never releases the
@@ -312,8 +312,31 @@ and the var is bound to the *signed* record bytes by `longToByteArray(tsMs / 100
 - `proveDlog(k) && boolean` types as `SBoolean`, so `if` branches over paths must be
   bare `proveDlog(k)` on one side and `sigmaProp(boolean)` on the other, with the
   payment conditions moved into the `if` guard.
-- The proof reducer evaluates every `val` of every block it enters — never place
-  `getVar(...).get` in a block that a path without those context variables can reach.
+
+**Evaluation order** (corrected 2026-10-01 against the sigma-state 6.0.6 reference
+implementation; the earlier claim in this file — "the proof reducer evaluates every
+`val` of every block it enters" — was **false**, which is finding C1 of
+`specs/vault-contract-review.md`):
+
+- A Boolean `if` **is lazy**. The compiler wraps each branch in a `Thunk`
+  (`IfThenElseLazy`) and the resulting `If` node evaluates only the selected branch.
+  Material a path does not use stays inside its own branch.
+- Boolean `&&` / `||` short-circuit: the right operand is built as a `Thunk` and is
+  evaluated only when the left does not already decide the result (`BinAnd`/`BinOr`).
+- `SigmaProp &&` / `||` do **not** short-circuit: `SigmaAnd`/`SigmaOr` reduce *every*
+  item before combining (`allZK`/`anyZK`). This is why path selection uses a Boolean
+  `if` and never a `SigmaProp` disjunction.
+- A `val` is evaluated where it is used only if it has a **single** use — the compiler
+  inlines it at the use site, so it inherits that site's laziness. A **multi-use** `val`
+  is hoisted into a block-level `ValDef`, and `BlockValue` evaluates every item of the
+  block on entry, in order. So the rule is not "never put `.get` in a block" but:
+  **nothing hoisted out of a branch may depend on that branch being taken** — which is
+  why the payment conditions live in the `if` guard rather than in each branch body,
+  and why path-specific `getVar(...).get` calls sit inside the branch that supplies
+  those variables.
+- `slice(from, until)` is half-open (`from <= i < until`); `tokens(0)` on an empty
+  collection is an out-of-bounds failure, so guard with `size > 0` when the collection
+  can be empty (`oracle.es`).
 
 - **Signature usage:** path B is the only in-script Schnorr verification — one invocation
   against `sellerPubKey` over the handoff record (v2). The release paths verify no
@@ -495,7 +518,7 @@ O7. Rotation with the NFT reproduced at `OUTPUTS(1)` instead of `OUTPUTS(0)` —
     reproduction position is pinned on the oracle's own spends: every rotation spend —
     i.e. every attestation posting — re-creates the singleton at `OUTPUTS(0)`; §8.4).
 O8. Rotation draining value below `SELF.value` — **passes** (value pinning removed
-    2026-09-23, owner decision: the box is `proveDlog(oracleKey)`-gated, so value
+    2026-09-23, owner decision: only `proveDlog(oracleKey)` can spend the box, so value
     siphoning is a signed act of the oracle operator, not a counterparty exploit;
     only NFT custody is enforced).
 
@@ -537,13 +560,13 @@ For the record, the four items as they originally landed:
 1. **DONE, superseded by §8.4 — a second deal-scoped key pinned at funding, packed into
    R7** alongside the oracle NFT id (Ergo boxes have registers R4–R9 only; there is no
    R10). The oracle-token check sliced bytes 0..32.
-2. **DONE, superseded by §8.4 — path B re-gated** from the oracle co-signature + payment
+2. **DONE, superseded by §8.4 — path B re-pointed** from the oracle co-signature + payment
    digest to the dual-signed handoff record; v2 reduced this to the single seller half.
    No oracle input on this path — an oracle box present in a claim transaction breaks
    the spend: oracle.es demands its reproduction at `OUTPUTS(0)`, which the PAYMENT_PROVEN
    output occupies, so no path-B tx can both open the claim and satisfy the oracle's
    script (test 13 pins this interaction).
-3. **DONE, superseded by §8.4 — paths C/C′ re-gated**: the oracle digest describes the
+3. **DONE, superseded by §8.4 — paths C/C′ re-pointed**: the oracle digest describes the
    **seller's** USDT transfer with `recipientAddr` = the buyer's address (R9 semantics
    per §3.2 — the R9 funding binding itself was later removed with the 2026-09-21
    dealId-only payload, §8.4), and C′ takes the oracle box as a full input too (the PAYMENT_PROVEN box carries
@@ -580,7 +603,7 @@ it. The changes, and why:
    artifact, no claim. Output-0 PAYMENT_PROVEN construction is unchanged (registers
    copied, `proofHeight`, R8 = `blake2b256(a_sig | z_sig | record)`). No oracle
    input on path B (tests 4–15, 37–42, 44).
-2. **Paths C/C′ are oracle-gated**: the oracle box as a **data input**
+2. **Paths C/C′ depend on the oracle alone**: the oracle box as a **data input**
    (`CONTEXT.dataInputs(0)`; NFT check vs R7 / the compile-time pin, and
    `dataInput.R4 == SELF.R4` — the attested `dealId`; the field checks against R4/R9
    that this item originally described were removed with the 2026-09-21 dealId-only

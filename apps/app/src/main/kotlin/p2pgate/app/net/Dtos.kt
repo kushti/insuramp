@@ -23,6 +23,13 @@ data class QuoteDto(
     /** The seller's per-deal limits: deals must be within [minAmount, maxAmount]. */
     val minAmount: Long,
     val maxAmount: Long,
+    /**
+     * The quoted rate: micros of [fiatCurrency] per 1 USDT, margin included
+     * (92 INR/USDT → `92_000_000`). The buyer types the USDT leg; the cash leg
+     * is derived from this with `FiatAmounts.cashFor` — the same call the
+     * backend validates the submitted pair with.
+     */
+    val fiatPerUsdtMicros: Long,
     val createdAtEpochMs: Long,
     val expiresAtEpochMs: Long,
     /**
@@ -40,11 +47,17 @@ data class QuoteFeedDto(val quotes: List<QuoteDto>)
 @Serializable
 data class CreateDealRequest(
     val quoteId: String,
+    /** The USDT leg in base units (6 decimals) — the leg the quote bounds. */
     val amount: Long,
+    /** The buyer's USDT receive address, a TRON base58check string (`T…`). */
     val receiveAddress: String,
     val buyerPubKey: String,
     val fiatCurrency: String,
-    /** Cash amount in whole basic units (no decimals) — pinned in the deal terms. */
+    /**
+     * Cash amount in whole basic units (no decimals) — pinned in the deal terms.
+     * Derived from the quote's rate and [amount] with `FiatAmounts.cashFor`; the
+     * backend re-derives it and rejects a mismatch.
+     */
     val fiatAmount: Long,
 )
 
@@ -70,9 +83,13 @@ data class DealDto(
     val terminal: Boolean = false,
     /**
      * The seller key (vault R5) the meeting gate verifies the handoff record
-     * against. Optional because today's backend DTO does not expose it yet —
-     * the meeting screen stays fail-closed ("cannot confirm — do not leave")
-     * until the key is present.
+     * against. Optional so a *transient* omission fails the gate closed rather
+     * than crashing the decode — but the backend declares it non-null, so a null
+     * here means the deal data is incomplete (2026-09-27). The repository keeps
+     * the last known key rather than erasing it.
+     *
+     * Known gap: the key is taken from the backend and is not bound to the
+     * vault's R5 on-chain. See the open backlog in `specs/README.md`.
      */
     val sellerPubKey: String? = null,
 )
@@ -99,14 +116,9 @@ data class ClaimGuideDto(
     val instructions: List<String>,
 )
 
-@Serializable
-data class InfraSignalDto(val signal: String, val healthy: Boolean, val detail: String)
-
-@Serializable
-data class InfraDto(
-    val paused: Boolean,
-    val signals: List<InfraSignalDto> = emptyList(),
-)
+// The operator-gated `/v1/infra` view is deliberately NOT mirrored here: it is
+// operator state, and a buyer client holding that shape could only ever get a
+// 401. It was removed with the last `infra()` call (2026-09-27).
 
 @Serializable
 data class EventDto(val kind: String, val dealId: String? = null, val detail: String, val atEpochMs: Long)

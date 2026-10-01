@@ -34,13 +34,13 @@ collateral in a vault box governed by a script with multiple spending paths:
 |---|---|---|
 | Timeout | `RECLAIM_TIMEOUT` (24h) passes with no claim | Seller reclaims collateral (buyer no-show) |
 | Cash-collection proof | The **seller-signed handoff record**: a Schnorr signature from `sellerPubKey` (the same R5 key that reclaims the collateral) over the cash-received message | Buyer can claim the collateral (after `CLAIM_MATURATION`, 12h) |
-| Payment proof | The oracle's on-chain attestation of the **seller's** USDT transfer to the buyer — the bare 32-byte `dealId` signal (the receive address is registered with the oracle off-chain at funding, not pinned on-chain) — gated on the attestation, the seller co-signing the payout | Collateral released to the seller immediately |
+| Payment proof | The oracle's on-chain attestation of the **seller's** USDT transfer to the buyer — the bare 32-byte `dealId` signal (the receive address is registered with the oracle off-chain at funding, not pinned on-chain) — the attestation is what releases the collateral, the seller co-signing the payout | Collateral released to the seller immediately |
 
 The proof roles flip cleanly with the direction. The on-ramp has no payment for an oracle to attest
-at claim time (cash has no oracle — never claim a trustless cash proof), so the **claim** is gated
-on the seller-signed handoff record collected physically at the meeting, while the **release** is
-gated on the oracle's attestation of the seller's USDT transfer — and on nothing else oracle-side:
-the attestation is the only gate on the collateral release (the seller co-signs the payout — the
+at claim time (cash has no oracle — never claim a trustless cash proof), so the **claim** needs
+only the seller-signed handoff record collected physically at the meeting, while the **release**
+needs the oracle's attestation of the seller's USDT transfer — and nothing else oracle-side:
+the attestation alone decides the collateral release (the seller co-signs the payout — the
 attestation alone must never direct funds). The seller's own signature never releases the vault (self-attestation
 protects nobody), but the phase-1 oracle's attestation does — that trust is stated plainly in §3.1
 and §5, not dressed up.
@@ -54,7 +54,7 @@ verifiable in ErgoScript — ergoforum.org/t/verifying-schnorr-signatures-in-erg
   only ever unlock a payout of the seller's own collateral to the buyer). So the buyer hands
   over the cash, watches the seller count and sign, and **must not leave the meeting until
   their app shows the verified seller-signed record**; the record is the buyer's only
-  dispute artifact. It gates the buyer's claim. Stated plainly, because the artifact is
+  dispute artifact, and the only thing that lets the buyer claim. Stated plainly, because the artifact is
   seller-signed under the same key that reclaims the collateral: (a) the claim pays the
   *buyer*, so a seller faking or coercing a record is self-defeating — no new attack; and
   (b) the real residual is a seller who pockets the cash and refuses to sign, leaving the
@@ -104,13 +104,12 @@ On-ramp shape (buyer hands cash, seller sends USDT afterwards):
    sanctions screening on Ethereum — a heuristic: Tether can freeze after attestation, so
    screening at attestation time is not a guarantee; `specs/oracle-integration.md` §4).
 6. Resolution:
-   - **Routine:** the oracle attests the transfer and the seller releases the vault gated on the
-     oracle's attestation, co-signing the payout — immediate payout (path C). No buyer action is required at any point
+   - **Routine:** the oracle attests the transfer and the seller releases the vault on the
+     strength of that attestation, co-signing the payout — immediate payout (path C). No buyer action is required at any point
      after the meeting; the release follows the attestation.
    - **Seller collected the cash but never paid:** the buyer opens the claim with the
      seller-signed handoff record (path B); after `CLAIM_MATURATION` (12h) the buyer claims the
-     USE (path D). There is no payment for an oracle to attest at claim time, so the claim is
-     gated on the handoff record, not the oracle.
+     USE (path D). There is no payment for an oracle to attest at claim time, so the claim needs the handoff record, never the oracle.
    - **Buyer ghosts after the USDT arrives:** nothing depends on the buyer anymore — the release
      follows the oracle's attestation without any buyer action, so there is nothing to withhold.
      (If the oracle never attests a transfer the seller claims to have sent, that is an
@@ -119,8 +118,8 @@ On-ramp shape (buyer hands cash, seller sends USDT afterwards):
 **Trust model:** the payment-proof path trusts the oracle — *completely*. In practice the phase-1
 deployment is a single trusted centralized oracle authenticated on-chain by NFT, upgraded
 post-launch to a Rosen-derived guard threshold over the same 32-byte `dealId` payload (two
-phases: `specs/oracle-integration.md`). Say "trusted" for phase 1 and mean it: the attestation
-gates the vault's release, so a compromised or malicious oracle can attest a payment that never
+phases: `specs/oracle-integration.md`). Say "trusted" for phase 1 and mean it: the attestation alone
+releases the vault, so a compromised or malicious oracle can attest a payment that never
 happened and take the collateral (the seller's backend co-signs the payout automatically — no
 independent on-chain check), and that is accepted at launch.
 Since the 2026-09-21 payload simplification the on-chain attestation is only the bare `dealId`:
@@ -146,9 +145,9 @@ code: the live watcher/guard set cannot attest deal-scoped events, and Rosen has
 
 **Implementation status (2026-09-17):** the `.es` contracts in `contracts/` implement the
 v2 design (2026-09-13): R7 holds the bare 32-byte
-`oracleNftId` (the old two-key packing is gone), claim path B is gated on the
-seller-signed handoff record with no oracle input, and the release paths C/C′ take the
-oracle's attestation box as a **data input** — gated on the attestation with the seller
+`oracleNftId` (the old two-key packing is gone), claim path B needs the
+seller-signed handoff record and no oracle input at all, and the release paths C/C′ take the
+oracle's attestation box as a **data input** — the attestation is enough to release, with the seller
 co-signing the payout (2026-09-24), no oracle signature
 in the release tx, no receipt signature anywhere. (2026-09-21, pre-launch: the attestation
 payload was simplified to the bare 32-byte `dealId` — the vault's R9 funding binding and
@@ -254,9 +253,9 @@ not a roadmap item.
 
 | | USDT leg | BTC leg | XMR leg |
 |---|---|---|---|
-| Payment verification (gates release) | Oracle attestation — **solely sufficient** (phase 1: centralized NFT oracle, trusted; phase 2: Rosen-derived guard set) — confirms the seller's USDT transfer | Trustless Bitcoin relay (inclusion proof) | Monero tx-key reveal, verified by oracle |
+| Payment verification (decides release) | Oracle attestation — **solely sufficient** (phase 1: centralized NFT oracle, trusted; phase 2: Rosen-derived guard set) — confirms the seller's USDT transfer | Trustless Bitcoin relay (inclusion proof) | Monero tx-key reveal, verified by oracle |
 | Trusted parties for crypto leg | Phase-1 centralized oracle (solely trusted on release) → Rosen-style guard multisig | None (relay assumptions only) | Oracle multisig, same as USDT |
-| Cash collection proof (gates claim) | Seller-signed handoff record (the R5 seller key — the same key that reclaims the collateral) | Buyer's Schnorr signature at handoff (the seller's signed message carries the promised txid) | Seller-signed handoff record (same skeleton as USDT) |
+| Cash collection proof (decides the claim) | Seller-signed handoff record (the R5 seller key — the same key that reclaims the collateral) | Buyer's Schnorr signature at handoff (the seller's signed message carries the promised txid) | Seller-signed handoff record (same skeleton as USDT) |
 | Collateral asset | USE | rsBTC (exists) | rsXMR (does not exist yet) |
 | Chain latency risk | Low (Tron/Ethereum confirmations) | High (RBF, 10-min blocks) → `BTC_DEADLINE` ~6h | Low (2-min blocks, no RBF) |
 | Privacy of crypto leg | None (public chain) | Pseudonymous (transparent amounts) | Strong (revealed per-tx only) |
@@ -276,7 +275,7 @@ release path (§3.1).
 - **Oracle trust for USDT and XMR — total on the release path.** The darkpaper recipe's
   "eliminating trust" is really "concentrating trust into the oracle, which you already trust to
   bridge." Defensible, but say it that way — and for phase 1 say "trusted": the centralized
-  oracle's attestation gates the vault's release, so a compromised oracle can attest a fake
+  oracle's attestation alone releases the vault, so a compromised oracle can attest a fake
   payment and steal the collateral (the seller's backend co-signs the payout automatically),
   and no independent on-chain check prevents it. That is accepted at
   launch. The mitigations are operational: oracle operator ≠ marketplace operator, publicly

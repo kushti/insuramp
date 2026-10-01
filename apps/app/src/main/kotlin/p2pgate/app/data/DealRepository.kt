@@ -33,10 +33,16 @@ fun snapshotFromDto(dto: DealDto, existing: DealSnapshot?, nowEpochMs: Long): De
  * deal token immediately; refresh/sync re-reads the backend and folds the DTO
  * into the snapshot; recovery re-presents a pasted link's token
  * (`specs/android-app.md` §6.3).
+ *
+ * [backendBaseUrl] is the operator the app talks to — the recovery link is
+ * built from it, because a link is only useful if it points at the operator
+ * that can answer for the deal (a hardcoded domain would send a recovering
+ * buyer to an operator that has never heard of the deal).
  */
 class DealRepository(
     private val backend: BackendClient,
     private val store: DealSnapshotStore,
+    private val backendBaseUrl: String = "",
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     suspend fun create(
@@ -58,10 +64,27 @@ class DealRepository(
             createdAtEpochMs = clock(),
             updatedAtEpochMs = clock(),
             offerExpiresAtEpochMs = offerExpiresAtEpochMs,
-            recoveryLink = recoveryLink ?: "https://p2pgate.link/deal/${response.dealId}#${response.dealToken}",
+            recoveryLink = recoveryLink ?: recoveryLinkFor(response.dealId, response.dealToken),
         )
         store.upsert(snapshot)
         return snapshot
+    }
+
+    /**
+     * The one-time recovery link (`specs/android-app.md` §5): the deal id and
+     * its token in a URL fragment. The token is the only credential a buyer who
+     * lost the app has, so it is shown once at creation and reachable again
+     * from the deal list.
+     */
+    fun recoveryLinkFor(dealId: String, token: String): String {
+        val base = backendBaseUrl.trimEnd('/')
+        return if (base.isEmpty()) {
+            // No operator configured (tests): a bare fragment is still a usable
+            // relative link, and the app renders it as such.
+            "/deal/$dealId#$token"
+        } else {
+            "$base/deal/$dealId#$token"
+        }
     }
 
     /** GET /v1/deals/{id} + fold; the deal token authorizes the read. */
@@ -112,5 +135,10 @@ class DealRepository(
 
     suspend fun delete(dealId: String) {
         store.delete(dealId)
+    }
+
+    /** Wipe every local deal row (keys are the caller's business — see [DealDataController]). */
+    suspend fun deleteAll() {
+        store.deleteAll()
     }
 }

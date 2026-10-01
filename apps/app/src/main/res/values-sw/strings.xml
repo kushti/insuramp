@@ -13,8 +13,13 @@
     <string name="fiat_ksh">Shilingi ya Kenya</string>
     <string name="fiat_rub">Ruble ya Urusi</string>
     <string name="fiat_currency_option">%1$s — %2$s</string>
-    <string name="quote_amount_label">Unakabidhi (vitengo kamili, bila desimali)</string>
     <string name="quote_address_label">Anwani yako ya kupokea USDT (mtandao wa Tron)</string>
+    <string name="quote_usdt_amount_label">Unayapata (USDT, vitengo kamili)</string>
+    <string name="quote_you_hand">Unakabidhi %1$s %2$s pesa tasafu bei ya 1 USDT = %3$s %2$s</string>
+    <string name="quote_rate">1 USDT = %1$s %2$s</string>
+    <string name="quote_address_invalid">Hii si anwani halali ya Tron — inaanza na T na ina herfu 34.</string>
+    <string name="quote_amount_invalid">Weka kiasi kamili cha USDT chenye kikubwa kuliko sifuri.</string>
+    <string name="quote_rate_unusable">Bei ya nukuu hii haiwezi kupeka bei ya kiasi hilo — chagua nukuu nyingine.</string>
     <string name="quote_best">Nukuu bora</string>
     <string name="quote_view_list">Orodha</string>
     <string name="quote_view_map">Ramani</string>
@@ -26,13 +31,13 @@
     <string name="quote_unlocated">Muuzaji hakuchapisha eneo la nukuu hii — badili kwenda Orodha ili kuichagua.</string>
     <string name="quote_creating">Inaunda dili…</string>
     <string name="quote_eta">~dakika %1$d</string>
-    <string name="quote_amount_range">USDT %1$d – %2$d kwa kila dili</string>
+    <string name="quote_amount_range">USDT %1$s – %2$s kwa kila dili</string>
     <string name="quote_collateral_line">Muuzaji amefunga dhamana ya kukidhi haya madili — unaweza kuidai ikiwa USDT zako hazijawahi kufika.</string>
     <string name="offer_action">Toa ofa ya pesa taslimu</string>
     <string name="offer_fields_required">Weka kiasi na anwani yako ya kupokea USDT kwanza.</string>
     <string name="quote_create_error">Dili halikuweza kuundwa: %1$s</string>
-    <string name="quote_amount_out_of_range">Kiasi lazima kiwe kati ya %1$d na %2$d kwa nukuu hii.</string>
-    <string name="quote_marker_title">USDT %1$d – %2$d · ~dakika %3$d</string>
+    <string name="quote_amount_out_of_range">Kiasi lazima kiwe kati ya %1$s na %2$s USDT kwa nukuu hii.</string>
+    <string name="quote_marker_title">USDT %1$s – %2$s · ~dakika %3$d</string>
 
     <!-- Canonical protocol states → human labels -->
     <string name="state_quoted">Dili limenukuliwa — kusubiri muuzaji afunge dhamana</string>
@@ -122,4 +127,28 @@
     <!-- Welcome screen -->
     <string name="welcome_text">Karibu Insuramp! Programu ya kubadilisha pesa taslimu kuwa crypto — haijatunzwa na mtu, bila KYC, salama, na imebimishwa!</string>
     <string name="welcome_get_started">Anza</string>
+
+
+    <!-- deal list / settings -->
+    <string name="deal_recovery_title">Kiungo cha kurejesha</string>
+    <string name="deal_recovery_body">Hifadhi kiungo hiki. Ndio njia pekee ya kurudisha mkataba huu ikiwa utapoteza programu — ina kina tokeni yako yaUfikiaji.</string>
+    <string name="deal_recovery_copy">Nakili kiungo cha kurejesha</string>
+    <string name="nav_deals">Mikataba</string>
+    <string name="nav_settings">Mipangilio</string>
+    <string name="deals_title">Mikataba yako</string>
+    <string name="deals_empty">Hakuna mikataba kwenye kifaa hiki bado — chagua nukuu kuanza moja.</string>
+    <string name="deals_delete">Futa mkataba huu</string>
+    <string name="deals_deleted">Mkataba umefutwa kwenye kifaa hiki.</string>
+    <string name="deals_open">Fungua mkataba</string>
+    <string name="settings_title">Mipangilio</string>
+    <string name="settings_data_title">Data yako</string>
+    <string name="settings_delete_all">Futa data ya mikataba yote</string>
+    <string name="settings_delete_all_warning">Hii itafuta kila mkataba kwenye kifaa, pamoja na tokeni zaUfikiaji na funguo zinaweza saini hoja. Hakuna undo — baada ya hapo mkataba usiouchoza hujaweza kurejeshwa.</string>
+    <string name="settings_delete_all_confirm">Futa kila kitu?</string>
+    <string name="settings_delete_all_confirm_yes">Futa zote</string>
+    <string name="settings_delete_all_done">Data ya mikataba yote imefutwa kwenye kifaa hiki.</string>
+    <string name="action_cancel">Ghairi</string>
+    <string name="deals_row_amounts">USDT %1$s · %2$d %3$s</string>
+    <string name="deals_delete_confirm">Futa mkataba huu?</string>
+    <string name="deals_delete_warning">Mkataba na tokeni yake yaUfikiaji vitafutwa kwenye kifaa, na funguo yake ya saini itanguliwa. Hakuna undo.</string>
 </resources>

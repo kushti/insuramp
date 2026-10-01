@@ -29,6 +29,9 @@ interface DealDao {
 
     @Query("DELETE FROM deals WHERE dealId = :dealId")
     suspend fun delete(dealId: String)
+
+    @Query("DELETE FROM deals")
+    suspend fun clear()
 }
 
 @Database(entities = [DealEntity::class], version = 1, exportSchema = false)
@@ -51,5 +54,9 @@ class RoomDealSnapshotStore(private val db: DealDatabase) : DealSnapshotStore {
 
     override suspend fun delete(dealId: String) {
         db.dealDao().delete(dealId)
+    }
+
+    override suspend fun deleteAll() {
+        db.dealDao().clear()
     }
 }

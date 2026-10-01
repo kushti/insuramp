@@ -24,7 +24,7 @@ class LifecycleSpec {
     @Test
     fun `full happy path releases automatically on oracle confirmation`() {
         val env = env()
-        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", T0)
+        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", Fx.RATE_USD, T0)
         val created = env.app.createDeal(dealRequest(), T0)
         val deal = (created as CreateDealOutcome.Created).deal
 
@@ -106,7 +106,8 @@ class LifecycleSpec {
         // The buyer's path-D spend lands: the full collateral pays the buyer.
         val provenId = env.store.getDeal(deal.dealId)!!.provenBoxId!!
         val payout = Fx.payoutBox(Fx.buyer.pubKeyCompressed, Fx.useTokenIdHex, deal.amount, "c1".repeat(32))
-        env.chain.spend(provenId, "b2".repeat(32), ChainSpend("b2".repeat(32), 1600, listOf(payout)))
+        // Path D needs HEIGHT > proofHeight + CLAIM_MATURATION (1500 + 360).
+        env.chain.spend(provenId, "b2".repeat(32), ChainSpend("b2".repeat(32), 2000, listOf(payout)))
         env.watcher.tick(claimAt.plus(Duration.ofHours(12)).plusSeconds(60))
         val final = env.store.getDeal(deal.dealId)!!
         assertEquals(DealState.CLAIMED, final.state)
@@ -126,7 +127,7 @@ class LifecycleSpec {
     @Test
     fun `an offer past its quote expiry auto-closes on the scheduler tick`() {
         val env = env()
-        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", T0) // quote TTL 30 min
+        env.quotes.publish(50, 60, 1L, Fx.AMOUNT, "USD", Fx.RATE_USD, T0) // quote TTL 30 min
         val created = env.app.createDeal(dealRequest(), T0)
         val deal = (created as CreateDealOutcome.Created).deal
         // Offer TTL = the originating quote's expiry, not a separate clock.
@@ -156,9 +157,9 @@ class LifecycleSpec {
     private fun dealRequest() = CreateDealRequest(
         quoteId = "quote-1",
         amount = Fx.AMOUNT,
-        receiveAddress = p2pgate.backend.util.Hex.encode(Fx.recipientRaw),
+        receiveAddress = Fx.recipientAddress,
         buyerPubKey = p2pgate.backend.util.Hex.encode(Fx.buyer.pubKeyCompressed),
         fiatCurrency = "USD",
-        fiatAmount = Fx.AMOUNT,
+        fiatAmount = Fx.CASH_USD,
     )
 }

@@ -14,10 +14,14 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Quote publishing, `specs/operator-backend.md` §5. The feed holds **multiple
  * concurrent quotes** (e.g., one per seller meeting location); each quote is
- * (spread, ETA promise, min/max deal size) with the hard rules:
+ * (rate, spread, ETA promise, min/max deal size) with the hard rules:
  *
  *  - **min ≤ max, both positive** — the min keeps uneconomically small deals
  *    out (the seller's fixed meeting cost), the max is a capacity cap;
+ *  - **the rate is positive micros of fiat per USDT, margin included** — the
+ *    buyer types the USDT leg and the cash leg is derived from this, so the
+ *    rate is what the deal terms are priced against (`spreadBps` is the
+ *    seller's own margin metric and feeds only the cost-floor warning);
  *  - **the fiat currency is a normalized 3-letter code** — lowercase input is
  *    uppercased, anything that is not exactly 3 letters A–Z is refused;
  *  - **max deal size = vault capacity is a hard constraint, per quote** — a
@@ -72,6 +76,7 @@ class QuotePublisher(
         minAmount: Long,
         maxAmount: Long,
         fiatCurrency: String,
+        fiatPerUsdtMicros: Long,
         at: Instant = clock(),
         lat: Double? = null,
         lon: Double? = null,
@@ -86,6 +91,9 @@ class QuotePublisher(
                 "spread/eta/min/max must be positive (got $spreadBps/$etaMinutes/$minAmount/$maxAmount)",
                 at,
             )
+        }
+        if (fiatPerUsdtMicros <= 0) {
+            return reject("rate must be positive (got $fiatPerUsdtMicros micros per USDT)", at)
         }
         if (minAmount > maxAmount) {
             return reject("min deal size $minAmount exceeds max deal size $maxAmount", at)
@@ -127,6 +135,7 @@ class QuotePublisher(
             minAmount = minAmount,
             maxAmount = maxAmount,
             fiatCurrency = currency,
+            fiatPerUsdtMicros = fiatPerUsdtMicros,
             createdAt = at,
             expiresAt = at.plus(ttl),
             lat = lat,

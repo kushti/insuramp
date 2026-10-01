@@ -67,7 +67,9 @@ class ChainWatcherSpec {
         env.store.updateDeal(deal.dealId) { it.copy(provenBoxId = provenId) }
         env.chain.boxes[provenId] = Fx.provenBox(deal, boxId = provenId)
         val payout = Fx.payoutBox(Fx.buyer.pubKeyCompressed, Fx.useTokenIdHex, deal.amount, "c1".repeat(32))
-        env.chain.spend(provenId, "b2".repeat(32), ChainSpend("b2".repeat(32), 1600, listOf(payout)))
+        // Path D needs HEIGHT > proofHeight + CLAIM_MATURATION (1500 + 360) and no
+        // data input — the shape the tracker reads, not the payee's tree.
+        env.chain.spend(provenId, "b2".repeat(32), ChainSpend("b2".repeat(32), 2000, listOf(payout)))
         env.watcher.tick(claimAt.plus(Duration.ofHours(13)))
         assertEquals(DealState.CLAIMED, env.store.getDeal(deal.dealId)!!.state)
     }

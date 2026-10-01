@@ -1,6 +1,6 @@
 # Onramp UX/UI Design — Insured Cash→USDT Deals
 
-*UX/UI design note for the vault-insured cash→USDT on-ramp described in `onramp-insurance.md` (read that first). Direction: **cash→USDT only** — the buyer hands cash to the seller at an in-person meeting and receives USDT; the seller collects the cash and sends the USDT after the meeting, so it acts last and locks the vault collateral. Covers the two sides of the marketplace — buyer app and seller flow — plus the operator dashboard. All flow timings are consistent with the contract design: `RECLAIM_TIMEOUT` (24h), `CLAIM_MATURATION` (12h) on claims, and the seller-signed handoff record; release is gated on the oracle's attestation (the seller co-signs the payout) — there is no receipt signature anywhere in the protocol. Deal state names are owned by `specs/deal-protocol.md` §1 and referenced here by name.*
+*UX/UI design note for the vault-insured cash→USDT on-ramp described in `onramp-insurance.md` (read that first). Direction: **cash→USDT only** — the buyer hands cash to the seller at an in-person meeting and receives USDT; the seller collects the cash and sends the USDT after the meeting, so it acts last and locks the vault collateral. Covers the two sides of the marketplace — buyer app and seller flow — plus the operator dashboard. All flow timings are consistent with the contract design: `RECLAIM_TIMEOUT` (24h), `CLAIM_MATURATION` (12h) on claims, and the seller-signed handoff record; release needs only the oracle's attestation (the seller co-signs the payout) — there is no receipt signature anywhere in the protocol. Deal state names are owned by `specs/deal-protocol.md` §1 and referenced here by name.*
 
 ## 1. Design principles
 
@@ -41,6 +41,7 @@ straight into the quote flow (first use: an install, once).*
 ```
 
 - Instant-quote matching, not an order book: the operator layer pre-publishes quotes; the buyer never negotiates.
+- **Which field the buyer fills (2026-09-27, owner decision): the USDT amount ("You get").** It is the leg the seller's min/max and the vault collateral are denominated in. The cash leg ("You hand") is *derived* from that quote's rate and shown read-only — "you hand 46,000 INR at 1 USDT = 92 INR". Each quote card shows its own rate; the top block previews the best-ETA quote's. Letting the buyer type both legs would let them disagree with the seller's rate, and the API would have to arbitrate; instead the backend re-derives the cash leg from the quote and rejects a mismatch, so the two legs pinned in the deal terms are always consistent.
 - Every quote carries the **collateral line**: "Up to $X available — the seller has locked
   that much collateral" — the actual vault collateral value, not a marketing claim. (Since
   2026-09-18 the buyer app no longer uses "insured/insurance" wording; the factual
@@ -64,7 +65,7 @@ Three states, always rendered top-to-bottom with the pending ones greyed:
 Per-state details:
 
 - **State 2 — hand over cash.** Meeting point revealed at FUNDED; a countdown shows the vault timeout (`RECLAIM_TIMEOUT`, 24h). The handoff record is created live at the meeting: the buyer hands over the cash, watches the seller count it, and the seller signs the record only after the count. The app validates the record against the deal terms (amount, currency, deal id), verifies the seller's signature against the seller key pinned in the deal terms (the vault's R5 key), and shows the **"safe to leave the meeting" indicator** — record received + validated — only once the verified record is persisted. The rule is absolute: **don't leave the meeting without the record.** It is the buyer's only dispute artifact; leaving without it means walking away with no claim if the USDT never arrives.
-- **State 3 — waiting for USDT.** The "USDT confirmed" indicator turns green once the oracle has confirmed the seller's USDT transfer to the buyer's registered receive address — until then the seller could still stall, and the answer is the dispute button below. Green means the release follows automatically: the seller's backend submits it gated on the oracle attestation (the seller co-signs the payout), no buyer action needed. Checking the wallet is still good advice, but it gates nothing.
+- **State 3 — waiting for USDT.** The "USDT confirmed" indicator turns green once the oracle has confirmed the seller's USDT transfer to the buyer's registered receive address — until then the seller could still stall, and the answer is the dispute button below. Green means the release follows automatically: the seller's backend submits it on the oracle's attestation (the seller co-signs the payout), no buyer action needed. Checking the wallet is still good advice, but nothing depends on it.
 
 The dispute button lives permanently under the timeline:
 
@@ -124,7 +125,7 @@ The seller is the capital-heavy side; the dashboard's job is capital efficiency 
 - **Cash collected, seller never sends USDT** → dispute button becomes primary; claim timeline shown (`CLAIM_MATURATION` ~12h). The buyer's cash is already handed over in this failure mode — that's what the insurance covers.
 - **Partial USDT payment** → the oracle's observer matches the exact `(recipient, amount)` registered with its watch set at funding and never attests a partial, so the deal never confirms and lands in the dashboard dispute inbox. The seller side is instructed operationally: "send exactly 500 USDT in one transaction". The claim path is unaffected.
 - **Seller takes the cash and refuses to sign** → the buyer app never showed "safe to leave" (the §2.3 rule); if the buyer handed the cash over anyway, they hold no artifact and there is no on-chain case — this is the same residual as in any face-to-face cash trade. The mitigation is procedural and product-level: the meeting rule is unmissable, and off-chain escalation (operator investigation, deal-identity blacklisting) is the recourse, not a contract case.
-- **Buyer ghosts after the USDT arrives** → there is nothing for the buyer to withhold: the seller releases gated on the oracle attestation, no buyer action required. The ghost case is a non-event in v2.
+- **Buyer ghosts after the USDT arrives** → there is nothing for the buyer to withhold: the seller releases on the oracle's attestation, no buyer action required. The ghost case is a non-event in v2.
 - **Buyer claims without cause** → the seller contests by presenting the oracle attestation during maturation (path C′); the attestation is the whole oracle-side requirement, so an honest seller always counters a false claim. The dashboard shows "evidence attached, awaiting timeout".
 - **App dies mid-deal** → deal recovery by link token or seed phrase of the deal key; no server-side account to lose.
 

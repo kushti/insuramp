@@ -1,8 +1,20 @@
+// TERMS, defined once (full glossary: specs/deal-protocol.md "Key concepts"):
+//   CLAIM   the buyer demanding the locked collateral, because the seller took the
+//           cash at the meeting and never sent the USDT. Needs the seller's signature
+//           on the handoff record.
+//   RELEASE the seller taking the collateral back, because the oracle confirmed the
+//           USDT reached the buyer. Needs the oracle's attestation.
+//   RECLAIM the seller taking the collateral back because the deal window closed
+//           without a claim. Needs nothing but the passage of time and his own key.
+//   CONTEST a release that lands while a claim is still maturing, killing the claim.
+//   The seller signature appears on both claim and release: he may open a claim and
+//   then pay out, but he cannot make the collateral pay him twice.
+//
 // P2PGATE vault — FUNDED box (collateral locked, deal live). v2 (specs/vault-contract.md
-// §8.4): the claim is gated on ONE Schnorr signature (the seller's signature over the
-// P2PH handoff record — the cash-received acknowledgment signed at the meeting under
-// the R5 seller key); release is oracle-gated (the trusted phase-1 oracle's attestation
-// — no buyer receipt signature anywhere) with the seller co-signing the payout.
+// §8.4): the claim needs ONE Schnorr signature (the seller's signature over the P2PH
+// handoff record — the cash-received acknowledgment signed at the meeting under the R5
+// seller key); release needs the trusted phase-1 oracle's attestation and nothing else
+// (no buyer receipt signature anywhere) with the seller co-signing the payout.
 //
 // Spending paths (see specs/vault-contract.md §3.3):
 //   A — reclaim: HEIGHT > timeoutHeight (R8), seller signs (proveDlog(R5 key)),
@@ -22,6 +34,12 @@
 //       themselves once an attestation box exists), so the seller co-signs and
 //       may pay a fresh key. A data input's script never executes, so no oracle
 //       signature rides in the release tx
+//
+// WHY THESE THREE and not one: they are the only ways collateral can leave, and each
+// one needs proof of something different having happened — a deadline passed (A), a
+// dispute the seller signed off on (B), a payment the oracle confirmed (C). A fourth
+// possibility, "the buyer simply takes it", does not exist here: that is path D, and
+// it lives in the successor box (vault_payment_proven.es).
 //
 // Registers:
 //   R4 Coll[Byte]              dealId (32 B)
@@ -51,6 +69,11 @@
 // output shape — is checked in the branch body, which only evaluates when the
 // discriminator matches. (SigmaProp || would evaluate every branch during
 // proof reduction, hence the Boolean if.)
+//
+// The order encodes "a claim beats a reclaim": once the buyer has a signed
+// handoff record, the money is owed to them, so an expired deadline must not
+// decide the outcome. Release is last because it is the fallback — anything
+// else a seller does with this box, he does it as a release.
 {
   val sellerKey = decodePoint(SELF.R5[Coll[Byte]].get)
   val collateral = SELF.tokens(0)._2

@@ -16,8 +16,13 @@
     <string name="fiat_ksh">Kenyan Shilling</string>
     <string name="fiat_rub">Russian Ruble</string>
     <string name="fiat_currency_option">%1$s — %2$s</string>
-    <string name="quote_amount_label">You hand (whole units, no decimals)</string>
     <string name="quote_address_label">Your USDT receive address (Tron network)</string>
+    <string name="quote_usdt_amount_label">You get (USDT, whole units)</string>
+    <string name="quote_you_hand">You hand %1$s %2$s cash at 1 USDT = %3$s %2$s</string>
+    <string name="quote_rate">1 USDT = %1$s %2$s</string>
+    <string name="quote_address_invalid">That is not a valid Tron address — it starts with T and is 34 characters.</string>
+    <string name="quote_amount_invalid">Enter a whole USDT amount greater than zero.</string>
+    <string name="quote_rate_unusable">This quote\'s rate cannot price that amount — choose another quote.</string>
     <string name="quote_best">Best quotes</string>
     <string name="quote_view_list">List</string>
     <string name="quote_view_map">Map</string>
@@ -29,13 +34,13 @@
     <string name="quote_unlocated">The seller didn\'t publish a location for this quote — switch to List to choose it.</string>
     <string name="quote_creating">Creating deal…</string>
     <string name="quote_eta">~%1$d min</string>
-    <string name="quote_amount_range">%1$d – %2$d USDT per deal</string>
+    <string name="quote_amount_range">%1$s – %2$s USDT per deal</string>
     <string name="quote_collateral_line">The seller has locked collateral to cover these deals — you can claim it if your USDT never arrives.</string>
     <string name="offer_action">Offer cash</string>
     <string name="offer_fields_required">Enter the amount and your USDT receive address first.</string>
     <string name="quote_create_error">Could not create the deal: %1$s</string>
-    <string name="quote_amount_out_of_range">Amount must be between %1$d and %2$d for this quote.</string>
-    <string name="quote_marker_title">%1$d – %2$d USDT · ~%3$d min</string>
+    <string name="quote_amount_out_of_range">Amount must be between %1$s and %2$s USDT for this quote.</string>
+    <string name="quote_marker_title">%1$s – %2$s USDT · ~%3$d min</string>
 
     <!-- Canonical protocol states (specs/deal-protocol.md §1) → human labels.
          The canonical name itself is never translated and stays visible in
@@ -127,4 +132,28 @@
     <!-- Welcome screen (once after install; owner\'s verbatim copy, do not reword) -->
     <string name="welcome_text">Welcome to Insuramp! Non-custodial, non-KYC, secure, insured cash-to-crypto app!</string>
     <string name="welcome_get_started">Get started</string>
+
+
+    <!-- deal list / settings -->
+    <string name="deal_recovery_title">Recovery link</string>
+    <string name="deal_recovery_body">Save this link. It is the only way to get this deal back if you lose the app — it carries your access token.</string>
+    <string name="deal_recovery_copy">Copy recovery link</string>
+    <string name="nav_deals">Deals</string>
+    <string name="nav_settings">Settings</string>
+    <string name="deals_title">Your deals</string>
+    <string name="deals_empty">No deals on this device yet — pick a quote to start one.</string>
+    <string name="deals_delete">Delete this deal</string>
+    <string name="deals_deleted">Deal deleted from this device.</string>
+    <string name="deals_open">Open deal</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_data_title">Your data</string>
+    <string name="settings_delete_all">Delete all deal data</string>
+    <string name="settings_delete_all_warning">This erases every deal on this device, including the access tokens and the keys that can sign a claim. There is no undo — after this, a deal you have not exported cannot be recovered.</string>
+    <string name="settings_delete_all_confirm">Delete everything?</string>
+    <string name="settings_delete_all_confirm_yes">Delete all</string>
+    <string name="settings_delete_all_done">All deal data deleted from this device.</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="deals_row_amounts">%1$s USDT · %2$d %3$s</string>
+    <string name="deals_delete_confirm">Delete this deal?</string>
+    <string name="deals_delete_warning">The deal and its access token are erased from this device, and its signing key is destroyed. There is no undo.</string>
 </resources>
