@@ -25,10 +25,15 @@
 //   R7 Long              proofHeight (the claim-open height, blocks)
 //   R8 Coll[Byte]        handoff-record id (32 B, blake2b256 of a_sig | z_sig |
 //                        record — the dashboard's evidence view)
+//   R9 Coll[Byte]        oracleNftId (32 B) — copied from the FUNDED box's R7 by
+//                        the claim-open (path B enforces the copy); the contest
+//                        gate reads it per-box, the same shape as vault_funded.es
 //
-// Context variables: none on either path — the claim discharges proveDlog(buyerKey)
-// and the release attestation (the dealId itself) rides in the oracle data
-// input's R4.
+// Context variables: var 0 (a `Byte`) names the spending path on BOTH paths —
+// 0 = claim payout (D), 1 = contest (C′) — the same action-byte shape as the
+// FUNDED box (2026-10-03; before, the path was inferred from `dataInputs.size`).
+// Path D additionally discharges proveDlog(buyerKey) and the release attestation
+// (the dealId itself) rides in the oracle data input's R4 on path C′.
 //
 // Reading the oracle data input is confined to the C′ branch on purpose: a buyer
 // taking the collateral must not be forced to supply an attestation box, and the
@@ -51,41 +56,54 @@
     OUTPUTS(0).tokens(0)._1 == SELF.tokens(0)._1 &&
     OUTPUTS(0).tokens(0)._2 == SELF.tokens(0)._2
 
-  // The buyer may take the collateral only when all three hold: the waiting period
-  // has elapsed, the payout conserves it, and no attestation box is attached.
-  // That last condition is what separates the two paths — a contest always
-  // carries one, a payout never does. Deciding on the waiting period alone would
-  // misroute a contest that lands late: its payout satisfies `payoutOk` just as
-  // well, so the buyer would be paid for a claim the oracle had already
-  // disproved. Reading `dataInputs.size` keeps the contest reachable at any height.
-  //
-  // The conditions sit in the guard rather than in each branch because a mixed
-  // `proveDlog && Boolean` is not a SigmaProp — each branch has to stand alone.
-  //
+  // The path discriminator: context var 0, a `Byte` naming the spending path —
+  // the same shape as the FUNDED box's action byte (specs/vault-contract.md §3.3).
+  // 0 = claim payout (D), 1 = contest (C′); anything else is rejected. Mandatory
+  // (`.get`): a spend that declines to name a path fails during reduction.
+  // Before 2026-10-03 the path was inferred from `dataInputs.size`; the explicit
+  // action removes the inference, and each path's conditions are now checked
+  // inside its own branch, so a misnamed spend is rejected rather than
+  // re-routed. The codes are hardcoded literals, mirrored by
+  // `ContractParams.ACTION_CLAIM_PAYOUT`/`ACTION_CONTEST` (`FundedActionSpec`
+  // guards the pair against drift).
+  val action = getVar[Byte](0).get
+
   // The maturation delay is the hardcoded literal 360 (blocks; ~12h at the
   // ~2-minute target, specs/vault-contract.md §2). Nothing varies it between
   // deployments, so it is not a %%...%% substitution parameter (2026-10-03);
   // `ContractParams.CLAIM_MATURATION_BLOCKS` mirrors it for the off-chain code
   // and `FundedActionSpec` guards the pair against drift.
-  if (HEIGHT.toLong > claimOpenedAtHeight + 360L && payoutOk && CONTEXT.dataInputs.size == 0) {
-    // Path D — the waiting period is over and nobody contested: the buyer takes it.
-    proveDlog(buyerKey)
-  } else {
+  if (action == 0) {
+    // Path D — the waiting period is over and nobody contested: the buyer takes
+    // it. The maturation and the collateral conservation are checked inside the
+    // branch; `dataInputs.size == 0` stays as a hygiene condition — a payout
+    // never carries an attestation box (a contest always does), so a stray data
+    // input rejects the spend rather than being silently ignored.
+    sigmaProp(
+      HEIGHT.toLong > claimOpenedAtHeight + 360L && payoutOk && CONTEXT.dataInputs.size == 0
+    ) && proveDlog(buyerKey)
+  } else if (action == 1) {
     // Path C' — the seller answers the claim with the oracle's word that the
-    // payment went through, and takes the collateral back.
+    // payment went through, and takes the collateral back. Reachable at ANY
+    // height, including after maturation: naming the action is what routes the
+    // spend, not the clock.
     //
-    // The oracle NFT is pinned at compile time here rather than per-box as in R7,
-    // because this box has no register to spare. Phase 2 therefore changes the
-    // check itself, not a constant.
+    // The oracle NFT id rides per-box in R9, copied from the FUNDED box's R7 by
+    // the claim-open — the same per-box pin vault_funded.es uses for path C,
+    // replacing the compile-time %%ORACLE_NFT_ID%% pin (2026-10-03). Phase 2
+    // therefore changes the check itself, not a constant.
     //
     // Having the NFT and a matching R4 is all that is verified. The message it
     // stands for — from the seller, to the right address, confirmed, not tainted —
     // is the oracle's word, and no contract can check it.
     val attestationBox = CONTEXT.dataInputs(0)
-    val oracleNftOk = attestationBox.tokens(0)._1 == %%ORACLE_NFT_ID%%
+    val oracleNftOk = attestationBox.tokens(0)._1 == SELF.R9[Coll[Byte]].get
     val fieldsOk = attestationBox.R4[Coll[Byte]].get == SELF.R4[Coll[Byte]].get
     // And the seller signs too: the attestation alone must never move funds, or
     // anyone could pay themselves the moment one appeared.
     sigmaProp(oracleNftOk && fieldsOk && payoutOk) && proveDlog(sellerKey)
+  } else {
+    // An unrecognized action is rejected — never fall through to a payout.
+    sigmaProp(false)
   }
 }

@@ -156,7 +156,9 @@
       getVar[Coll[Byte]](1).get)
 
     // Output: the PAYMENT_PROVEN box carrying everything, registers copied,
-    // proofHeight = HEIGHT, record id in R8.
+    // proofHeight = HEIGHT, record id in R8 — and R7's oracleNftId copied into
+    // R9, so the contest path's NFT gate reads it per-box (the PROVEN script
+    // has no compile-time NFT pin since 2026-10-03).
     val provenOutOk =
       OUTPUTS(0).propositionBytes == %%PAYMENT_PROVEN_SCRIPT%% &&
       OUTPUTS(0).R4[Coll[Byte]].get == SELF.R4[Coll[Byte]].get &&
@@ -164,6 +166,7 @@
       OUTPUTS(0).R6[Coll[Byte]].get == SELF.R6[Coll[Byte]].get &&
       OUTPUTS(0).R7[Long].get == HEIGHT.toLong &&
       OUTPUTS(0).R8[Coll[Byte]].get == recordId &&
+      OUTPUTS(0).R9[Coll[Byte]].get == SELF.R7[Coll[Byte]].get &&
       OUTPUTS(0).tokens(0)._1 == useTokenId &&
       OUTPUTS(0).tokens(0)._2 == collateral &&
       OUTPUTS(0).value == SELF.value

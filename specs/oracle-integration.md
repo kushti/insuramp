@@ -149,8 +149,9 @@ Consequences, stated plainly:
   32-byte `dealId` (§2.2).
 - Any vault spend that needs the payment proof — on-ramp, the release paths C and C′
   only — **includes the oracle box as a data input** (`CONTEXT.dataInputs(0)`). The
-  vault contract checks exactly two things about it: the data input's token id equals R7
-  (or the compile-time pin), and **`dataInput.R4 == vault.R4`** — the attested `dealId`
+  vault contract checks exactly two things about it: the data input's token id equals the
+  vault's per-box pin (FUNDED R7; PROVEN R9 since 2026-10-03 — the compile-time pin is
+  gone), and **`dataInput.R4 == vault.R4`** — the attested `dealId`
   equals this vault's own deal id. There are no payload-field slice checks anymore: the
   dealId equality is the whole binding.
   Because data-input scripts never execute, **no oracle signature exists in the release

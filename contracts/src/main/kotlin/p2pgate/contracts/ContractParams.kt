@@ -36,6 +36,20 @@ object ContractParams {
     /** Index of the action byte in the FUNDED box's context extension (var 0). */
     const val ACTION_VAR_INDEX: Int = 0
 
+    /**
+     * The PAYMENT_PROVEN box's spending-path discriminator: context extension
+     * variable 0 (the same [ACTION_VAR_INDEX] — each script reads its own spend's
+     * extension), a `Byte` naming path D (claim payout) or C′ (contest). Numbering
+     * restarts per box: the PROVEN script dispatches on only these two codes.
+     *
+     * Hardcoded as bare literals in `vault_payment_proven.es` since 2026-10-03
+     * (before, the box inferred D vs C′ from `dataInputs.size`); mirrored here
+     * for the tx builders, which must put the same byte on the wire —
+     * `FundedActionSpec` asserts the two never drift.
+     */
+    const val ACTION_CLAIM_PAYOUT: Int = 0
+    const val ACTION_CONTEST: Int = 1
+
     /** Freshness bound on the handoff-record timestamp. [spec] */
     const val HANDOFF_RECORD_MAX_AGE_MS: Long = 4L * 60 * 60 * 1000
 

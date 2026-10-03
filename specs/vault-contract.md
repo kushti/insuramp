@@ -135,9 +135,9 @@ waits the real ~12h of maturation — owner decision; `--dry-run` still sim-adva
 `ContractParams.ACTION_*` mirrors them for the tx builders, which must put the same byte on
 the wire, and `FundedActionSpec` reads the `.es` source to assert the two never drift. This
 mirrors the Basis reserve contract, where context var 0 likewise selects the action
-(`basis.es` §Actions). The PAYMENT_PROVEN box still infers its path from the data input
-(`dataInputs.size == 0` → D, else C′) — only two paths share that script, and §4 explains
-why that box exists.
+(`basis.es` §Actions). The PAYMENT_PROVEN box followed on 2026-10-03 (§8.6): it takes the
+same action byte (var 0, `ACTION_CLAIM_PAYOUT` 0 / `ACTION_CONTEST` 1) instead of inferring
+D vs C′ from `dataInputs.size` — §4 explains why that box exists.
 
 **What the explicit action buys.** Before, the path was *inferred* from what the
 transaction happened to carry — claim by var-0 presence, reclaim by `HEIGHT`, release by
@@ -189,8 +189,8 @@ operational deterrence, as in the off-ramp design.
 
 **Oracle authentication (shared by paths C and C′ — release only; claims do not involve the
 oracle in this direction).** The spending transaction must include the **oracle box as a
-data input** (`CONTEXT.dataInputs(0)`): a box whose tokens contain `oracleNftId` (== R7,
-or the compile-time `%%ORACLE_NFT_ID%%` pin in the proven contract) and whose R4 carries
+data input** (`CONTEXT.dataInputs(0)`): a box whose tokens contain `oracleNftId` (== R7 in
+the FUNDED box, == R9 in the PROVEN box since 2026-10-03, §8.7) and whose R4 carries
 the bare 32-byte `dealId` attestation (`specs/oracle-integration.md` §2.2). The contract
 checks exactly two things: the data input's token id, and **`dataInput.R4 == SELF.R4`**
 — the attested dealId equals this vault's own. All payload-field slice checks (recipient,
@@ -275,14 +275,17 @@ as the dispute-recovery route.
 | R6 | `Coll[Byte]` | `buyerPubKey` — 33 B compressed point |
 | R7 | `Long` | `proofHeight` — plain Long (the fee left the registers on 2026-09-17, §8.4) |
 | R8 | `Coll[Byte]` | handoff-record id bytes (`blake2b256` of `a_sig \| z_sig \| record` — for the dashboard's evidence view; the single seller half, §8.4) |
+| R9 | `Coll[Byte]` | `oracleNftId` — 32 B, copied from the FUNDED box's R7 by the claim-open (path B enforces the copy; 2026-10-03, §8.7). The contest gate reads it per-box, the same shape as the FUNDED box's R7 — the compile-time `%%ORACLE_NFT_ID%%` pin is gone |
 
 ### 4.2 Spending paths
 
 **Path C′ — release from PAYMENT_PROVEN.** This box carries the *handoff
 record*, not the payment proof (path B was a claim — the seller had not paid), so the
 attestation must be supplied **in this transaction**, as a data input:
+- the spend names `ACTION_CONTEST` (1) in context var 0 (mandatory since 2026-10-03, §8.6);
 - oracle authentication as §3.3 (oracle box as data input, the attested `dealId` in its
-  R4), i.e. NFT match plus `dataInput.R4 == SELF.R4` — and **nothing else** from the
+  R4), i.e. NFT match against the box's **R9** `oracleNftId` (per-box pin copied from the
+  FUNDED R7 at claim-open, §8.7) plus `dataInput.R4 == SELF.R4` — and **nothing else** from the
   oracle side (v2: no receipt signature, no freshness vars, no oracle signature in the tx);
 - the seller discharges `proveDlog(sellerPubKey)` (R5) — as on path C, the attestation
   alone must never direct funds; the payee is any seller-chosen address;
@@ -296,13 +299,15 @@ only ever pays out when the seller genuinely did not deliver (or the oracle itse
 compromised — accepted, see §9).
 
 **Path D — claim (buyer payout).** Conditions:
-- `HEIGHT > proofHeight + CLAIM_MATURATION`;
+- the spend names `ACTION_CLAIM_PAYOUT` (0) in context var 0 (mandatory since 2026-10-03,
+  §8.6) — the action byte, not the data input, is the C′/D discriminator;
+- `HEIGHT > proofHeight + CLAIM_MATURATION` (the maturation is the hardcoded literal
+  `360L` in the source since 2026-10-03, §8.6);
 - `proveDlog(buyerPubKey)`;
-- the tx carries **no data inputs** — the C′/D discriminator (2026-09-26): C′ txs
-  always carry the attestation box, D txs never do. A height-only discriminator
-  would route every post-maturation contest into path D (the C′ payout satisfies
-  the same full-collateral conservation check), so C′ stays reachable at any
-  height, including after maturation;
+- the tx carries **no data inputs** — kept as a hygiene condition now that the action
+  byte routes the spend: C′ txs always carry the attestation box, D txs never do, so a
+  stray data input rejects the spend rather than riding along inert (test 52). C′ stays
+  reachable at any height, including after maturation (test 50);
 - outputs: **all** USE to any buyer-chosen address, in full (no protocol fee since 2026-09-18, §6).
 
 The maturation delay exists so an honest seller that *did* deliver can still present the
@@ -336,7 +341,7 @@ Context variables:
 | Var | Type | Content |
 |---|---|---|
 | **All FUNDED spends** | | |
-| 0 | `Byte` | action code — `ACTION_CLAIM` 0 / `ACTION_RECLAIM` 1 / `ACTION_RELEASE` 2 (mandatory, hardcoded in the source; the PAYMENT_PROVEN box takes none) |
+| 0 | `Byte` | action code — `ACTION_CLAIM` 0 / `ACTION_RECLAIM` 1 / `ACTION_RELEASE` 2 (mandatory, hardcoded in the source) |
 | **Path B (claim)** | | |
 | 1 | `Coll[Byte]` | handoff record msg, 52 B |
 | 2 | `Coll[Byte]` | `a_sig` — nonce point, 33 B compressed |
@@ -344,8 +349,8 @@ Context variables:
 | 4 | `Long` | record timestamp in millis (msg bytes 48..52 as seconds × 1000) |
 | **Paths A/C (FUNDED)** | | |
 | — | — | no further vars: the timeout is a register comparison (R8) and the attested `dealId` rides in the oracle data input's R4 (2026-09-17 data-input rework) |
-| **Path C′ (contest)** | | |
-| — | — | the PAYMENT_PROVEN box supplies no context vars at all; it selects D vs C′ from `dataInputs.size` |
+| **All PAYMENT_PROVEN spends** | | |
+| 0 | `Byte` | action code — `ACTION_CLAIM_PAYOUT` 0 (D) / `ACTION_CONTEST` 1 (C′); mandatory, hardcoded in the source (2026-10-03, §8.6 — before, D vs C′ was inferred from `dataInputs.size`) |
 
 **Freshness** (path B only — the release paths carry no signed message and no freshness
 check in v2) is checked against `CONTEXT.preHeader.timestamp` on the `Long` context var,
@@ -554,15 +559,16 @@ action literals introduce: it reads the `.es` source and asserts the codes agree
     order would swallow every post-timeout claim-open into path A. The explicit action byte
     removes the ordering question — but the guarantee itself is what the test pins).
 50. Contest (path C′) **after** `CLAIM_MATURATION` — **passes** (the C′/D discriminator
-    is the data input, not height: an attested-but-slow honest seller must always be
-    able to counter a false claim).
+    is the action byte, not height — and not the data input since 2026-10-03: an
+    attested-but-slow honest seller must always be able to counter a false claim).
 51. Release after `RECLAIM_TIMEOUT` — **passes with the attestation attached**, and
     **fails without it** (CHANGED 2026-10-04: previously a post-timeout release tx landed
     in the path A branch and was spent as an attestation-free seller-signed reclaim. A
     release is now a release at any height; the seller's recourse is unchanged, since
     post-timeout he can build a RECLAIM instead).
-52. Claim payout (path D) with a stray data input attached — **fails** (the data-input
-    discriminator routes it to the C′ branch, which demands the seller key).
+52. Claim payout (path D) with a stray data input attached — **fails** (the spend names
+    `ACTION_CLAIM_PAYOUT` since 2026-10-03, and the D branch rejects any spend carrying a
+    data input — a payout never has one, a contest always does).
 
 **Action discriminator (2026-10-04)**
 53. A FUNDED spend with **no action var** — **fails** (`getVar[Byte](0).get` throws during
@@ -576,6 +582,21 @@ action literals introduce: it reads the `.es` source and asserts the codes agree
     **fails**, and no secret material is needed to see it (the claim branch's output-shape
     check pins `propositionBytes == PAYMENT_PROVEN_SCRIPT`, `proofHeight` in R7 and the
     record id in R8, so under `ACTION_CLAIM` there is no payout shape left to redirect).
+
+**PAYMENT_PROVEN action byte (2026-10-03)**
+57. A PROVEN spend with **no action var** — **fails** (mirror of 53: `getVar[Byte](0).get`
+    throws during reduction, even for a fully mature, well-formed payout).
+58. An **unrecognized action code** on the PROVEN box — **fails** (fail-closed tail; mirror
+    of 54).
+59. A payout-shaped spend (mature, buyer-signed, no data input) naming `ACTION_CONTEST` —
+    **fails** (routed to the C′ branch, which reads `CONTEXT.dataInputs(0)`; the action
+    byte names the path and the shape cannot talk its way into another one).
+
+**Per-box NFT pin (2026-10-03, §8.7)**
+60. Claim-open whose PAYMENT_PROVEN output carries a **wrong R9** `oracleNftId` —
+    **fails** (path B requires `OUTPUTS(0).R9 == SELF.R7`; the NFT pin is copied per-box).
+61. Contest from a PROVEN box whose **R9 names a different NFT** — **fails** (mirror of
+    43: the C′ NFT check reads R9, so the genuine oracle box is rejected).
 
 **Oracle box (oracle.es) — box progression**
 O1. Rotation by the oracle key, NFT preserved into `OUTPUTS(0)` (pinned position) — passes.
@@ -622,7 +643,8 @@ impossible. This leg is a design placeholder, not a roadmap item.
 ### 8.3 On-ramp revision items (implemented, partially superseded by §8.4)
 
 The on-ramp revision landed in the `.es` sources; the C′ compile-time NFT pin from item 3
-still stands. Items 1–2 and 4 describe gates **since replaced by v2 (§8.4)**: R7 no longer
+stood until 2026-10-03, when the PROVEN box switched to a per-box pin in R9 (§8.7). Items
+1–2 and 4 describe gates **since replaced by v2 (§8.4)**: R7 no longer
 packs a second key (it holds the bare `oracleNftId`), path B is no longer dual-signed, the
 receipt signature is gone from C/C′, and the R8 record id covers the single seller half.
 For the record, the four items as they originally landed:
@@ -674,7 +696,8 @@ it. The changes, and why:
    copied, `proofHeight`, R8 = `blake2b256(a_sig | z_sig | record)`). No oracle
    input on path B (tests 4–15, 37–42, 44).
 2. **Paths C/C′ depend on the oracle alone**: the oracle box as a **data input**
-   (`CONTEXT.dataInputs(0)`; NFT check vs R7 / the compile-time pin, and
+   (`CONTEXT.dataInputs(0)`; NFT check vs the per-box pin — FUNDED R7, PROVEN R9 since
+   2026-10-03 (§8.7), originally a compile-time pin — and
    `dataInput.R4 == SELF.R4` — the attested `dealId`; the field checks against R4/R9
    that this item originally described were removed with the 2026-09-21 dealId-only
    payload below). **No oracle signature exists in the release
@@ -787,9 +810,9 @@ is now 51 tests (1 `@Disabled`: test 45). Both height registers stay plain
 dispatches on it (`ContractParams.ACTION_CLAIM` 0 / `ACTION_RECLAIM` 1 / `ACTION_RELEASE`
 2; anything else is rejected). This is a
 **breaking change to the FUNDED box's spend interface**: it is mandatory (`.get`), and
-paths B's material moves from vars 0–3 to vars 1–4. The PAYMENT_PROVEN box is untouched —
-it takes no context vars and keeps selecting D vs C′ from `dataInputs.size`, because only
-two paths share that script.
+paths B's material moves from vars 0–3 to vars 1–4. The PAYMENT_PROVEN box was initially
+left untouched — it kept selecting D vs C′ from `dataInputs.size`, because only two paths
+share that script; it followed on 2026-10-03 (§8.6).
 
 **Why.** The path used to be *inferred* from what the transaction carried — claim by
 var-0 presence, reclaim by `HEIGHT`, release by elimination — which forced a branch
@@ -815,6 +838,48 @@ reclaim right disappear once a claim opens).
 **Deployment note.** This changes the FUNDED script's hash. No FUNDED box has ever been
 funded on mainnet (pre-launch), so there is nothing to migrate; had there been, those boxes
 would now be unspendable, since Ergo has no script-upgrade mechanism.
+
+### 8.6 2026-10-03: the PAYMENT_PROVEN box names its spending path too (and the maturation is hardcoded)
+
+`vault_payment_proven.es` now reads the same `Byte` action code from context extension
+variable 0 and dispatches on it (`ContractParams.ACTION_CLAIM_PAYOUT` 0 / `ACTION_CONTEST`
+1; anything else is rejected — tests 57–59), replacing the `dataInputs.size` inference
+(§8.5 left that box untouched; owner decision reversed it). The same change also replaced
+the `%%CLAIM_MATURATION_BLOCKS%%` substitution with the hardcoded literal `360L` — nothing
+varies the maturation between deployments, so the `%%...%%` mechanism bought nothing;
+`ContractParams.CLAIM_MATURATION_BLOCKS` mirrors the literal for the off-chain code, and
+`FundedActionSpec` guards both pairs against drift. (Consequence for the e2e gate: a live
+flow B now waits the real ~12h of maturation — the fast compile no longer shortens it;
+`--dry-run` still sim-advances.)
+
+**Breaking change to the PAYMENT_PROVEN spend interface**, safe on the same grounds as
+§8.5: no vault box has ever been funded on mainnet.
+
+**What does not change.** Every path's substantive conditions — maturation, payout
+conservation, the attestation's NFT + `dealId` checks, the seller co-signature on C′, the
+payee's freedom — are the same checks as before; only the *selection* changed. Path D keeps
+`dataInputs.size == 0` as a hygiene condition (a payout never carries the attestation box),
+and the two-box split is untouched and still load-bearing
+(`specs/vault-contract-review.md` §5.2).
+
+### 8.7 2026-10-03: the PROVEN box pins the oracle NFT per-box (R9), like the FUNDED box's R7
+
+The contest path's NFT check read a compile-time constant (`%%ORACLE_NFT_ID%%`) because the
+PROVEN box "had no register to spare" — but R9 has been free since the 2026-09-21
+dealId-only payload removed the old funding binding. The compile-time pin is gone:
+`vault_funded.es` path B now requires `OUTPUTS(0).R9 == SELF.R7` (the claim-open copies the
+FUNDED box's oracle pin into the PROVEN box), and `vault_payment_proven.es` checks
+`attestationBox.tokens(0)._1 == SELF.R9` — the same per-box shape the FUNDED box has always
+used for path C (tests 60–61; test 44 documents that a wrong pin poisons the contest path,
+never the claim).
+
+**Breaking change** on the same grounds as §8.5/§8.6 (no vault ever funded on mainnet):
+both script hashes change, and the PAYMENT_PROVEN box layout gains R9. What improves:
+neither vault tree embeds the oracle NFT anymore, so the compiled trees no longer depend
+on the deployment's oracle at all — `ErgoContracts.compile`'s `oracleNftId` is now purely
+a deployment descriptor (what `OperatorTxBuilder.buildFund` writes into R7 and what
+`VaultBoxTracker` recognizes the attestation box by), and the buyer-side consoles no
+longer need `P2P_ORACLE_NFT_ID` just to compile trees that accept a real vault box.
 
 ## 9. Trust model (stated honestly)
 

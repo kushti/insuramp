@@ -10,8 +10,9 @@ import kotlin.test.assertTrue
  * `vault_funded.es` hardcodes its path codes as bare literals (`action == 0`, `== 1`,
  * `== 2`) rather than taking them through the `%%...%%` substitution mechanism, because
  * they are structural rather than deployment parameters — nothing varies them between
- * compiles. `CLAIM_MATURATION_BLOCKS` went the same way on 2026-10-03 (hardcoded `360L`
- * in `vault_payment_proven.es`); the last test below guards that literal too.
+ * compiles. `vault_payment_proven.es` followed on 2026-10-03 (`action == 0` payout,
+ * `== 1` contest) — the tests below guard both scripts, plus the hardcoded `360L`
+ * maturation literal.
  *
  * The cost of hardcoding is that `ContractParams.ACTION_*` (which the tx builders put on
  * the wire) could drift from the source, and a drifted code does not fail loudly: a
@@ -62,6 +63,31 @@ class FundedActionSpec {
         assertTrue(
             source.contains("sigmaProp(false)"),
             "vault_funded.es must reject an unrecognized action code explicitly",
+        )
+    }
+
+    @Test
+    fun `the action codes in vault_payment_proven match ContractParams`() {
+        val source = ContractCompiler.loadSource("vault_payment_proven.es")
+        val literals = Regex("""action == (\d+)""").findAll(source)
+            .map { it.groupValues[1].toInt() }
+            .toList()
+
+        assertEquals(
+            listOf(ContractParams.ACTION_CLAIM_PAYOUT, ContractParams.ACTION_CONTEST),
+            literals,
+            "vault_payment_proven.es dispatches on $literals, but ContractParams says " +
+                "[${ContractParams.ACTION_CLAIM_PAYOUT}, ${ContractParams.ACTION_CONTEST}] — " +
+                "the tx builders would put the wrong byte on the wire",
+        )
+    }
+
+    @Test
+    fun `the proven action var is read from context extension var 0 and is mandatory`() {
+        val source = ContractCompiler.loadSource("vault_payment_proven.es")
+        assertTrue(
+            source.contains("val action = getVar[Byte](${ContractParams.ACTION_VAR_INDEX}).get"),
+            "the proven box's action byte must be read with `.get` at var ${ContractParams.ACTION_VAR_INDEX}",
         )
     }
 

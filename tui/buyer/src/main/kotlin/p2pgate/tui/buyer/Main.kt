@@ -175,18 +175,19 @@ private fun buildChain(config: TuiConfig): ChainSource {
 
 /**
  * The deployed oracle's NFT id from `P2P_ORACLE_NFT_ID` (64 hex chars), or the
- * test dummy. An unset variable is the case that matters: the console then
- * refuses a real vault box with "input box is not a FUNDED vault box of this
- * contract", which is correct but opaque — so it is called out on stderr at
- * startup rather than left to be discovered at claim time.
+ * test dummy. Since 2026-10-03 the vault trees no longer embed the NFT (both
+ * boxes pin it per-box: FUNDED R7, PROVEN R9), so an unset variable no longer
+ * blocks claiming — it only degrades spend classification (a release can be
+ * misread as a reclaim), which is why it is still called out on stderr.
  */
 private fun oracleNftId(): ByteArray {
     val hex = System.getenv("P2P_ORACLE_NFT_ID")?.trim()
     if (hex.isNullOrEmpty()) {
         System.err.println(
-            "P2P_ORACLE_NFT_ID is not set — compiling with the test dummy oracle NFT.\n" +
-                "  A claim-open will build, but a real vault box will be rejected.\n" +
-                "  Set it to the deployed oracle NFT id (64 hex chars) before claiming.\n",
+            "P2P_ORACLE_NFT_ID is not set — using the test dummy oracle NFT.\n" +
+                "  Claims still build (the trees no longer embed the NFT), but spend\n" +
+                "  classification can misread a release as a reclaim. Set it to the\n" +
+                "  deployed oracle NFT id (64 hex chars) for accurate state display.\n",
         )
         return ErgoContracts.DUMMY_ORACLE_NFT_ID
     }

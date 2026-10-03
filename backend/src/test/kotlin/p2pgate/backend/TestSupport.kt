@@ -172,7 +172,7 @@ object Fx {
                 ChainRegister.CollBytes(buyer.pubKeyCompressed),
                 ChainRegister.Int64(proofHeight.toLong()),
                 ChainRegister.CollBytes(recordId),
-                null,
+                ChainRegister.CollBytes(trees.oracleNftId), // R9: the per-box NFT pin (copied from FUNDED R7 at claim-open)
             ),
             spentTransactionId = spentTxId,
         )

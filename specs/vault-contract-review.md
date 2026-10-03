@@ -48,7 +48,7 @@ ERG value, and two spec sentences that misdescribe the script.
 | C2 | A malformed R5 bricks the vault permanently; nothing validates the curve point at funding | medium | code |
 | C3 | No ERG conservation on any payout path (path B is the only one that checks value) | low | contract |
 | C4 | The proven script is pinned byte-exactly inside every FUNDED box → no migration path for phase 2 | low (known) | design note |
-| C5 | Two sources of truth for the oracle NFT id (R7 per box vs. compile-time pin) | low | design note |
+| C5 | Two sources of truth for the oracle NFT id (R7 per box vs. compile-time pin) | low | **resolved 2026-10-03** (PROVEN R9 per-box pin) |
 | C6 | The 52-byte handoff-record length is not enforced in-script | low | contract |
 | C7 | §3.3 claims path B checks the record's amount/currency against the deal terms — it does not | low (doc) | docs |
 
@@ -228,6 +228,12 @@ runbook item: ship the phase-2 parameter set alongside the phase-1 one, and keep
 oracle live until every phase-1 FUNDED box is terminal.
 
 ### C5 — Two sources of truth for the oracle NFT id [solid]
+
+> **Resolved 2026-10-03.** The PROVEN box now pins the NFT per-box in R9, copied from the
+> FUNDED box's R7 at claim-open (path B enforces `OUTPUTS(0).R9 == SELF.R7`; tests 60–61).
+> There is one source of truth again — the FUNDED box's R7 — and neither tree embeds the
+> NFT. The operational note below still stands: a wrong pin strands the release/contest
+> paths, never the claim (test 44).
 
 The FUNDED contract reads the pin per box (`SELF.R7`, `vault_funded.es:138`); the PROVEN contract
 pins it at compile time (`vault_payment_proven.es:84`). This is not a free choice — it falls out

@@ -463,6 +463,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CONTEST),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -478,6 +479,7 @@ class VaultContractSpec {
                 inputs = listOf(box),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CONTEST),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -496,6 +498,7 @@ class VaultContractSpec {
                 inputs = listOf(box, fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CONTEST),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -516,6 +519,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox(payload = fx.paymentPayload(dealId = otherDealId))),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CONTEST),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -546,6 +550,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CONTEST),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -561,6 +566,7 @@ class VaultContractSpec {
                 inputs = listOf(box),
                 outputs = listOf(fx.buyerOut()),
                 height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS - 1,
+                vars = fx.actionVars(ContractParams.ACTION_CLAIM_PAYOUT),
                 secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
             ),
         )
@@ -576,6 +582,7 @@ class VaultContractSpec {
                 inputs = listOf(box),
                 outputs = listOf(fx.buyerOut(), fx.changeOut()),
                 height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CLAIM_PAYOUT),
                 secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
             ),
         )
@@ -591,6 +598,7 @@ class VaultContractSpec {
                 inputs = listOf(box),
                 outputs = listOf(fx.buyerOut()),
                 height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CLAIM_PAYOUT),
                 secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.sellerKey),
             ),
         )
@@ -762,9 +770,11 @@ class VaultContractSpec {
 
     @Test
     fun `44 open claim passes with a wrong R7 oracleNftId`() {
-        // R7 pins the release path's oracle NFT only; path B reads R5 (not R7), so a
-        // vault whose R7 names a different oracle NFT is still claimable with the
-        // honest seller-signed record.
+        // Path B reads R5 (not R7), so a vault whose R7 names a different oracle
+        // NFT is still claimable with the honest seller-signed record. The wrong
+        // pin propagates, though: path B copies R7 into the PROVEN box's R9
+        // (since 2026-10-03), so the resulting box's contest path rejects the
+        // genuine oracle — a deployment error poisons C′, never the claim.
         val fx = VaultFixture(r7OracleNftId = ByteArray(32) { (it * 11 + 2).toByte() })
         val sr = SignedRecord(fx, fx.handoffRecord())
         assertTrue(
@@ -811,6 +821,7 @@ class VaultContractSpec {
                 inputs = listOf(box),
                 outputs = listOf(fx.sellerOut()), // any address, not the R6 key's
                 height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CLAIM_PAYOUT),
                 secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
             ),
         )
@@ -860,9 +871,10 @@ class VaultContractSpec {
 
     @Test
     fun `50 contest after maturation passes`() {
-        // Path C′ stays reachable past CLAIM_MATURATION (the D/C′ discriminator
-        // is the data input, not height alone): an attested-but-slow honest
-        // seller must always be able to counter a false claim.
+        // Path C′ stays reachable past CLAIM_MATURATION: the D/C′ discriminator
+        // is the action byte, not height (and not the data input since
+        // 2026-10-03), so an attested-but-slow honest seller must always be
+        // able to counter a false claim.
         val fx = VaultFixture()
         val box = fx.provenBox(proofHeight)
         assertTrue(
@@ -872,6 +884,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 10,
+                vars = fx.actionVars(ContractParams.ACTION_CONTEST),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -1002,10 +1015,11 @@ class VaultContractSpec {
 
     @Test
     fun `52 claim payout with a stray data input fails`() {
-        // A claim-payout tx carrying a data input trips the D/C′ discriminator
-        // into the C′ branch, which demands the seller key — the buyer's
-        // signature alone cannot save it. (Honest claim txs carry no data
-        // inputs; ClaimTxBuilder attaches none.)
+        // A claim-payout tx names ACTION_CLAIM_PAYOUT, and the D branch rejects
+        // any spend carrying a data input — a payout never has one (a contest
+        // always does), so the stray box fails the spend rather than riding
+        // along inert. (Honest claim txs carry no data inputs; ClaimTxBuilder
+        // attaches none.)
         val fx = VaultFixture()
         val box = fx.provenBox(proofHeight)
         assertFalse(
@@ -1015,7 +1029,106 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.buyerOut()),
                 height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CLAIM_PAYOUT),
                 secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
+            ),
+        )
+    }
+
+    // ------------------------------------------------------------- PAYMENT_PROVEN action byte (57-59)
+
+    @Test
+    fun `57 a proven spend with no action var fails`() {
+        // Mirror of test 53 for the PROVEN box (the action byte is mandatory
+        // there since 2026-10-03): a fully mature, well-formed payout without
+        // the var dies in proof reduction on `getVar[Byte](0).get`.
+        val fx = VaultFixture()
+        val box = fx.provenBox(proofHeight)
+        assertFalse(
+            fx.verifySpend(
+                fx.provenTree, box,
+                inputs = listOf(box),
+                outputs = listOf(fx.buyerOut()),
+                height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
+            ),
+        )
+    }
+
+    @Test
+    fun `58 an unrecognized action code on the proven box fails`() {
+        // Mirror of test 54: the fail-closed tail catches anything but
+        // ACTION_CLAIM_PAYOUT / ACTION_CONTEST.
+        val fx = VaultFixture()
+        val box = fx.provenBox(proofHeight)
+        assertFalse(
+            fx.verifySpend(
+                fx.provenTree, box,
+                inputs = listOf(box),
+                outputs = listOf(fx.buyerOut()),
+                height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                vars = fx.unknownActionVars(),
+                secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
+            ),
+        )
+    }
+
+    @Test
+    fun `59 a payout naming the contest action fails`() {
+        // A payout-shaped spend (mature, buyer-signed, no data input) that names
+        // ACTION_CONTEST is routed to the C′ branch, which reads
+        // `CONTEXT.dataInputs(0)` — absent here, so the reduction throws and the
+        // spend is rejected. The action byte names the path; the shape cannot
+        // talk its way into another one.
+        val fx = VaultFixture()
+        val box = fx.provenBox(proofHeight)
+        assertFalse(
+            fx.verifySpend(
+                fx.provenTree, box,
+                inputs = listOf(box),
+                outputs = listOf(fx.buyerOut()),
+                height = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CONTEST),
+                secrets = listOf<SigmaProtocolPrivateInput<*>>(fx.buyerKey),
+            ),
+        )
+    }
+
+    // ------------------------------------------------------------- per-box NFT pin (60-61, 2026-10-03)
+
+    @Test
+    fun `60 claim-open with a wrong R9 oracleNftId in the proven output fails`() {
+        // Path B requires OUTPUTS(0).R9 == SELF.R7: the oracle NFT pin is copied
+        // per-box (the PROVEN script's compile-time pin is gone since
+        // 2026-10-03), so a proven output pinned to a different NFT is rejected.
+        val fx = VaultFixture()
+        val sr = SignedRecord(fx, fx.handoffRecord())
+        assertFalse(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                outputs = listOf(fx.provenOut(proofHeight, sr.id, oracleNft = fx.wrongNftId), fx.changeOut()),
+                height = proofHeight,
+                vars = sr.vars(),
+            ),
+        )
+    }
+
+    @Test
+    fun `61 contest from a proven box with a wrong R9 oracleNftId fails`() {
+        // Mirror of test 43 for the PROVEN box: its NFT pin is R9 now, so a
+        // proven box pinned to a different NFT rejects the genuine oracle box.
+        val fx = VaultFixture()
+        val box = fx.provenBox(proofHeight, oracleNft = fx.wrongNftId)
+        assertFalse(
+            fx.verifySpend(
+                fx.provenTree, box,
+                inputs = listOf(box),
+                dataInputs = listOf(fx.oracleDataBox()),
+                outputs = listOf(fx.sellerOut()),
+                height = proofHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_CONTEST),
+                secrets = listOf(fx.sellerKey),
             ),
         )
     }

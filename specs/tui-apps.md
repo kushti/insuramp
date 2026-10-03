@@ -193,11 +193,11 @@ The buyer console is the surface where that gap is closed:
   to switch). The compiled trees use the **canonical** parameters — not
   `compileFast`, whose shortened handoff-record freshness is the test/dev override
   (the 3-block maturation override is gone since 2026-10-03: the maturation is a
-  hardcoded literal in the contract) — and the deployed
-  oracle NFT id comes from `P2P_ORACLE_NFT_ID`, since it is a compile-time pin of the
-  PAYMENT_PROVEN tree. Without it the console compiles against the test dummy and will
-  refuse a real vault box; that is correct behaviour but opaque, so it is called out on
-  stderr at startup rather than discovered at claim time.
+  hardcoded literal in the contract). The deployed oracle NFT id comes from
+  `P2P_ORACLE_NFT_ID`; since 2026-10-03 it is no longer compiled into the trees (both
+  boxes pin it per-box: FUNDED R7, PROVEN R9), so an unset variable no longer makes the
+  console refuse a real vault box — it only degrades spend classification (a release can
+  be misread as a reclaim), and that is called out on stderr at startup.
 
 ### 5.3 The seller key comes from the chain, not the backend
 

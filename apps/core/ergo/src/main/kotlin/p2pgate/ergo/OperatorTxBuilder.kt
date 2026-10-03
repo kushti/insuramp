@@ -178,7 +178,7 @@ class OperatorTxBuilder(
         val inputs = listOf(TxAssembly.toErgoBox(fundedBox, trees.fundedTree)) + feeInputs.map { TxAssembly.toErgoBox(it, TxAssembly.decodeTree(it)) }
         return TxAssembly.assemble(
             inputs = inputs,
-            contextVars = fundedActionVars(ContractParams.ACTION_RECLAIM),
+            contextVars = actionVars(ContractParams.ACTION_RECLAIM),
             contextVarInputIndex = 0,
             candidates = candidates,
             minerFeeNanoErg = minerFeeNanoErg,
@@ -192,12 +192,14 @@ class OperatorTxBuilder(
     }
 
     /**
-     * The FUNDED box's path discriminator: context var 0, a `Byte` naming the
-     * spending path (specs/vault-contract.md §3.3). Mandatory since 2026-10-04 —
-     * the contract reads it with `.get`, so a FUNDED-box spend that omits it
-     * fails during proof reduction.
+     * A vault box's path discriminator: context var 0, a `Byte` naming the
+     * spending path — `ContractParams.ACTION_*` for the FUNDED box,
+     * `ContractParams.ACTION_CLAIM_PAYOUT`/`ACTION_CONTEST` for the PROVEN box
+     * (specs/vault-contract.md §3.3). Mandatory on both boxes since
+     * 2026-10-04/2026-10-03 — the scripts read it with `.get`, so a spend that
+     * omits it fails during proof reduction.
      */
-    private fun fundedActionVars(action: Int): Map<Int, sigma.ast.EvaluatedValue<out sigma.ast.SType>> =
+    private fun actionVars(action: Int): Map<Int, sigma.ast.EvaluatedValue<out sigma.ast.SType>> =
         mapOf(ContractParams.ACTION_VAR_INDEX to ErgoValues.byteConstant(action))
 
     /**
@@ -246,8 +248,10 @@ class OperatorTxBuilder(
     /**
      * Contest (path C′) from the PAYMENT_PROVEN box: same gate as
      * [buildRelease] — the oracle attestation counters any claim, with the
-     * seller co-signing the payout. The oracle NFT id is the compile-time pin
-     * of the proven tree (§8.3 item 3).
+     * seller co-signing the payout. The oracle NFT id is the per-box pin in
+     * the PROVEN box's R9 (copied from the FUNDED box's R7 at claim-open).
+     * Names `ACTION_CONTEST` in context var
+     * 0 — the PROVEN box's path discriminator, mandatory since 2026-10-03.
      */
     fun buildContest(
         provenBox: ChainBox,
@@ -261,15 +265,20 @@ class OperatorTxBuilder(
         require(provenBox.ergoTreeHex.equals(trees.provenPropositionHex, ignoreCase = true)) {
             "input box is not a PAYMENT_PROVEN vault box of this contract"
         }
+        // The contest gate reads the oracle NFT id from the box's R9 (per-box
+        // pin, copied from the FUNDED box's R7 at claim-open — the PROVEN tree
+        // has no compile-time pin since 2026-10-03).
+        val r9 = provenBox.registerBytes(9) ?: throw IllegalArgumentException("PAYMENT_PROVEN box has no R9 oracleNftId")
+        require(r9.size == 32) { "PAYMENT_PROVEN R9 must be the 32-byte oracleNftId, got ${r9.size}" }
         return buildOracleRelease(
             vaultBox = provenBox,
             vaultTree = trees.provenTree,
-            action = null, // the PROVEN tree infers C′ from the data input — it takes no action var
+            action = ContractParams.ACTION_CONTEST,
             oracleDataInput = oracleDataInput,
             feeInputs = feeInputs,
             currentHeight = currentHeight,
             changeAddress = changeAddress,
-            nftPin = trees.oracleNftId,
+            nftPin = r9,
             signer = signer,
             sellerPayoutAddress = sellerPayoutAddress,
         )
@@ -280,8 +289,8 @@ class OperatorTxBuilder(
     private fun buildOracleRelease(
         vaultBox: ChainBox,
         vaultTree: ErgoTree,
-        /** FUNDED-box action code, or null for the PROVEN box (no action var). */
-        action: Int?,
+        /** The vault box's action code: `ACTION_RELEASE` for the FUNDED box, `ACTION_CONTEST` for the PROVEN box. */
+        action: Int,
         oracleDataInput: ChainBox,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
@@ -334,7 +343,7 @@ class OperatorTxBuilder(
         return TxAssembly.assemble(
             inputs = inputs,
             dataInputs = listOf(TxAssembly.toErgoBox(oracleDataInput, TxAssembly.decodeTree(oracleDataInput))),
-            contextVars = action?.let { fundedActionVars(it) } ?: emptyMap(),
+            contextVars = actionVars(action),
             contextVarInputIndex = 0,
             candidates = candidates,
             minerFeeNanoErg = minerFeeNanoErg,

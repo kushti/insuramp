@@ -56,10 +56,11 @@ class VaultFixture(
     val timeoutHeight: Int = creationHeight + ContractParams.RECLAIM_TIMEOUT_BLOCKS
 
     // --- compiled contracts (order matters: proven feeds funded) ---
+    // The proven tree takes no ORACLE_NFT_ID: since 2026-10-03 the contest path
+    // reads the NFT id per-box from R9 (copied from the FUNDED box's R7).
     val provenTree: ErgoTree = ContractCompiler.compileResource(
         "vault_payment_proven.es",
         mapOf(
-            "ORACLE_NFT_ID" to ConstValue.Bytes(oracleNftId),
             "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${ContractParams.HANDOFF_RECORD_MAX_AGE_MS}L"),
         ),
     )
@@ -118,14 +119,19 @@ class VaultFixture(
         ),
     )
 
-    /** The PAYMENT_PROVEN registers: R7 is the plain `Long` proofHeight (§4.1). */
-    fun provenRegs(proofHeight: Int, recordId: ByteArray) = SigmaBridge.regs(
+    /** The PAYMENT_PROVEN registers: R7 is the plain `Long` proofHeight, R9 the
+     *  per-box oracleNftId (§4.1). [oracleNft] defaults differ by caller:
+     *  [provenBox] (an on-chain box being spent) defaults to the honest
+     *  [oracleNftId]; [provenOut] (the claim-open's output) defaults to
+     *  [fundedR7] — the contract requires `OUTPUTS(0).R9 == SELF.R7`. */
+    fun provenRegs(proofHeight: Int, recordId: ByteArray, oracleNft: ByteArray) = SigmaBridge.regs(
         listOf(
             t(SigmaBridge.regId(4), bytesC(dealId)),
             t(SigmaBridge.regId(5), bytesC(sellerPk)),
             t(SigmaBridge.regId(6), bytesC(buyerPk)),
             t(SigmaBridge.regId(7), SigmaBridge.longVal(proofHeight.toLong()) as EvaluatedValue<out SType>),
             t(SigmaBridge.regId(8), bytesC(recordId)),
+            t(SigmaBridge.regId(9), bytesC(oracleNft)),
         ),
     )
 
@@ -182,8 +188,12 @@ class VaultFixture(
         "cf".repeat(32), 0, creationHeight,
     )
 
-    fun provenBox(proofHeight: Int, recordId: ByteArray = ByteArray(32) { 7 }): ErgoBox = SigmaBridge.box(
-        boxValue, provenTree, tokens(tok(useTokenId, dealAmount)), provenRegs(proofHeight, recordId),
+    fun provenBox(
+        proofHeight: Int,
+        recordId: ByteArray = ByteArray(32) { 7 },
+        oracleNft: ByteArray = oracleNftId,
+    ): ErgoBox = SigmaBridge.box(
+        boxValue, provenTree, tokens(tok(useTokenId, dealAmount)), provenRegs(proofHeight, recordId, oracleNft),
         "ef".repeat(32), 0, proofHeight,
     )
 
@@ -199,8 +209,13 @@ class VaultFixture(
     fun changeOut(): ErgoBoxCandidate =
         SigmaBridge.candidate(boxValue, sellerTree, creationHeight, tokens(tok(useTokenId, 1)), SigmaBridge.emptyRegs())
 
-    fun provenOut(proofHeight: Int, recordId: ByteArray, amount: Long = dealAmount): ErgoBoxCandidate =
-        SigmaBridge.candidate(boxValue, provenTree, creationHeight, tokens(tok(useTokenId, amount)), provenRegs(proofHeight, recordId))
+    fun provenOut(
+        proofHeight: Int,
+        recordId: ByteArray,
+        amount: Long = dealAmount,
+        oracleNft: ByteArray = fundedR7,
+    ): ErgoBoxCandidate =
+        SigmaBridge.candidate(boxValue, provenTree, creationHeight, tokens(tok(useTokenId, amount)), provenRegs(proofHeight, recordId, oracleNft))
 
     /** Rotation target for the oracle box: same script, NFT preserved, value >=. */
     fun oracleOut(value: Long = boxValue, amount: Long = 1L): ErgoBoxCandidate =

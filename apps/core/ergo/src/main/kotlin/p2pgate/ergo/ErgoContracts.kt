@@ -18,9 +18,10 @@ import sigma.ast.ErgoTree
  * path-B output check), `CLAIM_MATURATION_BLOCKS` is a hardcoded literal in the
  * `.es` (360, ~12h — since 2026-10-03 nothing varies it between compiles), and
  * `HANDOFF_RECORD_MAX_AGE_MS` is injected as a raw Long literal.
- * `ORACLE_NFT_ID` is a deployment parameter: the default is the fixed dummy
- * the fixture uses (see [DUMMY_ORACLE_NFT_ID]), and it is injectable — an
- * operator deploys from its own parameter set.
+ * `ORACLE_NFT_ID` is a deployment descriptor, not compiled into either tree
+ * (since 2026-10-03 both boxes pin it per-box: FUNDED R7, PROVEN R9): the
+ * default is the fixed dummy the fixture uses (see [DUMMY_ORACLE_NFT_ID]), and
+ * it is injectable — an operator deploys from its own parameter set.
  *
  * The compiled trees are network-agnostic ErgoTrees; the network prefix only
  * affects the rendered P2S addresses ([fundedAddress]/[provenAddress]).
@@ -38,7 +39,7 @@ object ErgoContracts {
         val networkPrefix: Byte,
         val fundedTree: ErgoTree,
         val provenTree: ErgoTree,
-        /** The phase-1 oracle NFT id (R7 pin of the FUNDED tree, compile-time pin of the PROVEN tree). */
+        /** The phase-1 oracle NFT id — per-box pin (FUNDED R7, copied to the PROVEN box's R9 at claim-open), not compiled into either tree. */
         val oracleNftId: ByteArray,
     ) {
         val networkType: NetworkType =
@@ -58,8 +59,11 @@ object ErgoContracts {
     }
 
     /**
-     * Compiles the two vault trees. [oracleNftId] is the phase-1 oracle's NFT
-     * (compile-time pin of the PAYMENT_PROVEN tree, §8.3 item 3).
+     * Compiles the two vault trees. [oracleNftId] is the phase-1 oracle's NFT —
+     * a **deployment descriptor**, not a compile-time constant (since
+     * 2026-10-03 both boxes read it per-box: FUNDED R7, PROVEN R9): it is what
+     * [OperatorTxBuilder.buildFund] writes into the FUNDED box's R7 and what
+     * [VaultBoxTracker] recognizes the oracle's attestation box by.
      * [handoffRecordMaxAgeMs] defaults to the canonical constant and is
      * injectable for fast compiles (see [compileFast]); the claim maturation
      * is a hardcoded literal in `vault_payment_proven.es`, not a parameter.
@@ -74,7 +78,6 @@ object ErgoContracts {
         val provenTree = ContractCompiler.compileResource(
             "vault_payment_proven.es",
             mapOf(
-                "ORACLE_NFT_ID" to ConstValue.Bytes(oracleNftId),
                 "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${handoffRecordMaxAgeMs}L"),
             ),
             networkPrefix = networkPrefix,

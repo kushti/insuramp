@@ -86,7 +86,7 @@ class ClaimTxBuilder(
         require(record.dealId.contentEquals(dealId)) { "record dealId does not match the vault's R4" }
         val sellerPk = fundedBox.registerBytes(5) ?: throw IllegalArgumentException("FUNDED box has no R5 sellerPubKey")
         val buyerPk = fundedBox.registerBytes(6) ?: throw IllegalArgumentException("FUNDED box has no R6 buyerPubKey")
-        fundedBox.registerBytes(7) ?: throw IllegalArgumentException("FUNDED box has no R7 oracleNftId")
+        val oracleNftId = fundedBox.registerBytes(7) ?: throw IllegalArgumentException("FUNDED box has no R7 oracleNftId")
         require(fundedBox.tokens.isNotEmpty()) { "FUNDED box carries no collateral tokens" }
 
         // Pre-check the freshness window the contract enforces in-script against
@@ -100,7 +100,9 @@ class ClaimTxBuilder(
         val recordId = SchnorrVerifier.blake2b256(a, z, recordBytes)
 
         // Output 0: the PAYMENT_PROVEN box carrying ALL tokens and ERG,
-        // R4–R6 copied with R7 = proofHeight (plain Long) and R8 = record id.
+        // R4–R6 copied with R7 = proofHeight (plain Long), R8 = record id, and
+        // R9 = the FUNDED box's R7 oracleNftId (the contest path's NFT gate
+        // reads it per-box — the contract enforces the copy).
         val provenCandidate = TxAssembly.candidate(
             value = fundedBox.value,
             tree = trees.provenTree,
@@ -111,6 +113,7 @@ class ClaimTxBuilder(
                 6 to ErgoValues.collBytesConstant(buyerPk),
                 7 to ErgoValues.longConstant(currentHeight.toLong()),
                 8 to ErgoValues.collBytesConstant(recordId),
+                9 to ErgoValues.collBytesConstant(oracleNftId),
             ),
             creationHeight = currentHeight,
         )
@@ -145,7 +148,9 @@ class ClaimTxBuilder(
     /**
      * Claim payout (path D). Spends the PAYMENT_PROVEN box once
      * `HEIGHT > proofHeight + CLAIM_MATURATION`; output 0 pays the full
-     * collateral to [buyerPayoutAddress].
+     * collateral to [buyerPayoutAddress]. Names `ACTION_CLAIM_PAYOUT` in
+     * context var 0 — the PROVEN box's path discriminator, mandatory since
+     * 2026-10-03.
      */
     fun buildClaimPayout(
         provenBox: ChainBox,
@@ -191,7 +196,11 @@ class ClaimTxBuilder(
         val inputs = listOf(TxAssembly.toErgoBox(provenBox, trees.provenTree)) + feeInputs.map { TxAssembly.toErgoBox(it, TxAssembly.decodeTree(it)) }
         return TxAssembly.assemble(
             inputs = inputs,
-            contextVars = emptyMap(),
+            // The PROVEN box names its path in context var 0, same as the FUNDED
+            // box (mandatory since 2026-10-03): ACTION_CLAIM_PAYOUT selects path D.
+            contextVars = mapOf(
+                ContractParams.ACTION_VAR_INDEX to ErgoValues.byteConstant(ContractParams.ACTION_CLAIM_PAYOUT),
+            ),
             contextVarInputIndex = 0,
             candidates = candidates,
             minerFeeNanoErg = minerFeeNanoErg,
