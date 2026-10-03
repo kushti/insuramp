@@ -62,6 +62,9 @@ class ClaimTxBuilderSpec {
         return JavaHelpers.collToByteArray(v as sigma.Coll<Any>)
     }
 
+    private fun contextVarByte(tx: UnsignedTransaction, id: Int): Byte =
+        (rawExtension(tx).apply(id.toByte()).value() as java.lang.Byte).toByte()
+
     private fun contextVarLong(tx: UnsignedTransaction, id: Int): Long {
         return (rawExtension(tx).apply(id.toByte()).value() as java.lang.Long).toLong()
     }
@@ -75,12 +78,13 @@ class ClaimTxBuilderSpec {
     // ---------------------------------------------------------------- claim-open (path B)
 
     @Test
-    fun `claim-open carries the record and Schnorr half as context vars 0-3`() {
+    fun `claim-open names ACTION_CLAIM in var 0 and carries the record as vars 1-4`() {
         val (tx, record, sig) = openTx()
-        assertTrue(contextVarBytes(tx, 0).contentEquals(record.encode()))
-        assertTrue(contextVarBytes(tx, 1).contentEquals(sig.a))
-        assertTrue(contextVarBytes(tx, 2).contentEquals(sig.z))
-        assertEquals(record.timestamp * 1000, contextVarLong(tx, 3))
+        assertEquals(ContractParams.ACTION_CLAIM.toByte(), contextVarByte(tx, 0))
+        assertTrue(contextVarBytes(tx, 1).contentEquals(record.encode()))
+        assertTrue(contextVarBytes(tx, 2).contentEquals(sig.a))
+        assertTrue(contextVarBytes(tx, 3).contentEquals(sig.z))
+        assertEquals(record.timestamp * 1000, contextVarLong(tx, 4))
     }
 
     @Test

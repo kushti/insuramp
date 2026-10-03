@@ -20,10 +20,10 @@ fun interface DealTxSigner {
  * Builds the only two transactions the buyer app ever constructs
  * (`specs/android-app.md` §4.3), both spends of vault boxes:
  *
- *  - [buildClaimOpen] — vault path B: spends the FUNDED box carrying the
- *    SELLER-signed handoff record as context vars 0–3, output 0 the
- *    PAYMENT_PROVEN box (R4–R6 copied, R7 the plain `Long` `proofHeight`,
- *    R8 = `blake2b256(a ‖ z ‖ record)`);
+ *  - [buildClaimOpen] — vault path B: spends the FUNDED box naming the path in
+ *    context var 0 (`ACTION_CLAIM`) and carrying the SELLER-signed handoff
+ *    record in vars 1–4, output 0 the PAYMENT_PROVEN box (R4–R6 copied, R7 the
+ *    plain `Long` `proofHeight`, R8 = `blake2b256(a ‖ z ‖ record)`);
  *  - [buildClaimPayout] — vault path D: spends the PAYMENT_PROVEN box after
  *    maturation, paying the full collateral to the buyer's payout address.
  *
@@ -119,11 +119,15 @@ class ClaimTxBuilder(
             creationHeight = currentHeight,
         )
 
+        // Context vars: var 0 names the spending path (mandatory since 2026-10-04
+        // — the contract reads it with `.get`, so a FUNDED-box claim-open without
+        // it cannot validate), vars 1..4 carry the seller-signed handoff record.
         val contextVars = mapOf(
-            0 to ErgoValues.collBytesConstant(recordBytes),
-            1 to ErgoValues.collBytesConstant(a),
-            2 to ErgoValues.collBytesConstant(z),
-            3 to ErgoValues.longConstant(tsMs),
+            ContractParams.ACTION_VAR_INDEX to ErgoValues.byteConstant(ContractParams.ACTION_CLAIM),
+            1 to ErgoValues.collBytesConstant(recordBytes),
+            2 to ErgoValues.collBytesConstant(a),
+            3 to ErgoValues.collBytesConstant(z),
+            4 to ErgoValues.longConstant(tsMs),
         )
 
         val inputs = listOf(TxAssembly.toErgoBox(fundedBox, trees.fundedTree)) + feeInputs.map { TxAssembly.toErgoBox(it, TxAssembly.decodeTree(it)) }

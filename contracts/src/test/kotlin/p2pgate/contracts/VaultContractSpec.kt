@@ -17,6 +17,10 @@ import kotlin.test.assertTrue
  * addresses are free on A/C/C′/D (key rotation): only the full collateral is
  * conserved. The driver proves/verifies SELF only, with the
  * data inputs attached to the unsigned transaction exactly as on-chain.
+ *
+ * Every FUNDED-box spend carries the explicit action byte in context var 0
+ * (`ContractParams.ACTION_*`, added 2026-10-04); the PAYMENT_PROVEN box still
+ * infers its path from the data input, since only two paths share that script.
  */
 class VaultContractSpec {
 
@@ -41,6 +45,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox, fx.oracleBox),
                 outputs = listOf(fx.sellerOut()),
                 height = fx.timeoutHeight - 1,
+                vars = fx.actionVars(ContractParams.ACTION_RECLAIM),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -55,6 +60,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox, fx.oracleBox),
                 outputs = listOf(fx.sellerOut(), fx.changeOut()),
                 height = fx.timeoutHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_RECLAIM),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -69,6 +75,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox, fx.oracleBox),
                 outputs = listOf(fx.sellerOut()),
                 height = fx.timeoutHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_RECLAIM),
                 secrets = listOf(fx.buyerKey),
             ),
         )
@@ -115,9 +122,9 @@ class VaultContractSpec {
         // dealId, amount, currency, timestamp), honest seller half otherwise.
         // Rejection comes from the in-script challenge binding the carried
         // record bytes (and from the freshness binding for the timestamp region;
-        // the dealId flip fails the in-branch record-dealId binding — the path
-        // discriminator is only context-var presence, so a flipped dealId still
-        // enters path B and is rejected there).
+        // the dealId flip fails the in-branch record-dealId binding — the action
+        // byte names path B but says nothing about the record, so a flipped
+        // dealId still enters path B and is rejected there).
         val fx = VaultFixture()
         val sr = SignedRecord(fx, fx.handoffRecord())
         for (index in listOf(0, 4, 10, 40, 46, 50)) {
@@ -127,7 +134,7 @@ class VaultContractSpec {
                     inputs = listOf(fx.fundedBox),
                     outputs = listOf(fx.provenOut(proofHeight, sr.id)),
                     height = proofHeight,
-                    vars = sr.vars() + (0 to SigmaBridge.bytesConst(fx.flippedByte(sr.record, index))),
+                    vars = sr.vars() + (1 to SigmaBridge.bytesConst(fx.flippedByte(sr.record, index))),
                 ),
                 "flipped record byte at index $index must be rejected",
             )
@@ -180,7 +187,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox),
                 outputs = listOf(fx.provenOut(proofHeight, sr.id)),
                 height = proofHeight,
-                vars = sr.vars() + (3 to SigmaBridge.longVal(VaultFixture.NOW_MS) as sigma.ast.EvaluatedValue<out sigma.ast.SType>),
+                vars = sr.vars() + (4 to SigmaBridge.longVal(VaultFixture.NOW_MS) as sigma.ast.EvaluatedValue<out sigma.ast.SType>),
             ),
         )
     }
@@ -198,7 +205,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox),
                 outputs = listOf(fx.provenOut(proofHeight, sr.id)),
                 height = proofHeight,
-                vars = sr.vars() + (3 to SigmaBridge.longVal(VaultFixture.NOW_MS - 5 * 3600_000) as sigma.ast.EvaluatedValue<out sigma.ast.SType>),
+                vars = sr.vars() + (4 to SigmaBridge.longVal(VaultFixture.NOW_MS - 5 * 3600_000) as sigma.ast.EvaluatedValue<out sigma.ast.SType>),
             ),
         )
     }
@@ -315,6 +322,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -331,6 +339,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -351,6 +360,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox, fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -368,6 +378,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.wrongNftBox),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -389,6 +400,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.foreignOracleBox),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -407,6 +419,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.buyerOut()), // any address, not the R5 key's
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -427,6 +440,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox(payload = fx.paymentPayload(dealId = otherDealId))),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -595,6 +609,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox(payload = dealX.paymentPayload(dealId = ByteArray(32) { 42 }))), // dealX's dealId
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -658,7 +673,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox),
                 outputs = listOf(fx.provenOut(proofHeight, tamperedId)),
                 height = proofHeight,
-                vars = sr.vars() + (2 to SigmaBridge.bytesConst(zBad)),
+                vars = sr.vars() + (3 to SigmaBridge.bytesConst(zBad)),
             ),
         )
     }
@@ -678,7 +693,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox),
                 outputs = listOf(fx.provenOut(proofHeight, tamperedId)),
                 height = proofHeight,
-                vars = sr.vars() + (2 to SigmaBridge.bytesConst(zNeg)),
+                vars = sr.vars() + (3 to SigmaBridge.bytesConst(zNeg)),
             ),
         )
     }
@@ -698,7 +713,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox),
                 outputs = listOf(fx.provenOut(proofHeight, badId)),
                 height = proofHeight,
-                vars = sr.vars() + (1 to SigmaBridge.bytesConst(badNonce)),
+                vars = sr.vars() + (2 to SigmaBridge.bytesConst(badNonce)),
             ),
         )
     }
@@ -739,6 +754,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -778,6 +794,7 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = proofHeight,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
             ),
         )
     }
@@ -810,6 +827,7 @@ class VaultContractSpec {
                 inputs = listOf(fx.fundedBox, fx.oracleBox),
                 outputs = listOf(fx.buyerOut()), // any address, not the R5 key's
                 height = fx.timeoutHeight + 1,
+                vars = fx.actionVars(ContractParams.ACTION_RECLAIM),
                 secrets = listOf(fx.sellerKey),
             ),
         )
@@ -819,11 +837,13 @@ class VaultContractSpec {
 
     @Test
     fun `49 open claim after the reclaim timeout passes`() {
-        // The branch order puts B before A (context-var-0 presence beats HEIGHT):
-        // the PAYMENT_PROVEN output satisfies the payout conservation check too,
-        // so a height-first discriminator would swallow every post-timeout
-        // claim-open into path A (proveDlog(sellerKey)) — late disputes must
-        // stay possible.
+        // Late disputes must stay possible. Under the pre-2026-10-04 discriminator
+        // this was a branch-ORDER hazard: the PAYMENT_PROVEN output also satisfies
+        // the payout conservation check, so a height-first discriminator would
+        // swallow every post-timeout claim-open into path A (proveDlog(sellerKey)).
+        // The explicit action byte removes the ordering question entirely — a
+        // claim-open is a claim-open at any height — but the guarantee itself is
+        // what this test pins.
         val fx = VaultFixture()
         val lateHeight = fx.timeoutHeight + 10
         val sr = SignedRecord(fx, fx.handoffRecord())
@@ -858,10 +878,12 @@ class VaultContractSpec {
     }
 
     @Test
-    fun `51 release after the reclaim timeout passes as a seller-signed spend`() {
-        // A post-timeout release tx (no vars, full-collateral payout) lands in
-        // the path A branch: seller-signed and payout-identical to a reclaim,
-        // so the attestation is no longer required after the timeout.
+    fun `51 release after the reclaim timeout still requires the attestation`() {
+        // CHANGED 2026-10-04 (explicit action byte). Before, a post-timeout
+        // release tx (no vars, full-collateral payout) landed in the path A branch
+        // and the attestation went unchecked — seller-signed and payout-identical
+        // to a reclaim, so the two were indistinguishable. Naming the path removes
+        // that collapse: a release is always a release, at any height.
         val fx = VaultFixture()
         assertTrue(
             fx.verifySpend(
@@ -870,8 +892,111 @@ class VaultContractSpec {
                 dataInputs = listOf(fx.oracleDataBox()),
                 outputs = listOf(fx.sellerOut()),
                 height = fx.timeoutHeight + 10,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
                 secrets = listOf(fx.sellerKey),
             ),
+        )
+        // And the same tx without the attestation no longer sneaks through as a
+        // reclaim — pre-2026-10-04 this validated, because with no vars the old
+        // discriminator fell through to path A.
+        assertFalse(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                outputs = listOf(fx.sellerOut()),
+                height = fx.timeoutHeight + 10,
+                vars = fx.actionVars(ContractParams.ACTION_RELEASE),
+                secrets = listOf(fx.sellerKey),
+            ),
+            "post-timeout release without the attestation must be rejected",
+        )
+    }
+
+    // ------------------------------------------------------------- action discriminator (53-56)
+
+    @Test
+    fun `53 a spend with no action var fails`() {
+        // Var 0 is mandatory: `getVar[Byte](0).get` throws during reduction, so a
+        // FUNDED box cannot be spent by a tx that declines to name a path. The
+        // contract has no default path.
+        val fx = VaultFixture()
+        assertFalse(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                outputs = listOf(fx.sellerOut()),
+                height = fx.timeoutHeight + 1,
+                secrets = listOf(fx.sellerKey),
+            ),
+            "a spend with no action byte must be rejected",
+        )
+    }
+
+    @Test
+    fun `54 an unrecognized action code fails`() {
+        // Fail-closed: a garbage action byte is not read as "release, by
+        // elimination", it is rejected. Pre-2026-10-04 the residual branch meant
+        // every unmatched shape was *attempted* as a release.
+        val fx = VaultFixture()
+        assertFalse(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                dataInputs = listOf(fx.oracleDataBox()),
+                outputs = listOf(fx.sellerOut()),
+                height = proofHeight,
+                vars = fx.unknownActionVars(),
+                secrets = listOf(fx.sellerKey),
+            ),
+            "an unknown action code must be rejected even with a valid attestation",
+        )
+    }
+
+    @Test
+    fun `55 a carried handoff record does not excuse the reclaim timeout`() {
+        // Carrying a valid seller-signed record changes nothing for the reclaim
+        // branch: it reads HEIGHT and the payout conservation check, not the
+        // record. Naming RECLAIM before the timeout must fail even with a
+        // well-formed claim tx's vars riding along.
+        //
+        // (After the timeout the same shape IS a reclaim — seller-signed,
+        // full-collateral payout — which is why this test pins the height, not
+        // the var set: test 2 already covers the post-timeout side.)
+        val fx = VaultFixture()
+        val sr = SignedRecord(fx, fx.handoffRecord())
+        assertFalse(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                outputs = listOf(fx.sellerOut(), fx.changeOut()),
+                height = fx.timeoutHeight - 1,
+                vars = fx.actionVars(ContractParams.ACTION_RECLAIM).plus(sr.vars().filterKeys { it > 0 }),
+                secrets = listOf(fx.sellerKey),
+            ),
+            "a carried record must not bypass the reclaim timeout",
+        )
+    }
+
+    @Test
+    fun `56 the claim action cannot be used to take the collateral`() {
+        // Mirror of test 55, and the important one for the buyer's protection:
+        // a well-formed seller-signed claim tx pays out to OUTPUTS(0), so under
+        // the OLD discriminator (var-0 presence) the seller's proveDlog was the
+        // only thing standing between "valid record" and "seller takes the
+        // collateral". Under the new one ACTION_CLAIM can only ever produce the
+        // PAYMENT_PROVEN box, so there is no payout shape left to redirect.
+        val fx = VaultFixture()
+        val sr = SignedRecord(fx, fx.handoffRecord())
+        assertFalse(
+            fx.verifySpend(
+                fx.fundedTree, fx.fundedBox,
+                inputs = listOf(fx.fundedBox),
+                outputs = listOf(fx.sellerOut(), fx.changeOut()),
+                height = proofHeight,
+                vars = sr.vars(),
+                secrets = listOf(fx.sellerKey),
+            ),
+            "ACTION_CLAIM paying the seller must be rejected — no secret material needed",
         )
     }
 

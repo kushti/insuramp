@@ -38,7 +38,11 @@
   val sellerKey = decodePoint(SELF.R5[Coll[Byte]].get)
   val buyerKey = decodePoint(SELF.R6[Coll[Byte]].get)
 
-  val proofH = SELF.R7[Long].get
+  // R7: the height at which the buyer's claim landed on chain — the anchor the
+  // maturation wait counts from. Named for what it is, not for the register: the
+  // FUNDED box's R8 holds a timeout height measured from funding, which is a
+  // different clock entirely.
+  val claimOpenedAtHeight = SELF.R7[Long].get
 
   // Both paths pay out in full at OUTPUTS(0), to any address the signer chooses —
   // each path's signature authorizes the spend, so the collateral is conserved but
@@ -57,7 +61,7 @@
   //
   // The conditions sit in the guard rather than in each branch because a mixed
   // `proveDlog && Boolean` is not a SigmaProp — each branch has to stand alone.
-  if (HEIGHT.toLong > proofH + %%CLAIM_MATURATION_BLOCKS%%.toLong && payoutOk && CONTEXT.dataInputs.size == 0) {
+  if (HEIGHT.toLong > claimOpenedAtHeight + %%CLAIM_MATURATION_BLOCKS%%.toLong && payoutOk && CONTEXT.dataInputs.size == 0) {
     // Path D — the waiting period is over and nobody contested: the buyer takes it.
     proveDlog(buyerKey)
   } else {

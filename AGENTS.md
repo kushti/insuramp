@@ -182,7 +182,24 @@ collateral is conserved (key rotation); there is no receipt signature anywhere i
 the protocol. A 2026-09-26 follow-up fixed the branch discriminators the payee pin
 had been doing double duty as: path B is discriminated first (context-var-0 presence)
 so post-timeout claim-opens stay possible, and path D requires no data inputs so
-post-maturation contests (C′) stay reachable. On 2026-09-21 (pre-launch, owner decision) the attestation payload was
+post-maturation contests (C′) stay reachable. A 2026-10-04 pass replaced the FUNDED box's
+*inferred* discriminator with an explicit action byte (context var 0, a `Byte` naming
+CLAIM / RECLAIM / RELEASE, `ContractParams.ACTION_*` — the Basis reserve contract's shape):
+every path is now positively identified, the branch-ordering hazard is structurally gone,
+and an unknown code is rejected instead of falling through to release. The codes are
+  **hardcoded literals** in the `.es` (structural, not deployment parameters — nothing
+  varies them between a mainnet and a fast e2e compile, unlike `CLAIM_MATURATION_BLOCKS`);
+  `ContractParams.ACTION_*` mirrors them for the builders and `FundedActionSpec` asserts the
+  pair never drifts, since a drifted code fails quietly as an unspendable vault rather than
+  loudly. It is a **breaking change to the FUNDED spend interface** (the var is mandatory;
+  path B's material moved from vars 0–3 to 1–4) — safe only because no FUNDED box has ever
+  been funded on mainnet. One semantic change came with it: a post-timeout release tx is now
+  checked against the attestation rather than being spent as an attestation-free reclaim (the
+  seller's recourse is unchanged — he builds a RECLAIM). `vault_payment_proven.es` is
+  deliberately **not** touched: it takes no context vars and still selects D vs C′ from
+  `dataInputs.size`, since the two-box split is load-bearing (a script cannot delete one of
+  its own spending paths —
+`specs/vault-contract-review.md` §5.2). On 2026-09-21 (pre-launch, owner decision) the attestation payload was
 simplified to the bare 32-byte `dealId`: the oracle box's R4 carries only the dealId
 (the 112-byte `PaymentAttestation` field codec is deleted), the vault's R9 31-byte
 funding binding is deleted from both boxes, and release paths check only NFT custody +
@@ -207,12 +224,15 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   `~/.local/opt/jdk-17.0.20.1+1`, so run:
   `export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1 && ./gradlew :contracts:test`
   (optionally `--tests 'p2pgate.contracts.VaultContractSpec'`). Expected test counts:
-  `VaultContractSpec` 47 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
+  `VaultContractSpec` 51 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
   the 2026-09-18 fee removal deleted the old 35a–35e fee tests; the 2026-09-21
   dealId-only payload removed tests 22, 23, 25, 29; the 2026-09-24 payout-freedom
   change added tests 46–48 and inverted test 21; the 2026-09-26
-  branch-discriminator fix added tests 49–52) plus
-  `OracleContractSpec` 8 → contracts 55; dealprotocol module: DealStateMachine 44,
+  branch-discriminator fix added tests 49–52; the 2026-10-04 action-var refactor
+  added tests 53–56 and split test 51 into with/without-attestation) plus
+  `OracleContractSpec` 8 + `FundedActionSpec` 3 (the drift guard for the hardcoded
+  action literals vs `ContractParams.ACTION_*`) → contracts 62;
+  dealprotocol module: DealStateMachine 44,
   Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7, plus (2026-09-27)
   TronAddress 8 + FiatAmounts 10 → 113; ergo module:
   ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 12, SchnorrVerifier 9,
@@ -227,7 +247,7 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   seeding bug — `P2P_DEMO_QUOTES=true` seeded nothing because `maxAmount` was
   derived from an empty pool, and the existing test asserted the broken
   behaviour); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 405; plus the Android buyer app
+  E2eConfig 2, SchnorrPort 3) → JVM modules 412; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
   multi-quote currency-filtered list, offer-cash flow 2026-09-20, and the
   2026-09-27 pass: USDT-leg offer math with a rate-derived cash leg, TRON
@@ -236,8 +256,8 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   unit tests (`:app:testDebugUnitTest`); plus the terminal consoles
   (`tui/`, `specs/tui-apps.md`): `:tui:common` 30 (KtorBackendClient 16, Format,
   TuiConfig) + `:tui:seller` 24 (lanes, screen snapshot, terminal QR, status line) +
-  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 500;
-  plus the Android app's 95 → **595 total**.
+  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 507;
+  plus the Android app's 95 → **602 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :tui:common:test :tui:seller:test :tui:buyer:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

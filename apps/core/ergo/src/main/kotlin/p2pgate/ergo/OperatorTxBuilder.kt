@@ -2,6 +2,7 @@ package p2pgate.ergo
 
 import org.ergoplatform.appkit.NetworkType
 import org.ergoplatform.appkit.SignedTransaction
+import p2pgate.contracts.ContractParams
 import p2pgate.dealprotocol.DealTerms
 import sigma.ast.ErgoTree
 
@@ -129,6 +130,10 @@ class OperatorTxBuilder(
      * seller's R5 deal key). The contract leaves the payee free — the
      * seller's proveDlog(R5) signature authorizes the spend — so a fresh key
      * may be used (key rotation for the next iteration).
+     *
+     * The tx names the path in context var 0 (`ACTION_RECLAIM`): since
+     * 2026-10-04 the FUNDED contract selects its spending path from that byte
+     * rather than inferring it, and a spend without one cannot validate.
      */
     fun buildReclaim(
         fundedBox: ChainBox,
@@ -173,7 +178,7 @@ class OperatorTxBuilder(
         val inputs = listOf(TxAssembly.toErgoBox(fundedBox, trees.fundedTree)) + feeInputs.map { TxAssembly.toErgoBox(it, TxAssembly.decodeTree(it)) }
         return TxAssembly.assemble(
             inputs = inputs,
-            contextVars = emptyMap(),
+            contextVars = fundedActionVars(ContractParams.ACTION_RECLAIM),
             contextVarInputIndex = 0,
             candidates = candidates,
             minerFeeNanoErg = minerFeeNanoErg,
@@ -187,6 +192,15 @@ class OperatorTxBuilder(
     }
 
     /**
+     * The FUNDED box's path discriminator: context var 0, a `Byte` naming the
+     * spending path (specs/vault-contract.md §3.3). Mandatory since 2026-10-04 —
+     * the contract reads it with `.get`, so a FUNDED-box spend that omits it
+     * fails during proof reduction.
+     */
+    private fun fundedActionVars(action: Int): Map<Int, sigma.ast.EvaluatedValue<out sigma.ast.SType>> =
+        mapOf(ContractParams.ACTION_VAR_INDEX to ErgoValues.byteConstant(action))
+
+    /**
      * Release (path C) from the FUNDED box: [oracleDataInput] is the oracle
      * singleton box attached as a read-only data input — it must carry the
      * NFT pinned in the box's R7 and this vault's dealId in its R4 (build-time
@@ -195,6 +209,10 @@ class OperatorTxBuilder(
      * operator wallet — the attestation alone must never direct funds) and
      * pays the full collateral to [sellerPayoutAddress] (default: the R5 key;
      * the payee is free — key rotation).
+     *
+     * Names `ACTION_RELEASE` in context var 0. Since 2026-10-04 a release is a
+     * release at any height: before, a post-timeout release tx was
+     * indistinguishable from a reclaim and skipped the attestation.
      */
     fun buildRelease(
         fundedBox: ChainBox,
@@ -214,6 +232,7 @@ class OperatorTxBuilder(
         return buildOracleRelease(
             vaultBox = fundedBox,
             vaultTree = trees.fundedTree,
+            action = ContractParams.ACTION_RELEASE,
             oracleDataInput = oracleDataInput,
             feeInputs = feeInputs,
             currentHeight = currentHeight,
@@ -245,6 +264,7 @@ class OperatorTxBuilder(
         return buildOracleRelease(
             vaultBox = provenBox,
             vaultTree = trees.provenTree,
+            action = null, // the PROVEN tree infers C′ from the data input — it takes no action var
             oracleDataInput = oracleDataInput,
             feeInputs = feeInputs,
             currentHeight = currentHeight,
@@ -260,6 +280,8 @@ class OperatorTxBuilder(
     private fun buildOracleRelease(
         vaultBox: ChainBox,
         vaultTree: ErgoTree,
+        /** FUNDED-box action code, or null for the PROVEN box (no action var). */
+        action: Int?,
         oracleDataInput: ChainBox,
         feeInputs: List<ChainBox>,
         currentHeight: Int,
@@ -312,7 +334,7 @@ class OperatorTxBuilder(
         return TxAssembly.assemble(
             inputs = inputs,
             dataInputs = listOf(TxAssembly.toErgoBox(oracleDataInput, TxAssembly.decodeTree(oracleDataInput))),
-            contextVars = emptyMap(),
+            contextVars = action?.let { fundedActionVars(it) } ?: emptyMap(),
             contextVarInputIndex = 0,
             candidates = candidates,
             minerFeeNanoErg = minerFeeNanoErg,

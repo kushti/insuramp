@@ -70,6 +70,11 @@ public final class SigmaBridge {
         return sigma.ast.ByteArrayConstant.apply(b);
     }
 
+    /** Byte constant for the FUNDED box's context-var-0 action code. */
+    public static sigma.ast.EvaluatedValue<? extends sigma.ast.SType> byteConst(int v) {
+        return sigma.ast.ByteConstant.apply((byte) v);
+    }
+
     public static sigma.ast.Value<sigma.ast.SType> asVal(sigma.ast.EvaluatedValue<? extends sigma.ast.SType> c) {
         return (sigma.ast.Value<sigma.ast.SType>) (sigma.ast.Value<?>) c;
     }

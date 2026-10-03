@@ -38,6 +38,13 @@ internal object ErgoValues {
     fun collBytesConstant(value: ByteArray): sigma.ast.EvaluatedValue<out sigma.ast.SType> =
         sigma.ast.ByteArrayConstant.apply(value)
 
+    /**
+     * The sigma constant for a Byte value — the FUNDED box's context-var-0 action
+     * code (`ContractParams.ACTION_*`), which the script reads as `getVar[Byte](0)`.
+     */
+    fun byteConstant(value: Int): sigma.ast.EvaluatedValue<out sigma.ast.SType> =
+        sigma.ast.ByteConstant.apply(value.toByte())
+
     /** The sigma constant for a Long value (plain-height R7/R8 registers). */
     fun longConstant(value: Long): sigma.ast.EvaluatedValue<out sigma.ast.SType> =
         sigma.ast.LongConstant.apply(value)

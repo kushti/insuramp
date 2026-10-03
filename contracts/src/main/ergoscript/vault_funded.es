@@ -52,76 +52,101 @@
 //   R8 Long                 timeoutHeight (reclaim timeout, blocks)
 //
 // Context variables:
-//   Path B (claim):    (0) Coll[Byte] handoff record msg (52 B, "P2PH")
-//                      (1) Coll[Byte] a_sig — Schnorr nonce point, 33 B
-//                      (2) Coll[Byte] z_sig — Schnorr response, 32 B
-//                      (3) Long        record timestamp in millis (msg bytes 48..52 * 1000)
-//   Path C (release):  none — the attestation (the dealId itself) rides in
-//                      the oracle data input's R4
+//   (0) Byte           action — which path is being invoked:
+//                      0 = CLAIM (open a claim), 1 = RECLAIM, 2 = RELEASE.
+//                      Mandatory on every spend. These are structural constants,
+//                      hardcoded like basis.es's action codes — they are NOT
+//                      deployment parameters (nothing varies them between a
+//                      mainnet and a fast e2e compile). `ContractParams.ACTION_*`
+//                      mirrors them for the tx builders, and `FundedActionSpec`
+//                      asserts the two never drift.
+//   Path B (claim):    (1) Coll[Byte] handoff record msg (52 B, "P2PH")
+//                      (2) Coll[Byte] a_sig — Schnorr nonce point, 33 B
+//                      (3) Coll[Byte] z_sig — Schnorr response, 32 B
+//                      (4) Long        record timestamp in millis (msg bytes 48..52 * 1000)
+//   Paths A/C:         no further vars — the release attestation (the dealId
+//                      itself) rides in the oracle data input's R4
 //
-// Path selection: path B is recognized FIRST, by context variable 0 presence
-// (safe on an absent var — unlike `.get`, which the proof reducer would force
-// and reject): the PAYMENT_PROVEN output also satisfies the payout conservation
-// check (same token, full collateral at OUTPUTS(0)), so a height-first
-// discriminator would swallow every post-timeout claim-open into path A.
-// Of the two remaining paths, A is recognized by HEIGHT and C is what is left.
+// PATH SELECTION: the spender names the path in context var 0, and each branch
+// then proves its own conditions independently. This is the Basis reserve
+// contract's shape (`basis.es` §Actions), and it buys two things over inferring
+// the path from what the transaction happens to carry:
+//
+//   1. Every path is positively identified. Previously release was the residual
+//      branch ("anything else"), so a reader had to reconstruct a priority order
+//      from prose to learn which path a given spend took.
+//   2. The paths stop competing. The old discriminator ranked them — claim-open
+//      by var-0 presence, reclaim by HEIGHT, release by elimination — because
+//      the PAYMENT_PROVEN output also satisfies the payout conservation check,
+//      so a height-first order would have swallowed every post-timeout
+//      claim-open into the reclaim path. With an explicit action the ordering
+//      hazard is structurally impossible: a claim-open IS a claim-open at any
+//      height, and a reclaim IS a reclaim. "A claim beats a reclaim" is now
+//      carried by the absence of a reclaim path on the PAYMENT_PROVEN box
+//      (a script cannot delete one of its own paths — see vault_payment_proven.es)
+//      rather than by a branch order an auditor has to trust.
+//
+// The action byte is NOT covered by the seller's handoff-record signature, and
+// need not be: choosing CLAIM is the only choice that helps the buyer, so no
+// party can be coerced into it by a third party.
+//
 // Everything else — the record's dealId binding, freshness, the PAYMENT_PROVEN
 // output shape — is checked in the branch body, which only evaluates when the
-// discriminator matches. (SigmaProp || would evaluate every branch during
-// proof reduction, hence the Boolean if.)
-//
-// The order encodes "a claim beats a reclaim": once the buyer has a signed
-// handoff record, the money is owed to them, so an expired deadline must not
-// decide the outcome. Release is last because it is the fallback — anything
-// else a seller does with this box, he does it as a release.
+// action matches. (SigmaProp || would evaluate every branch during proof
+// reduction, hence the Boolean if.) An unrecognized action code is rejected
+// outright rather than falling through to the release branch.
 {
+  val action = getVar[Byte](0).get
+
   val sellerKey = decodePoint(SELF.R5[Coll[Byte]].get)
   val collateral = SELF.tokens(0)._2
   val useTokenId = SELF.tokens(0)._1
-  val timeoutH = SELF.R8[Long].get
+  // R8: the height past which the seller may reclaim unaided. Fixed at funding —
+  // the buyer never writes it (the claim-open creates a different box instead,
+//  which is why R8's meaning does not have to stretch across both lifetimes).
+  val reclaimTimeoutHeight = SELF.R8[Long].get
   // Paths A and C both pay out in full at OUTPUTS(0) (reclaim and release
   // are payout-identical): the right token, the full collateral, ANY payee —
   // each path's proveDlog signature authorizes the spend, so the payee is
   // deliberately not pinned to a key (the seller may pay a fresh key for the
-  // next iteration). Path B's PAYMENT_PROVEN output satisfies this check too
-  // (same token, full collateral), which is why the branch order below puts
-  // B first. Release txs carry the oracle box as a data input — its
+  // next iteration). Release txs carry the oracle box as a data input — its
   // script never executes — so the old joint-spend OUTPUTS(1) convention is gone.
   val payoutOk =
     OUTPUTS(0).tokens(0)._1 == useTokenId &&
     OUTPUTS(0).tokens(0)._2 == collateral
 
-  if (getVar[Coll[Byte]](0).isDefined) {
+  if (action == 0) {
     // Path B — open claim on the SELLER-signed handoff record (the cash-received
-    // acknowledgment from the meeting); anyone may submit. Context vars 0..3.
+    // acknowledgment from the meeting); anyone may submit. Context vars 1..4.
     // NB: sigma-state 6 only typechecks byteArrayToBigInt when its
     // argument is a direct expression (no val references), so the conversions stay
     // fully inline.
-    val msg = getVar[Coll[Byte]](0).get
-    // The discriminator is only var PRESENCE, so the record's dealId (bytes
-    // 5..37) must bind THIS deal — checked here, in the branch body.
-    val recordDealOk = msg.slice(5, 37) == SELF.R4[Coll[Byte]].get
+    val handoffRecord = getVar[Coll[Byte]](1).get
+    // The action byte names the path but says nothing about the record, so the
+    // record's dealId (bytes 5..37) must still bind THIS deal — checked here,
+    // in the branch body.
+    val recordDealOk = handoffRecord.slice(5, 37) == SELF.R4[Coll[Byte]].get
     // Freshness is checked on a Long context var (record ts seconds * 1000), bound to
     // the signed record bytes by Coll equality; byteArrayToBigInt cannot do ordering
     // comparisons on a slice (sigma-state 6 assignType limitation).
-    val tsMs = getVar[Long](3).get
+    val recordTimestampMs = getVar[Long](4).get
     val freshOk =
-      longToByteArray(tsMs / 1000L).slice(4, 8) == msg.slice(48, 52) &&
-      tsMs <= CONTEXT.preHeader.timestamp &&
-      tsMs > CONTEXT.preHeader.timestamp - %%HANDOFF_RECORD_MAX_AGE_MS%%
+      longToByteArray(recordTimestampMs / 1000L).slice(4, 8) == handoffRecord.slice(48, 52) &&
+      recordTimestampMs <= CONTEXT.preHeader.timestamp &&
+      recordTimestampMs > CONTEXT.preHeader.timestamp - %%HANDOFF_RECORD_MAX_AGE_MS%%
     // The signature is the SELLER's Schnorr half, verified under R5's sellerKey —
     // the same key that proves the reclaim; the record is the buyer's dispute
     // evidence when the seller took cash but never sent the USDT.
     val sellerSigOk =
-      groupGenerator.exp(byteArrayToBigInt(getVar[Coll[Byte]](2).get)) ==
-        decodePoint(getVar[Coll[Byte]](1).get).multiply(sellerKey.exp(byteArrayToBigInt(blake2b256(
-          decodePoint(getVar[Coll[Byte]](1).get).getEncoded ++
-          getVar[Coll[Byte]](0).get ++
+      groupGenerator.exp(byteArrayToBigInt(getVar[Coll[Byte]](3).get)) ==
+        decodePoint(getVar[Coll[Byte]](2).get).multiply(sellerKey.exp(byteArrayToBigInt(blake2b256(
+          decodePoint(getVar[Coll[Byte]](2).get).getEncoded ++
+          getVar[Coll[Byte]](1).get ++
           sellerKey.getEncoded))))
     // Handoff-record id for the dashboard's evidence view.
     val recordId = blake2b256(
-      getVar[Coll[Byte]](1).get ++ getVar[Coll[Byte]](2).get ++
-      getVar[Coll[Byte]](0).get)
+      getVar[Coll[Byte]](2).get ++ getVar[Coll[Byte]](3).get ++
+      getVar[Coll[Byte]](1).get)
 
     // Output: the PAYMENT_PROVEN box carrying everything, registers copied,
     // proofHeight = HEIGHT, record id in R8.
@@ -136,13 +161,13 @@
       OUTPUTS(0).tokens(0)._2 == collateral &&
       OUTPUTS(0).value == SELF.value
     sigmaProp(recordDealOk && freshOk && sellerSigOk && provenOutOk)
-  } else if (HEIGHT > timeoutH && payoutOk) {
+  } else if (action == 1) {
     // Path A — reclaim after timeout; the seller discharges proveDlog(sellerKey).
-    // A post-timeout release tx (no vars, full-collateral payout) lands here
-    // too: seller-signed and payout-identical to a reclaim, so it is spent as
-    // one — the attestation is no longer needed after the timeout.
-    proveDlog(sellerKey)
-  } else {
+    // The timeout is checked INSIDE the branch, not in the discriminator: a
+    // reclaim naming an action is a reclaim at any height, so this rejection is
+    // unambiguous rather than "some other path matched instead".
+    sigmaProp(HEIGHT > reclaimTimeoutHeight && payoutOk) && proveDlog(sellerKey)
+  } else if (action == 2) {
     // Path C — fast close: the oracle singleton box as a DATA INPUT, its R4
     // carrying exactly the 32-byte dealId of the SELLER's USDT transfer to the
     // buyer. No receipt signature (v2 — the oracle is trusted, period) and no
@@ -163,5 +188,10 @@
     // The attestation must name THIS vault's deal (R4, the dealId).
     val fieldsOk = attestationBox.R4[Coll[Byte]].get == SELF.R4[Coll[Byte]].get
     sigmaProp(oracleNftOk && fieldsOk && payoutOk) && proveDlog(sellerKey)
+  } else {
+    // No such path. A garbage action byte is rejected rather than being read as
+    // a release (the pre-2026-10-04 residual branch): an unrecognized request
+    // fails closed and says so.
+    sigmaProp(false)
   }
 }

@@ -56,7 +56,16 @@ ERG value, and two spec sentences that misdescribe the script.
 
 ### P1 — Post-timeout the claim-open and the reclaim are both live [solid]
 
-`vault_funded.es:71-120`: once `HEIGHT > SELF.R8`, **path A** (`proveDlog(sellerKey)`, full
+> **Superseded in part 2026-10-04.** The FUNDED box now takes an explicit action byte in
+> context var 0 (`ACTION_CLAIM` / `ACTION_RECLAIM` / `ACTION_RELEASE`, see
+> `vault-contract.md` §8.5). The *observation below stands* — post-timeout a claim and a
+> reclaim are still both live — but the line-number citations and the branch-ordering
+> discussion no longer describe the shipped script: the paths no longer compete, because the
+> spender names which one is being invoked. What did change as a side effect: a post-timeout
+> **release** is no longer spent as an attestation-free reclaim (old test 51), so the oracle's
+> signal cannot be skipped by a nominally-release tx.
+
+`vault_funded.es` path A and path B: once `HEIGHT > SELF.R8`, **path A** (`proveDlog(sellerKey)`, full
 collateral to any address) and **path B** (the seller-signed handoff record, no seller signature
 in the tx) are *both* valid spends of the same input at the same height. Test 49 pins this as a
 feature — "late disputes must stay possible" — and it is possible on chain. What the spec does not

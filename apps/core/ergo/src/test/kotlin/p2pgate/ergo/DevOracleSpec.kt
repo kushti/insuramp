@@ -3,6 +3,7 @@ package p2pgate.ergo
 import org.ergoplatform.appkit.SignedTransaction
 import org.ergoplatform.appkit.UnsignedTransaction
 import org.junit.jupiter.api.Test
+import p2pgate.contracts.ContractParams
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -162,8 +163,14 @@ class DevOracleSpec {
         val dataBoxes = impl.dataBoxes
         assertEquals(1, dataBoxes.size)
         assertEquals(Base16.encode(oracle.oracleNftId), dataBoxes[0].tokens().head()._1().lowercase())
-        // No context extension on the vault input — path C supplies no vars.
-        assertTrue(impl.tx.inputs().apply(0).extension().values().isEmpty)
+        // The only context var on the vault input is the path discriminator
+        // (mandatory since 2026-10-04).
+        val ext = impl.tx.inputs().apply(0).extension().values()
+        assertEquals(1, ext.size())
+        assertEquals(
+            ContractParams.ACTION_RELEASE.toByte(),
+            (ext.apply(ContractParams.ACTION_VAR_INDEX.toByte()).value() as java.lang.Byte).toByte(),
+        )
         // Seller payout at OUTPUTS(0) — the full collateral.
         val sellerOut = tx.outputs[0] as org.ergoplatform.appkit.impl.OutBoxImpl
         assertEquals(f.DEAL_AMOUNT, sellerOut.tokens[0].value)

@@ -236,8 +236,12 @@ class OperatorTxBuilderSpec {
         // is this vault's dealId — the build-time mirror required equality).
         assertEquals(Base16.encode(oracle.oracleNftId), dataInputNftId(tx))
 
-        // No context vars on the vault input — path C supplies none.
-        assertTrue(rawExtension(tx).isEmpty)
+        // The only context var is the path discriminator (mandatory since 2026-10-04).
+        assertEquals(1, rawExtension(tx).size())
+        assertEquals(
+            ContractParams.ACTION_RELEASE.toByte(),
+            (rawExtension(tx).apply(ContractParams.ACTION_VAR_INDEX.toByte()).value() as java.lang.Byte).toByte(),
+        )
 
         // OUTPUTS(0): seller paid the full collateral at the R5 seller key.
         val sellerOut = tx.outputs[0] as OutBoxImpl

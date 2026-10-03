@@ -109,13 +109,55 @@ the operator/oracle watch set **off-chain** — it is no longer pinned on-chain 
 
 ### 3.3 Spending paths (ErgoScript-level conditions)
 
-Path selection uses a Boolean `if` on `HEIGHT`, not `SigmaProp ||`: the proof reducer
-evaluates every `val` of every block it enters, so `||` over SigmaProp branches would force
-context-variable material of paths that are not being spent. All `getVar`-dependent
-material lives inside the branch that consumes it. In `vault_funded.es` the selection is:
-`HEIGHT > timeoutHeight` → path A (seller reclaim); else `getVar[Coll[Byte]](0)` defined →
-path B (buyer claim with the handoff record); else → path C (seller release via the oracle
-data input — release txs supply no context vars, so var 0's absence *is* the discriminator).
+Path selection uses a Boolean `if`, not `SigmaProp ||`: the proof reducer evaluates every
+`val` of every block it enters, so `||` over SigmaProp branches would force context-variable
+material of paths that are not being spent. All `getVar`-dependent material lives inside the
+branch that consumes it.
+
+**FUNDED box (`vault_funded.es`) — the spender names the path** (2026-10-04). Context
+extension variable 0 is a `Byte` action code, mandatory on every spend
+(`getVar[Byte](0).get`); each branch then proves its own conditions independently:
+
+| var 0 | path |
+|---|---|
+| `ACTION_CLAIM` = 0 | **B** — buyer claim, record in vars 1–4 |
+| `ACTION_RECLAIM` = 1 | **A** — seller reclaim after timeout |
+| `ACTION_RELEASE` = 2 | **C** — seller release via the oracle data input |
+| anything else | rejected (`sigmaProp(false)`) |
+
+The codes are hardcoded as bare literals in the source (`action == 0`, the way `basis.es`
+writes its action codes) — they are structural, not deployment parameters: nothing varies
+them between a mainnet compile and a fast e2e one, the way `CLAIM_MATURATION_BLOCKS` varies.
+`ContractParams.ACTION_*` mirrors them for the tx builders, which must put the same byte on
+the wire, and `FundedActionSpec` reads the `.es` source to assert the two never drift. This
+mirrors the Basis reserve contract, where context var 0 likewise selects the action
+(`basis.es` §Actions). The PAYMENT_PROVEN box still infers its path from the data input
+(`dataInputs.size == 0` → D, else C′) — only two paths share that script, and §4 explains
+why that box exists.
+
+**What the explicit action buys.** Before, the path was *inferred* from what the
+transaction happened to carry — claim by var-0 presence, reclaim by `HEIGHT`, release by
+elimination — so a reader had to reconstruct a priority order from prose, and release was
+the residual branch (any unmatched shape was *attempted* as a release). Two consequences
+are now structural rather than argued:
+
+1. **Late disputes stay reachable.** The old ordering hazard was real: the PAYMENT_PROVEN
+   output satisfies the same full-collateral conservation check as a payout, so a
+   height-first discriminator routed every post-timeout claim-open into path A (test 49).
+   With an action byte there is no ranking to get wrong — a claim-open is a claim-open at
+   any height.
+2. **A release is a release at any height.** Previously a post-timeout release tx (no
+   context vars, full-collateral payout) landed in path A and was spent as an
+   attestation-free seller-signed reclaim. Now the attestation is required whenever the
+   action says RELEASE, before or after the timeout (test 51). The seller's recourse is
+   unchanged — post-timeout he can simply build a RECLAIM — but the oracle's signal can no
+   longer be silently skipped by a tx that is nominally a release.
+
+The action byte is **not** covered by the seller's handoff-record signature, and need not
+be: naming CLAIM is the only choice that helps the buyer, so no third party can coerce
+another into it. It is authenticated as part of the transaction (context extension vars are
+signed over), which is what makes "an attacker picks the branch" harmless: each branch's
+conditions are independently sufficient.
 
 **Path A — reclaim (timeout).** Conditions:
 - `HEIGHT > timeoutHeight`
@@ -124,13 +166,14 @@ data input — release txs supply no context vars, so var 0's absence *is* the d
   (the payee is free — key rotation; the seller is paid in full, the
   in-contract protocol fee was removed 2026-09-18; §6).
 
-Branch ordering (2026-09-26, fixes a regression from the 2026-09-24 payout-freedom
-change): path B is discriminated **first**, by context-variable-0 presence, because
-the PAYMENT_PROVEN output satisfies the same full-collateral conservation check as a
-payout — a height-first discriminator would route every post-timeout claim-open into
-path A and make late disputes impossible. A post-timeout release tx (no context
-vars, full-collateral payout) correspondingly lands in the path A branch and is spent
-as a seller-signed reclaim — attestation-free, payout-identical.
+The `HEIGHT > timeoutHeight` condition is checked **inside** path A's branch, not in the
+discriminator: a tx naming `ACTION_RECLAIM` is a reclaim at any height, so rejection is
+unambiguous rather than "some other branch matched instead".
+
+Branch ordering was an issue only under the pre-2026-10-04 inferred discriminator (the
+2026-09-26 fix had put path B first, by context-variable-0 presence, to keep post-timeout
+claim-opens out of path A). The explicit action byte removes the ordering question — see
+the two consequences listed above.
 
 This is the default routine path: buyer no-show, or the seller already paid and the buyer
 ghosted (the buyer keeps the USDT, so the reclaim harms no one). The seller reclaims to a
@@ -288,13 +331,17 @@ Context variables:
 
 | Var | Type | Content |
 |---|---|---|
+| **All FUNDED spends** | | |
+| 0 | `Byte` | action code — `ACTION_CLAIM` 0 / `ACTION_RECLAIM` 1 / `ACTION_RELEASE` 2 (mandatory, hardcoded in the source; the PAYMENT_PROVEN box takes none) |
 | **Path B (claim)** | | |
-| 0 | `Coll[Byte]` | handoff record msg, 52 B |
-| 1 | `Coll[Byte]` | `a_sig` — nonce point, 33 B compressed |
-| 2 | `Coll[Byte]` | `z_sig` — response, 32 B big-endian |
-| 3 | `Long` | record timestamp in millis (msg bytes 48..52 as seconds × 1000) |
-| **Paths C/C′ (release)** | | |
-| — | — | release txs supply **no context vars** (2026-09-17 data-input rework): the attested `dealId` rides in the oracle data input's R4, so path selection can use `getVar[Coll[Byte]](0)` itself as the path-B/C discriminator — defined → claim (path B), undefined → release via oracle data input (path C) |
+| 1 | `Coll[Byte]` | handoff record msg, 52 B |
+| 2 | `Coll[Byte]` | `a_sig` — nonce point, 33 B compressed |
+| 3 | `Coll[Byte]` | `z_sig` — response, 32 B big-endian |
+| 4 | `Long` | record timestamp in millis (msg bytes 48..52 as seconds × 1000) |
+| **Paths A/C (FUNDED)** | | |
+| — | — | no further vars: the timeout is a register comparison (R8) and the attested `dealId` rides in the oracle data input's R4 (2026-09-17 data-input rework) |
+| **Path C′ (contest)** | | |
+| — | — | the PAYMENT_PROVEN box supplies no context vars at all; it selects D vs C′ from `dataInputs.size` |
 
 **Freshness** (path B only — the release paths carry no signed message and no freshness
 check in v2) is checked against `CONTEXT.preHeader.timestamp` on the `Long` context var,
@@ -377,12 +424,15 @@ below documents the implemented suite in
 `contracts/src/test/kotlin/p2pgate/contracts/VaultContractSpec.kt` (plus
 `OracleContractSpec.kt` for the oracle box's own progression); run it with
 `./gradlew :contracts:test` (JDK 17; see `AGENTS.md`). Status: tests 1–21, 24, 26–28,
-30–34 and 36–44 pass and O1–O8 pass; the suite is now 40 tests (the old 35a–35e fee
+30–34, 36–44 and 46–56 pass and O1–O8 pass; the suite is now 51 tests (the old 35a–35e fee
 section was deleted with the 2026-09-18 fee removal, §8.4 — test 35's number
 retired with it; tests 22, 23, 25 and 29 were deleted with the 2026-09-21
 dealId-only payload simplification, §8.4 — their numbers retired too, nothing
-renumbered) and test 45 is `@Disabled` pending
-the phase-2 guard-set box. Test matrix:
+renumbered; tests 53–56 were **added** 2026-10-04 with the explicit action byte) and
+test 45 is `@Disabled` pending
+the phase-2 guard-set box. `FundedActionSpec` (3 tests) guards the coupling the hardcoded
+action literals introduce: it reads the `.es` source and asserts the codes agree with
+`ContractParams.ACTION_*`. Test matrix:
 
 **FUNDED box**
 1. Reclaim before `timeoutHeight` — fails.
@@ -409,9 +459,9 @@ the phase-2 guard-set box. Test matrix:
 14. PAYMENT_PROVEN output with wrong `proofHeight` R7 (plain Long) — fails.
 15. PAYMENT_PROVEN output carrying a wrong R8 record id (everything else honest) — fails.
 16. Release from FUNDED (path C): oracle box as **data input** (NFT == R7)
-    + `dataInput.R4 == vault.R4` (the attested `dealId`), no context vars, no oracle
-    signature in the tx, plus the seller's `proveDlog(R5)` co-signature — passes;
-    seller paid in full.
+    + `dataInput.R4 == vault.R4` (the attested `dealId`), no context vars beyond the
+    action byte, no oracle signature in the tx, plus the seller's `proveDlog(R5)`
+    co-signature — passes; seller paid in full.
 17. Release from FUNDED without the oracle box (no data input) — fails.
 18. Release from FUNDED with the oracle box as a **full input but not a data input** — fails
     (path C never reads INPUTS, so `dataInputs(0)` throws; and as a full input the
@@ -493,19 +543,35 @@ the phase-2 guard-set box. Test matrix:
 48. Reclaim (path A) paying to an address that is not the seller's R5 key — **passes**
     (same rule on the seller side).
 
-**Branch reachability (2026-09-26)**
-49. Open claim **after** `RECLAIM_TIMEOUT` — **passes** (path B is discriminated first,
-    by context-var-0 presence: the PAYMENT_PROVEN output satisfies the payout
-    conservation check too, so a height-first discriminator would swallow every
-    post-timeout claim-open into path A — late disputes must stay possible).
+**Branch reachability**
+49. Open claim **after** `RECLAIM_TIMEOUT` — **passes** (late disputes must stay possible.
+    Under the pre-2026-10-04 inferred discriminator this was a branch-*order* hazard: the
+    PAYMENT_PROVEN output satisfies the payout conservation check too, so a height-first
+    order would swallow every post-timeout claim-open into path A. The explicit action byte
+    removes the ordering question — but the guarantee itself is what the test pins).
 50. Contest (path C′) **after** `CLAIM_MATURATION` — **passes** (the C′/D discriminator
     is the data input, not height: an attested-but-slow honest seller must always be
     able to counter a false claim).
-51. Release after `RECLAIM_TIMEOUT` — **passes as a seller-signed spend** (a post-timeout
-    release tx lands in the path A branch: seller-signed and payout-identical to a
-    reclaim, so the attestation is no longer required after the timeout).
+51. Release after `RECLAIM_TIMEOUT` — **passes with the attestation attached**, and
+    **fails without it** (CHANGED 2026-10-04: previously a post-timeout release tx landed
+    in the path A branch and was spent as an attestation-free seller-signed reclaim. A
+    release is now a release at any height; the seller's recourse is unchanged, since
+    post-timeout he can build a RECLAIM instead).
 52. Claim payout (path D) with a stray data input attached — **fails** (the data-input
     discriminator routes it to the C′ branch, which demands the seller key).
+
+**Action discriminator (2026-10-04)**
+53. A FUNDED spend with **no action var** — **fails** (`getVar[Byte](0).get` throws during
+    reduction; the contract has no default path).
+54. An **unrecognized action code** — **fails** (fail-closed: a garbage byte is not read as
+    "release, by elimination", so no unmatched shape is ever *attempted* as a release).
+55. `ACTION_RECLAIM` carrying a valid handoff record **before** the timeout — **fails**
+    (the record changes nothing for the reclaim branch, which reads HEIGHT and the payout
+    conservation check, not the record).
+56. `ACTION_CLAIM` with a valid record but paying the **seller** at `OUTPUTS(0)` —
+    **fails**, and no secret material is needed to see it (the claim branch's output-shape
+    check pins `propositionBytes == PAYMENT_PROVEN_SCRIPT`, `proofHeight` in R7 and the
+    record id in R8, so under `ACTION_CLAIM` there is no payout shape left to redirect).
 
 **Oracle box (oracle.es) — box progression**
 O1. Rotation by the oracle key, NFT preserved into `OUTPUTS(0)` (pinned position) — passes.
@@ -665,9 +731,9 @@ release txs *spent* the oracle box, which the rework below retired the same day.
 Third 2026-09-17 rework (same day): the **data-input model**. Release txs no longer
 spend the oracle box at all — they reference it as a **data input** (`CONTEXT.dataInputs(0)`),
 so the vault pays the seller at `OUTPUTS(0)` again on paths C/C′ (reclaim, open-claim, and
-claim payouts were always at `OUTPUTS(0)`), release txs carry **no context vars** (var 0's
-absence is the path-B/C discriminator, §3.3/§5), and **no oracle signature exists in any
-buyer/seller transaction**. `oracle.es` itself is unchanged — `proveDlog` + reproduction
+claim payouts were always at `OUTPUTS(0)`), release txs carry **no path material beyond the
+action byte** (var 0's absence was the path-B/C discriminator until 2026-10-04, §3.3/§5), and
+**no oracle signature exists in any buyer/seller transaction**. `oracle.es` itself is unchanged — `proveDlog` + reproduction
 pinned at `OUTPUTS(0)` — but its spend now happens only on the oracle's own rotation
 spends, when the oracle posts a new attestation by spending its singleton and re-creating
 it with the dealId in R4 (`OracleContractSpec` test 7 pins the reproduction position).
@@ -708,8 +774,43 @@ part of the contract's token math. Code consequences: `ContractParams` no
 longer carries the fee, the tx builders emit no treasury output, the backend
 dropped `QuotePublisher.protocolFeeBps` and the `P2P_TREASURY_SECRET`
 wiring, and the old §7 fee tests (35a–35e) are deleted — `VaultContractSpec`
-is now 44 tests (1 `@Disabled`: test 45). Both height registers stay plain
+is now 51 tests (1 `@Disabled`: test 45). Both height registers stay plain
 `Long`s.
+
+### 8.5 2026-10-04: the FUNDED box names its spending path (explicit action byte)
+
+`vault_funded.es` now reads a `Byte` action code from context extension variable 0 and
+dispatches on it (`ContractParams.ACTION_CLAIM` 0 / `ACTION_RECLAIM` 1 / `ACTION_RELEASE`
+2; anything else is rejected). This is a
+**breaking change to the FUNDED box's spend interface**: it is mandatory (`.get`), and
+paths B's material moves from vars 0–3 to vars 1–4. The PAYMENT_PROVEN box is untouched —
+it takes no context vars and keeps selecting D vs C′ from `dataInputs.size`, because only
+two paths share that script.
+
+**Why.** The path used to be *inferred* from what the transaction carried — claim by
+var-0 presence, reclaim by `HEIGHT`, release by elimination — which forced a branch
+*ordering* whose correctness had to be argued (the 2026-09-26 fix) and left release as a
+residual branch that any unmatched shape was attempted against. Naming the path makes each
+branch independently sufficient and fail-closed. The shape follows the Basis reserve
+contract (`basis.es` §Actions), where context var 0 likewise selects the action.
+
+**What changes semantically.** A post-timeout release tx used to land in path A and be
+spent as an attestation-free seller-signed reclaim; a release is now always checked against
+the attestation, at any height (test 51). The seller's recourse is unchanged — post-timeout
+he builds a `RECLAIM`. A transaction that declines to name a path cannot be spent at all
+(test 53).
+
+**What does not change.** Every path's substantive conditions — the record's `dealId`
+binding, freshness, the Schnorr challenge under R5, the payout conservation check, the
+attestation's NFT + `dealId` checks, the payee's freedom — are byte-for-byte the same
+checks as before; only the *selection* of them changed. The PAYMENT_PROVEN split is
+untouched and still load-bearing (`specs/vault-contract-review.md` §5.2: a script cannot
+delete one of its own spending paths, so changing the tree is what makes the seller's
+reclaim right disappear once a claim opens).
+
+**Deployment note.** This changes the FUNDED script's hash. No FUNDED box has ever been
+funded on mainnet (pre-launch), so there is nothing to migrate; had there been, those boxes
+would now be unspendable, since Ergo has no script-upgrade mechanism.
 
 ## 9. Trust model (stated honestly)
 

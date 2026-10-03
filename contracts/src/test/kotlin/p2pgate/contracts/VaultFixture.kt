@@ -225,8 +225,8 @@ class VaultFixture(
         msg.copyOf().also { it[index] = (it[index].toInt() xor 0x01).toByte() }
 
     /**
-     * Handoff-record context vars for path B (vars 0..3): the 52-byte record at 0,
-     * the seller's Schnorr signature at 1..2, the record timestamp in millis at 3.
+     * Context vars for path B: the action byte at 0, then the 52-byte record at 1,
+     * the seller's Schnorr signature at 2..3, the record timestamp in millis at 4.
      * Pass [sig] (e.g. from a SignedRecord) to keep the carried (a, z) pair
      * identical to the one an id was computed from; by default the signature is
      * produced here under [signer]. [aOverride]/[zOverride] let a test pair honest
@@ -243,13 +243,29 @@ class VaultFixture(
         tsMsOverride: Long? = null,
     ): Map<Int, EvaluatedValue<out SType>> {
         val s = sig ?: Schnorr.sign(signer.w(), record, pub)
-        return mapOf(
-            0 to bytesC(record),
-            1 to bytesC(aOverride ?: s.a),
-            2 to bytesC(zOverride ?: s.z),
-            3 to SigmaBridge.longVal(tsMsOverride ?: msgTsMillis(record)) as EvaluatedValue<out SType>,
+        return actionVars(ContractParams.ACTION_CLAIM).plus(
+            mapOf(
+                1 to bytesC(record),
+                2 to bytesC(aOverride ?: s.a),
+                3 to bytesC(zOverride ?: s.z),
+                4 to SigmaBridge.longVal(tsMsOverride ?: msgTsMillis(record)) as EvaluatedValue<out SType>,
+            ),
         )
     }
+
+    /**
+     * Context extension carrying only the action byte (var 0) — what the reclaim
+     * and release paths need (specs/vault-contract.md §3.3).
+     */
+    fun actionVars(action: Int): Map<Int, EvaluatedValue<out SType>> = mapOf(
+        ContractParams.ACTION_VAR_INDEX to actionBytes(action),
+    )
+
+    /** An action code outside the three the contract dispatches on (the fail-closed branch). */
+    fun unknownActionVars(action: Int = 99): Map<Int, EvaluatedValue<out SType>> = actionVars(action)
+
+    private fun actionBytes(action: Int) =
+        SigmaBridge.byteConst(action) as EvaluatedValue<out SType>
 
     // --- prove/verify driver ---
 
