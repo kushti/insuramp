@@ -61,7 +61,13 @@
   //
   // The conditions sit in the guard rather than in each branch because a mixed
   // `proveDlog && Boolean` is not a SigmaProp — each branch has to stand alone.
-  if (HEIGHT.toLong > claimOpenedAtHeight + %%CLAIM_MATURATION_BLOCKS%%.toLong && payoutOk && CONTEXT.dataInputs.size == 0) {
+  //
+  // The maturation delay is the hardcoded literal 360 (blocks; ~12h at the
+  // ~2-minute target, specs/vault-contract.md §2). Nothing varies it between
+  // deployments, so it is not a %%...%% substitution parameter (2026-10-03);
+  // `ContractParams.CLAIM_MATURATION_BLOCKS` mirrors it for the off-chain code
+  // and `FundedActionSpec` guards the pair against drift.
+  if (HEIGHT.toLong > claimOpenedAtHeight + 360L && payoutOk && CONTEXT.dataInputs.size == 0) {
     // Path D — the waiting period is over and nobody contested: the buyer takes it.
     proveDlog(buyerKey)
   } else {

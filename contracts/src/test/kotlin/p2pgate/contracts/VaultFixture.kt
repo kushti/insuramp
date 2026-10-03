@@ -61,7 +61,6 @@ class VaultFixture(
         mapOf(
             "ORACLE_NFT_ID" to ConstValue.Bytes(oracleNftId),
             "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${ContractParams.HANDOFF_RECORD_MAX_AGE_MS}L"),
-            "CLAIM_MATURATION_BLOCKS" to ConstValue.IntNum(ContractParams.CLAIM_MATURATION_BLOCKS),
         ),
     )
 

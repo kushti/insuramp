@@ -15,8 +15,9 @@ import sigma.ast.ErgoTree
  *
  * Constants mirror `VaultFixture` (the §7 matrix fixture): the PAYMENT_PROVEN
  * tree is compiled first (the FUNDED tree embeds its proposition bytes for the
- * path-B output check), `CLAIM_MATURATION_BLOCKS` comes from [ContractParams],
- * and `HANDOFF_RECORD_MAX_AGE_MS` is injected as a raw Long literal.
+ * path-B output check), `CLAIM_MATURATION_BLOCKS` is a hardcoded literal in the
+ * `.es` (360, ~12h — since 2026-10-03 nothing varies it between compiles), and
+ * `HANDOFF_RECORD_MAX_AGE_MS` is injected as a raw Long literal.
  * `ORACLE_NFT_ID` is a deployment parameter: the default is the fixed dummy
  * the fixture uses (see [DUMMY_ORACLE_NFT_ID]), and it is injectable — an
  * operator deploys from its own parameter set.
@@ -59,13 +60,13 @@ object ErgoContracts {
     /**
      * Compiles the two vault trees. [oracleNftId] is the phase-1 oracle's NFT
      * (compile-time pin of the PAYMENT_PROVEN tree, §8.3 item 3).
-     * [claimMaturationBlocks]/[handoffRecordMaxAgeMs] default to the canonical
-     * constants and are injectable for fast compiles (see [compileFast]).
+     * [handoffRecordMaxAgeMs] defaults to the canonical constant and is
+     * injectable for fast compiles (see [compileFast]); the claim maturation
+     * is a hardcoded literal in `vault_payment_proven.es`, not a parameter.
      */
     fun compile(
         oracleNftId: ByteArray = DUMMY_ORACLE_NFT_ID,
         networkPrefix: Byte = ContractParams.NETWORK_PREFIX_MAINNET,
-        claimMaturationBlocks: Int = ContractParams.CLAIM_MATURATION_BLOCKS,
         handoffRecordMaxAgeMs: Long = ContractParams.HANDOFF_RECORD_MAX_AGE_MS,
     ): VaultTrees {
         require(oracleNftId.size == 32) { "oracleNftId must be 32 bytes, got ${oracleNftId.size}" }
@@ -75,7 +76,6 @@ object ErgoContracts {
             mapOf(
                 "ORACLE_NFT_ID" to ConstValue.Bytes(oracleNftId),
                 "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${handoffRecordMaxAgeMs}L"),
-                "CLAIM_MATURATION_BLOCKS" to ConstValue.IntNum(claimMaturationBlocks),
             ),
             networkPrefix = networkPrefix,
         )
@@ -91,22 +91,21 @@ object ErgoContracts {
     }
 
     /**
-     * Small constants for the e2e gate: a full fund → claim → payout
-     * cycle on a low-height chain runs in minutes, not 12 hours. The
-     * compiled-in constants ([CLAIM_MATURATION_BLOCKS], [HANDOFF_RECORD_MAX_AGE_MS])
-     * feed [compileFast]; [RECLAIM_TIMEOUT_BLOCKS] is a funding-time parameter
+     * Small constants for the e2e gate: the record-freshness window and the
+     * reclaim timeout shrink so a fund/claim cycle on a low-height chain runs
+     * in minutes. The compiled-in [HANDOFF_RECORD_MAX_AGE_MS] feeds
+     * [compileFast]; [RECLAIM_TIMEOUT_BLOCKS] is a funding-time parameter
      * (the FUNDED box's R8 timeout height), not a compiled constant — the
      * e2e harness passes `currentHeight + RECLAIM_TIMEOUT_BLOCKS` to
-     * [OperatorTxBuilder.buildFund]. ClaimTxBuilder needs the two compiled
-     * values as its pre-check overrides so its build-time checks match the
-     * fast trees.
+     * [OperatorTxBuilder.buildFund]. ClaimTxBuilder needs the compiled
+     * freshness value as its pre-check override so its build-time checks match
+     * the fast trees. The claim maturation is NOT here: since 2026-10-03 it is
+     * a hardcoded literal in `vault_payment_proven.es`, so a live (non-dry-run)
+     * e2e flow B waits the real ~12h (owner decision).
      */
     object Fast {
         /** Fast reclaim timeout: funding-time `timeoutHeight` offset in blocks. */
         const val RECLAIM_TIMEOUT_BLOCKS: Int = 6
-
-        /** Compiled into the fast trees: maturation 3 blocks (~6 min). */
-        const val CLAIM_MATURATION_BLOCKS: Int = 3
 
         /** Compiled into the fast trees: handoff-record freshness 10 min. */
         const val HANDOFF_RECORD_MAX_AGE_MS: Long = 600_000L
@@ -124,7 +123,6 @@ object ErgoContracts {
     ): VaultTrees = compile(
         oracleNftId = oracleNftId,
         networkPrefix = networkPrefix,
-        claimMaturationBlocks = Fast.CLAIM_MATURATION_BLOCKS,
         handoffRecordMaxAgeMs = Fast.HANDOFF_RECORD_MAX_AGE_MS,
     )
 

@@ -41,15 +41,11 @@ class ClaimTxBuilder(
     /** Change below this is rejected (dust protection); exact-zero change is allowed. */
     private val minChangeNanoErg: Long = 1_000_000L,
     /**
-     * Claim-maturation pre-check override — must equal the
-     * `CLAIM_MATURATION_BLOCKS` constant the [trees] were compiled with.
-     * Defaults to the canonical value; [ErgoContracts.compileFast] sets 3.
-     */
-    private val claimMaturationBlocks: Int = ContractParams.CLAIM_MATURATION_BLOCKS,
-    /**
      * Handoff-record freshness pre-check override — must equal the
      * `HANDOFF_RECORD_MAX_AGE_MS` constant the [trees] were compiled with.
      * Defaults to the canonical value; [ErgoContracts.compileFast] sets 600 000.
+     * (The claim maturation has no override: it is a hardcoded literal in
+     * `vault_payment_proven.es`, mirrored by [ContractParams.CLAIM_MATURATION_BLOCKS].)
      */
     private val handoffRecordMaxAgeMs: Long = ContractParams.HANDOFF_RECORD_MAX_AGE_MS,
 ) {
@@ -169,8 +165,10 @@ class ClaimTxBuilder(
         val proofHeight = provenBox.registerLong(7)?.toInt()
             ?: throw IllegalArgumentException("PAYMENT_PROVEN box has no R7 proofHeight")
         require(provenBox.tokens.isNotEmpty()) { "PAYMENT_PROVEN box carries no collateral tokens" }
-        require(currentHeight > proofHeight + claimMaturationBlocks) {
-            "claim has not matured: height $currentHeight <= proofHeight $proofHeight + $claimMaturationBlocks"
+        // Matches the hardcoded 360L in vault_payment_proven.es (FundedActionSpec
+        // guards the pair against drift).
+        require(currentHeight > proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS) {
+            "claim has not matured: height $currentHeight <= proofHeight $proofHeight + ${ContractParams.CLAIM_MATURATION_BLOCKS}"
         }
 
         val useToken = provenBox.tokens.first()

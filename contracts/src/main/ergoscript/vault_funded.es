@@ -119,8 +119,8 @@
     // Path B — open claim on the SELLER-signed handoff record (the cash-received
     // acknowledgment from the meeting); anyone may submit. Context vars 1..4.
     // NB: sigma-state 6 only typechecks byteArrayToBigInt when its
-    // argument is a direct expression (no val references), so the conversions stay
-    // fully inline.
+    // argument is a direct expression (no val references), so anything feeding
+    // a conversion stays inline — the results themselves may be named vals.
     val handoffRecord = getVar[Coll[Byte]](1).get
     // The action byte names the path but says nothing about the record, so the
     // record's dealId (bytes 5..37) must still bind THIS deal — checked here,
@@ -137,12 +137,19 @@
     // The signature is the SELLER's Schnorr half, verified under R5's sellerKey —
     // the same key that proves the reclaim; the record is the buyer's dispute
     // evidence when the seller took cash but never sent the USDT.
-    val sellerSigOk =
-      groupGenerator.exp(byteArrayToBigInt(getVar[Coll[Byte]](3).get)) ==
-        decodePoint(getVar[Coll[Byte]](2).get).multiply(sellerKey.exp(byteArrayToBigInt(blake2b256(
-          decodePoint(getVar[Coll[Byte]](2).get).getEncoded ++
-          getVar[Coll[Byte]](1).get ++
-          sellerKey.getEncoded))))
+    // Schnorr equation: g^z == R · P^e with e = H(R ‖ record ‖ P).
+    // byteArrayToBigInt only typechecks on direct expressions (sigma-state 6
+    // rejects val references as its argument), so the challenge preimage
+    // stays inline — getVar(2) is the commitment R, getVar(1) the record.
+    val sigR = decodePoint(getVar[Coll[Byte]](2).get)
+    val sigZ = byteArrayToBigInt(getVar[Coll[Byte]](3).get)
+    val challenge = byteArrayToBigInt(blake2b256(
+      decodePoint(getVar[Coll[Byte]](2).get).getEncoded ++
+      getVar[Coll[Byte]](1).get ++
+      sellerKey.getEncoded))
+    val gToZ = groupGenerator.exp(sigZ)
+    val rTimesPe = sigR.multiply(sellerKey.exp(challenge))
+    val sellerSigOk = gToZ == rTimesPe
     // Handoff-record id for the dashboard's evidence view.
     val recordId = blake2b256(
       getVar[Coll[Byte]](2).get ++ getVar[Coll[Byte]](3).get ++

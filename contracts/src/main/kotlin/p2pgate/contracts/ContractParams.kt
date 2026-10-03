@@ -8,7 +8,10 @@ object ContractParams {
     /** ~24h at the ~2-minute Ergo block target [approx]; reclaim timeout in blocks. */
     const val RECLAIM_TIMEOUT_BLOCKS: Int = 720
 
-    /** ~12h [approx]; claim maturation in blocks, anchored to the proof height. */
+    /** ~12h [approx]; claim maturation in blocks, anchored to the proof height.
+     *  Hardcoded as `360L` in `vault_payment_proven.es` (2026-10-03); this constant
+     *  serves the off-chain code (builders, tracker) and `FundedActionSpec` guards
+     *  the pair against drift. */
     const val CLAIM_MATURATION_BLOCKS: Int = 360
 
     /**
@@ -19,8 +22,9 @@ object ContractParams {
      *
      * Hardcoded as bare literals in `vault_funded.es` (`action == 0` etc.), the
      * way `basis.es` writes its action codes. They are structural, not deployment
-     * parameters — unlike [CLAIM_MATURATION_BLOCKS], nothing varies them between a
-     * mainnet compile and a fast e2e one — so substituting them through the
+     * parameters — nothing varies them between a mainnet compile and a fast e2e
+     * one ([CLAIM_MATURATION_BLOCKS] went the same way on 2026-10-03, hardcoded
+     * as `360L` in `vault_payment_proven.es`) — so substituting them through the
      * `%%...%%` mechanism would buy nothing. These constants exist for the tx
      * builders, which must put the same number on the wire; `FundedActionSpec`
      * reads the `.es` source and fails if the two ever disagree.

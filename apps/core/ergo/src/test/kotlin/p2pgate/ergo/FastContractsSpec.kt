@@ -12,9 +12,9 @@ import kotlin.test.assertTrue
  * [ErgoContracts.Fast] constants for the e2e gate. Mainnet is the default
  * prefix since 2026-09-17; testnet stays selectable via [ContractParams]
  * [ContractParams.NETWORK_PREFIX_TESTNET]. The bundle shape is identical to
- * the normal compile; the suite proves the fast PAYMENT_PROVEN tree accepts a
- * payout 4 blocks after a claim at a low height (the canonical trees would
- * need 361).
+ * the normal compile; since 2026-10-03 the claim maturation is a hardcoded
+ * literal in the `.es`, so only the handoff-record freshness differs and the
+ * fast PAYMENT_PROVEN tree still waits the canonical 360 blocks for path D.
  */
 class FastContractsSpec {
 
@@ -24,7 +24,6 @@ class FastContractsSpec {
 
     private val fastBuilder: ClaimTxBuilder = ClaimTxBuilder(
         fastTrees,
-        claimMaturationBlocks = ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS,
         handoffRecordMaxAgeMs = ErgoContracts.Fast.HANDOFF_RECORD_MAX_AGE_MS,
     )
 
@@ -48,31 +47,31 @@ class FastContractsSpec {
     }
 
     @Test
-    fun `fast tree accepts a payout 4 blocks after the claim at a low height`() {
+    fun `fast tree accepts a payout once the hardcoded maturation elapses`() {
         val terms = f.dealTerms()
         val proofHeight = 100
         val proven = f.provenChainBox(terms, proofHeight = proofHeight, trees = fastTrees)
         val signed = fastBuilder.buildClaimPayout(
             provenBox = proven,
             feeInputs = listOf(f.feeChainBox()),
-            currentHeight = proofHeight + ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS + 1, // 104
+            currentHeight = proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1, // 461
             buyerPayoutAddress = f.p2pkAddress(f.buyerKeys.pubKeyCompressed),
             changeAddress = f.dealKeysAddress,
             signer = ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret),
         )
-        // The offline prover ran the fast compiled script: 104 > 100 + 3.
+        // The offline prover ran the fast compiled script: 461 > 100 + 360 — the
+        // maturation is the hardcoded literal, no longer a fast override.
         assertTrue(signed.id.isNotBlank())
     }
 
     @Test
-    fun `canonical builder still enforces the canonical maturation at the same height`() {
+    fun `the fast builder enforces the same maturation as canonical`() {
         val terms = f.dealTerms()
-        val canonical = ClaimTxBuilder(f.trees)
         assertFailsWith<IllegalArgumentException> {
-            canonical.buildClaimPayout(
-                provenBox = f.provenChainBox(terms, proofHeight = 100),
+            fastBuilder.buildClaimPayout(
+                provenBox = f.provenChainBox(terms, proofHeight = 100, trees = fastTrees),
                 feeInputs = listOf(f.feeChainBox()),
-                currentHeight = 104, // canonical: needs > 100 + 360
+                currentHeight = 104, // needs > 100 + 360
                 buyerPayoutAddress = f.p2pkAddress(f.buyerKeys.pubKeyCompressed),
                 changeAddress = f.dealKeysAddress,
                 signer = ErgoTestFixtures.ProverSigner(f.buyerKeys.secret, f.dealKeys.secret),
@@ -82,10 +81,12 @@ class FastContractsSpec {
 
     @Test
     fun `fast constants are small and the reclaim timeout is funding-time`() {
-        assertEquals(3, ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS)
         assertEquals(600_000L, ErgoContracts.Fast.HANDOFF_RECORD_MAX_AGE_MS)
         assertEquals(6, ErgoContracts.Fast.RECLAIM_TIMEOUT_BLOCKS)
         // RECLAIM_TIMEOUT is not a compiled constant — the canonical value is untouched.
         assertEquals(720, ContractParams.RECLAIM_TIMEOUT_BLOCKS)
+        // The claim maturation is no longer a fast constant either — it is the
+        // hardcoded 360L in vault_payment_proven.es.
+        assertEquals(360, ContractParams.CLAIM_MATURATION_BLOCKS)
     }
 }

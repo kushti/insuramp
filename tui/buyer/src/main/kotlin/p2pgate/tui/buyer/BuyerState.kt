@@ -101,7 +101,7 @@ data class BuyerState(
          * it to render a countdown, and the contract is the authority on the
          * spend. Mainnet keeps the canonical 12h value.
          */
-        const val CLAIM_MATURATION_BLOCKS = 100
+        const val CLAIM_MATURATION_BLOCKS = 360
     }
 }
 

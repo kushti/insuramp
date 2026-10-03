@@ -39,8 +39,9 @@ import java.math.BigInteger
  *     recreating the singleton box with R4 = the 32-byte dealId) → release
  *     (operator-wallet-only, the posted oracle box as a DATA INPUT — no
  *     oracle signature) → assert seller paid in full;
- *  6. Flow B (dispute): fund → record → claim-open → wait maturation (3
- *     blocks, fast) → claim-payout → assert buyer paid in full;
+ *  6. Flow B (dispute): fund → record → claim-open → wait maturation (360
+ *     blocks, ~12h — hardcoded in the contract since 2026-10-03; sim-advanced
+ *     in dry-run) → claim-payout → assert buyer paid in full;
  *  7. Flow C (reclaim): fund → wait the short timeout (6 blocks) → reclaim →
  *     assert seller refund.
  *
@@ -51,9 +52,10 @@ import java.math.BigInteger
  * against current chain state but nothing is broadcast — the harness
  * synthesizes successor boxes from the built outputs to keep chaining.
  *
- * Expected wall time [approx]: Ergo blocks are ~2 min on both networks; each
- * flow needs ~4-10 confirmations plus Flow B's 3-block maturation and Flow C's
- * 6-block timeout — all three flows together run roughly 45-75 minutes.
+ * Expected wall time [approx]: Ergo blocks are ~2 min on both networks; flows
+ * A and C need ~4-10 confirmations plus Flow C's 6-block timeout. Flow B's
+ * maturation is the hardcoded 360 blocks (~12h) since 2026-10-03, so a live
+ * run is dominated by that wait — use `--dry-run` for a fast build-only pass.
  */
 class E2eFlow(
     private val config: E2eConfig,
@@ -401,10 +403,10 @@ class E2eFlow(
         )
         val openTxId = broadcastAndConfirm("flowB.claimOpen", openTx)
         val provenBox = txOutputs(openTxId)[0]
-        log("claim opened: proven box ${provenBox.boxId}; waiting ${ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS} blocks maturation")
+        log("claim opened: proven box ${provenBox.boxId}; waiting ${ContractParams.CLAIM_MATURATION_BLOCKS} blocks maturation (~12h live; sim-advanced in dry-run)")
 
         val proofHeight = provenBox.registerLong(7)!!.toInt()
-        advanceSimHeight(proofHeight + ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS + 1)
+        advanceSimHeight(proofHeight + ContractParams.CLAIM_MATURATION_BLOCKS + 1)
 
         val payoutTx = claimBuilder.buildClaimPayout(
             provenBox = provenBox,
@@ -577,7 +579,6 @@ class E2eFlow(
         ClaimTxBuilder(
             trees,
             minerFeeNanoErg = config.minerFeeNanoErg,
-            claimMaturationBlocks = ErgoContracts.Fast.CLAIM_MATURATION_BLOCKS,
             handoffRecordMaxAgeMs = ErgoContracts.Fast.HANDOFF_RECORD_MAX_AGE_MS,
         )
 

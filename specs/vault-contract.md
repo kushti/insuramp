@@ -127,7 +127,11 @@ extension variable 0 is a `Byte` action code, mandatory on every spend
 
 The codes are hardcoded as bare literals in the source (`action == 0`, the way `basis.es`
 writes its action codes) — they are structural, not deployment parameters: nothing varies
-them between a mainnet compile and a fast e2e one, the way `CLAIM_MATURATION_BLOCKS` varies.
+them between a mainnet compile and a fast e2e one. `CLAIM_MATURATION_BLOCKS` went the same
+way on 2026-10-03: it is the hardcoded literal `360L` in `vault_payment_proven.es`, with
+`ContractParams.CLAIM_MATURATION_BLOCKS` mirroring it for the off-chain code and
+`FundedActionSpec` guarding the pair against drift. (Consequence: the live e2e flow B now
+waits the real ~12h of maturation — owner decision; `--dry-run` still sim-advances.)
 `ContractParams.ACTION_*` mirrors them for the tx builders, which must put the same byte on
 the wire, and `FundedActionSpec` reads the `.es` source to assert the two never drift. This
 mirrors the Basis reserve contract, where context var 0 likewise selects the action

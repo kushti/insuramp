@@ -191,7 +191,9 @@ The buyer console is the surface where that gap is closed:
   scripts), signs it, and submits it through a `TxSubmitter` seam.
 - The chain reader follows `TuiConfig.network` (mainnet by default; `P2P_NETWORK=testnet`
   to switch). The compiled trees use the **canonical** parameters — not
-  `compileFast`, whose 3-block maturation is the test/dev override — and the deployed
+  `compileFast`, whose shortened handoff-record freshness is the test/dev override
+  (the 3-block maturation override is gone since 2026-10-03: the maturation is a
+  hardcoded literal in the contract) — and the deployed
   oracle NFT id comes from `P2P_ORACLE_NFT_ID`, since it is a compile-time pin of the
   PAYMENT_PROVEN tree. Without it the console compiles against the test dummy and will
   refuse a real vault box; that is correct behaviour but opaque, so it is called out on

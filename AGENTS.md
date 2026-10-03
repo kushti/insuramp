@@ -51,7 +51,9 @@ flight, a release must confirm on-chain before the next posting.
 (`./gradlew :e2e:run`, `--dry-run` for a no-broadcast build against live chain) —
 funded operator (manual funding by default; testnet faucet via `E2E_FAUCET_URL`),
 minted dev-oracle NFT + test collateral, and three real flows
-(release via oracle attestation, dispute claim-open → fast maturation → payout, timeout
+(release via oracle attestation, dispute claim-open → maturation → payout — the
+maturation is the hardcoded 360 blocks (~12h) since 2026-10-03, so a live flow B
+waits it out; `--dry-run` sim-advances — timeout
 reclaim). Mainnet is the default target since 2026-09-17 ("change Ergo testnet to
 mainnet everywhere, lets test with mainnet"); testnet stays fully selectable via
 `E2E_EXPLORER_URL`/`E2E_FAUCET_URL`.
@@ -188,7 +190,9 @@ CLAIM / RECLAIM / RELEASE, `ContractParams.ACTION_*` — the Basis reserve contr
 every path is now positively identified, the branch-ordering hazard is structurally gone,
 and an unknown code is rejected instead of falling through to release. The codes are
   **hardcoded literals** in the `.es` (structural, not deployment parameters — nothing
-  varies them between a mainnet and a fast e2e compile, unlike `CLAIM_MATURATION_BLOCKS`);
+  varies them between a mainnet and a fast e2e compile; `CLAIM_MATURATION_BLOCKS`
+  went the same way on 2026-10-03, hardcoded as `360L` in `vault_payment_proven.es`
+  with `ContractParams.CLAIM_MATURATION_BLOCKS` mirroring it for the off-chain code);
   `ContractParams.ACTION_*` mirrors them for the builders and `FundedActionSpec` asserts the
   pair never drifts, since a drifted code fails quietly as an unspendable vault rather than
   loudly. It is a **breaking change to the FUNDED spend interface** (the var is mandatory;
@@ -230,8 +234,9 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   change added tests 46–48 and inverted test 21; the 2026-09-26
   branch-discriminator fix added tests 49–52; the 2026-10-04 action-var refactor
   added tests 53–56 and split test 51 into with/without-attestation) plus
-  `OracleContractSpec` 8 + `FundedActionSpec` 3 (the drift guard for the hardcoded
-  action literals vs `ContractParams.ACTION_*`) → contracts 62;
+  `OracleContractSpec` 8 + `FundedActionSpec` 4 (the drift guard for the hardcoded
+  action literals vs `ContractParams.ACTION_*`, plus the hardcoded `360L` maturation
+  vs `ContractParams.CLAIM_MATURATION_BLOCKS` since 2026-10-03) → contracts 63;
   dealprotocol module: DealStateMachine 44,
   Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7, plus (2026-09-27)
   TronAddress 8 + FiatAmounts 10 → 113; ergo module:
@@ -247,7 +252,7 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   seeding bug — `P2P_DEMO_QUOTES=true` seeded nothing because `maxAmount` was
   derived from an empty pool, and the existing test asserted the broken
   behaviour); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 412; plus the Android buyer app
+  E2eConfig 2, SchnorrPort 3) → JVM modules 413; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
   multi-quote currency-filtered list, offer-cash flow 2026-09-20, and the
   2026-09-27 pass: USDT-leg offer math with a rate-derived cash leg, TRON
@@ -256,8 +261,8 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   unit tests (`:app:testDebugUnitTest`); plus the terminal consoles
   (`tui/`, `specs/tui-apps.md`): `:tui:common` 30 (KtorBackendClient 16, Format,
   TuiConfig) + `:tui:seller` 24 (lanes, screen snapshot, terminal QR, status line) +
-  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 507;
-  plus the Android app's 95 → **602 total**.
+  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 508;
+  plus the Android app's 95 → **603 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :tui:common:test :tui:seller:test :tui:buyer:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

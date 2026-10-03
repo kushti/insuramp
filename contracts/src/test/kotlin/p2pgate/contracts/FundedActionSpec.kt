@@ -9,8 +9,9 @@ import kotlin.test.assertTrue
  *
  * `vault_funded.es` hardcodes its path codes as bare literals (`action == 0`, `== 1`,
  * `== 2`) rather than taking them through the `%%...%%` substitution mechanism, because
- * they are structural rather than deployment parameters — nothing varies them between a
- * mainnet compile and a fast e2e one, the way `CLAIM_MATURATION_BLOCKS` varies.
+ * they are structural rather than deployment parameters — nothing varies them between
+ * compiles. `CLAIM_MATURATION_BLOCKS` went the same way on 2026-10-03 (hardcoded `360L`
+ * in `vault_payment_proven.es`); the last test below guards that literal too.
  *
  * The cost of hardcoding is that `ContractParams.ACTION_*` (which the tx builders put on
  * the wire) could drift from the source, and a drifted code does not fail loudly: a
@@ -61,6 +62,19 @@ class FundedActionSpec {
         assertTrue(
             source.contains("sigmaProp(false)"),
             "vault_funded.es must reject an unrecognized action code explicitly",
+        )
+    }
+
+    @Test
+    fun `the hardcoded claim maturation in vault_payment_proven matches ContractParams`() {
+        val source = ContractCompiler.loadSource("vault_payment_proven.es")
+        // Same drift risk as the action codes: the tracker and the tx builders
+        // read ContractParams.CLAIM_MATURATION_BLOCKS, so a drifted literal
+        // fails quietly — a payout pre-checked as mature that the chain rejects.
+        assertTrue(
+            source.contains("claimOpenedAtHeight + ${ContractParams.CLAIM_MATURATION_BLOCKS}L"),
+            "vault_payment_proven.es must hardcode the maturation as " +
+                "${ContractParams.CLAIM_MATURATION_BLOCKS}L to match ContractParams.CLAIM_MATURATION_BLOCKS",
         )
     }
 }
