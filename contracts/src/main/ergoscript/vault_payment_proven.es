@@ -37,15 +37,15 @@
 {
   val sellerKey = decodePoint(SELF.R5[Coll[Byte]].get)
   val buyerKey = decodePoint(SELF.R6[Coll[Byte]].get)
-  val collateral = SELF.tokens(0)._2
-  val useTokenId = SELF.tokens(0)._1
+
   val proofH = SELF.R7[Long].get
+
   // Both paths pay out in full at OUTPUTS(0), to any address the signer chooses —
   // each path's signature authorizes the spend, so the collateral is conserved but
   // the destination is free (key rotation).
   val payoutOk =
-    OUTPUTS(0).tokens(0)._1 == useTokenId &&
-    OUTPUTS(0).tokens(0)._2 == collateral
+    OUTPUTS(0).tokens(0)._1 == SELF.tokens(0)._1 &&
+    OUTPUTS(0).tokens(0)._2 == SELF.tokens(0)._2
 
   // The buyer may take the collateral only when all three hold: the waiting period
   // has elapsed, the payout conserves it, and no attestation box is attached.

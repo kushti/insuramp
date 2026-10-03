@@ -80,6 +80,21 @@ class QuotePublisher(
         at: Instant = clock(),
         lat: Double? = null,
         lon: Double? = null,
+        /**
+         * Demo seeding only (`seedDemoQuotes`, behind `P2P_DEMO_QUOTES=true`).
+         *
+         * Demo mode runs with an empty vault, so mix-ready collateral is 0 and
+         * *every* quote is over capacity by the rule above — which is why
+         * `P2P_DEMO_QUOTES=true` silently seeded nothing until this flag existed.
+         * With no collateral the rule is vacuous rather than violated, so demo
+         * quotes are placeholders that promise a badge the demo vault cannot
+         * honour.
+         *
+         * Never pass this for a real quote: "max deal size = vault capacity is a
+         * hard constraint" (the class doc) is what stops the feed promising
+         * collateral the operator does not have.
+         */
+        skipCapacityCheck: Boolean = false,
     ): PublishOutcome {
         if (!infra.healthy()) {
             return reject("infra paused — quotes withdrawn (${
@@ -112,7 +127,7 @@ class QuotePublisher(
         val reserved = store.quotes().sumOf { it.maxAmount }
         val free = freeCollateral()
         val available = free - reserved
-        if (maxAmount > available) {
+        if (!skipCapacityCheck && maxAmount > available) {
             return reject(
                 "max deal size $maxAmount exceeds free collateral $available " +
                     "(free $free, reserved $reserved by ${store.quotes().size} other active quote(s))",

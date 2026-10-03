@@ -55,6 +55,28 @@ minted dev-oracle NFT + test collateral, and three real flows
 reclaim). Mainnet is the default target since 2026-09-17 ("change Ergo testnet to
 mainnet everywhere, lets test with mainnet"); testnet stays fully selectable via
 `E2E_EXPLORER_URL`/`E2E_FAUCET_URL`.
+`tui/` landed 2026-10-02 (`specs/tui-apps.md`): two full-screen terminal consoles, built
+with Mosaic 0.18.0 (Compose for the terminal) in their own top-level tree — `apps/` is
+the Android app's. `:tui:common` holds the shared `BackendClient` (a Ktor client behind
+an interface, so tests run on `MockEngine`) plus the hand-mirrored wire DTOs; `:tui:seller`
+is the operator console (a nine-column kanban of live deals, states as columns, with the
+handoff QR drawn in the terminal by `TerminalQr` — ZXing plus half-block glyphs); the
+seller console **holds no keys**, every seller-signed tx is built by the backend's
+`VaultSigner`. `:tui:buyer` is the buyer console: key custody in one passphrase-encrypted
+file (`KeyVault` — AES-256-GCM, PBKDF2-HMAC-SHA512 210k, header authenticated as AAD,
+`rw-------` set before the first byte is written), needed only for the path-D payout since
+path B is `sigmaProp`-only; and it **builds and broadcasts its own claim transactions**
+via `:apps:core:ergo`, which is the gap the Android app leaves open. It reads the vault
+box from the chain and verifies the seller's signature against the box's **R5**, so it
+does not repeat the Android app's "server-supplied `sellerPubKey`" flaw — but it
+deliberately does *not* check the fiat amount, which is not on-chain. Two things to know before editing: Mosaic needs a real TTY, so
+`./gradlew run` does not work — but a *synthesized* TTY does, so both consoles have
+been run against a live demo backend via `script -qec … /dev/null` (see the spec's §8,
+which lists the eight bugs that found and the four things it still leaves unproven); and
+Mosaic 0.18.0 needs Kotlin ≥ 2.2.10, which is why the
+repo was bumped 2.0.21 → 2.2.21. `:tui:seller:check` runs `checkDashboardCoverage`,
+which fails if a dashboard API path has no `BackendClient` counterpart — that catches
+coverage, not field drift.
 The buyer app module (`apps/app`, native Android, `specs/android-app.md`) and the
 seller dashboard front-end (`specs/seller-dashboard.md`, a static web app served by the
 Ktor backend at `/dashboard/`) landed in M4 (2026-09-17/18); the rest of `apps/` remains
@@ -114,6 +136,7 @@ period, on the release path. The broader vision is Ergo as pillar 3 of
 | `onramp-insurance.md` | **Core design doc — read this first.** Vault contract skeleton, per-asset designs (USDT oracle-verified, BTC trustless via Bitcoin relay, XMR oracle-verified via tx-key reveal), trust-model comparison, limitations, sources. |
 | `onramp-ux.md` | Product design for the two sides of the marketplace — buyer app (native Android app) and seller meeting flow — plus the operator dashboard. Flow timings must stay consistent with the contract design (24h timeout, 12h claim maturation, ~6h BTC deadline). |
 | `onramp-business-model.md` | Protocol-layer economics: fee model (the in-contract protocol fee was removed 2026-09-18; protocol revenue is undefined/deferred [spec]), capital dynamics (protocol TVL ≈ outstanding deal volume; collateral availability is the binding constraint), volume scenarios, risks, bootstrapping sequence. |
+| `specs/tui-apps.md` | The two terminal consoles (`tui/`): the operator kanban console and the buyer console (both landed), key custody, and what a headless test cannot verify. |
 | `specs/` | Implementation specs (index: `specs/README.md`): vault contract, deal protocol, oracle integration, seller dashboard, buyer app, operator backend. Canonical constants live in `specs/vault-contract.md` §2; canonical state names in `specs/deal-protocol.md` §1. `specs/vault-contract-review.md` is a 2026-09-26 adversarial review of the shipped vault contracts — **findings open, not normative**; its §8 lists the spec edits it asks for (not applied). |
 
 The docs form a strict reading order: `pillars.md` (why) → `onramp-insurance.md` (contracts
@@ -200,16 +223,23 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   the 2026-10-01 tracker fix re-derived payout classification from collateral
   conservation + spend shape instead of the payout tree, so it also added the
   key-rotated-payee and conservation cases — see `specs/android-app.md` §4.2);
-  backend 120 (11 suites); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 404; plus the Android buyer app
+  backend 121 (11 suites; the 2026-10-03 live-console run fixed the demo-quote
+  seeding bug — `P2P_DEMO_QUOTES=true` seeded nothing because `maxAmount` was
+  derived from an empty pool, and the existing test asserted the broken
+  behaviour); e2e 10 (E2eFlow 5,
+  E2eConfig 2, SchnorrPort 3) → JVM modules 405; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
   multi-quote currency-filtered list, offer-cash flow 2026-09-20, and the
   2026-09-27 pass: USDT-leg offer math with a rate-derived cash leg, TRON
   address validation, meeting reachable at FUNDED, handoff deep links, deal list
   + delete-all, recovery link, reconnecting sockets): 95 JVM
-  unit tests (`:app:testDebugUnitTest`) → **499 total**.
+  unit tests (`:app:testDebugUnitTest`); plus the terminal consoles
+  (`tui/`, `specs/tui-apps.md`): `:tui:common` 30 (KtorBackendClient 16, Format,
+  TuiConfig) + `:tui:seller` 24 (lanes, screen snapshot, terminal QR, status line) +
+  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 500;
+  plus the Android app's 95 → **595 total**.
   Full gate:
-  `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :app:testDebugUnitTest :app:assembleDebug`
+  `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :tui:common:test :tui:seller:test :tui:buyer:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).
 - **Before editing any `.es` file, read the "sigma-state 6 typing constraints" list in
   `specs/vault-contract.md` §5** — several natural ErgoScript constructs (tuple registers,

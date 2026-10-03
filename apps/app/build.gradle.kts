@@ -1,10 +1,10 @@
 plugins {
     id("com.android.application") version "8.6.1"
-    kotlin("android") version "2.0.21"
-    kotlin("plugin.compose") version "2.0.21"
-    kotlin("plugin.serialization") version "2.0.21"
-    // KSP build matching Kotlin 2.0.21 (Room's annotation processor).
-    id("com.google.devtools.ksp") version "2.0.21-1.0.28"
+    kotlin("android") version "2.2.21"
+    kotlin("plugin.compose") version "2.2.21"
+    kotlin("plugin.serialization") version "2.2.21"
+    // KSP build matching Kotlin 2.2.21 (Room's annotation processor).
+    id("com.google.devtools.ksp") version "2.2.21-2.0.5"
 }
 
 android {
@@ -45,6 +45,13 @@ android {
         // JVM unit tests run on JUnit 5 like the rest of the repo.
         unitTests.all { it.useJUnitPlatform() }
     }
+
+    packaging {
+        // BouncyCastle and JSpecify (pulled in transitively by Room 2.7) both ship
+        // the same OSGi manifest at this path; the merge would fail on the
+        // duplicate. Neither file is needed at runtime.
+        resources.excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+    }
 }
 
 kotlin {
@@ -82,9 +89,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     // Local deal store (Room via KSP) + background polling.
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    // Room 2.7.x is the first line with KSP2 support, which KSP 2.2.21 uses.
+    implementation("androidx.room:room-runtime:2.7.2")
+    implementation("androidx.room:room-ktx:2.7.2")
+    ksp("androidx.room:room-compiler:2.7.2")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     // QR scanning: ZXing (pure, offline, camera-based — the §8.6 privacy

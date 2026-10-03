@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm") version "2.0.21"
-    kotlin("plugin.serialization") version "2.0.21"
+    kotlin("jvm") version "2.2.21"
+    kotlin("plugin.serialization") version "2.2.21"
     application
 }
 
@@ -15,12 +15,14 @@ application {
     mainClass = "p2pgate.backend.api.ServerKt"
 }
 
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    kotlinOptions.jvmTarget = "17"
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
-// Ktor 3.0.3 is the newest 3.x line built against Kotlin 2.0.21 (its
-// kotlin-stdlib dependency is exactly 2.0.21), so the whole Ktor surface is
+// Ktor 3.0.3 is the newest 3.x line available here (its kotlin-stdlib
+// dependency is 2.0.21, which a 2.2.21 compiler reads fine), so the whole Ktor surface is
 // metadata-compatible with this module's compiler.
 val ktorVersion = "3.0.3"
 

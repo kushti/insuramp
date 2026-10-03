@@ -784,7 +784,15 @@ fun Application.module() {
  * the per-quote capacity rule whenever the pool is funded; an unfunded pool
  * just rejects the seeds (logged, never fatal).
  */
+/**
+ * The max deal size used when the pool is empty. 5,000 USDT — small enough to be
+ * obviously a placeholder, and above every seed's `minAmount` so the min ≤ max rule
+ * holds. Only reached in demo mode with no funded vault.
+ */
+private const val DEMO_FALLBACK_MAX_AMOUNT = 500_000_000L
+
 internal fun seedDemoQuotes(quotes: QuotePublisher, mixReadyCollateral: Long, log: (String) -> Unit) {
+
     data class Seed(
         val city: String,
         val spreadBps: Int,
@@ -805,11 +813,20 @@ internal fun seedDemoQuotes(quotes: QuotePublisher, mixReadyCollateral: Long, lo
         Seed("Moscow", spreadBps = 180, etaMinutes = 60, minAmount = 3_000_000, numer = 3, denom = 20, fiatCurrency = "RUB", fiatPerUsdtMicros = 95_000_000, lat = 55.755, lon = 37.617),
     )
     for (seed in seeds) {
-        val maxAmount = mixReadyCollateral * seed.numer / seed.denom
+        // A funded pool scales each max by its share, so the seed set as a whole
+        // fits the collateral. Demo mode has no pool (mix-ready is 0), which
+        // collapses that to 0 and used to make every seed fail — so fall back to
+        // a fixed demo ceiling. Demo quotes are placeholders; see
+        // `skipCapacityCheck` on QuotePublisher.publish for why the capacity rule
+        // is bypassed here and only here.
+        val maxAmount = (mixReadyCollateral * seed.numer / seed.denom)
+            .takeIf { it >= seed.minAmount }
+            ?: DEMO_FALLBACK_MAX_AMOUNT
         when (
             val outcome = quotes.publish(
                 seed.spreadBps, seed.etaMinutes, seed.minAmount, maxAmount, seed.fiatCurrency,
                 seed.fiatPerUsdtMicros, lat = seed.lat, lon = seed.lon,
+                skipCapacityCheck = true,
             )
         ) {
             is QuotePublisher.PublishOutcome.Published ->

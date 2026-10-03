@@ -27,7 +27,10 @@ specified.*
   `contracts/` — ErgoScript `.es` sources + Kotlin contract tests (phase 1 + v2
   landed); `apps/core/` — pure-Kotlin shared modules (`dealprotocol`, `ergo` chain
   layer — landed); `apps/app` — native Android buyer app module (starting in M4,
-  2026-09-17); `backend/` — operator backend (landed M3-B, 2026-09-17); `e2e/` — end-to-end gate (landed M3-C);
+  2026-09-17); `backend/` — operator backend (landed M3-B, 2026-09-17); `e2e/` — end-to-end gate (landed M3-C); `tui/` — the two terminal consoles,
+  all three modules landed (2026-10-02,
+  `specs/tui-apps.md`; top-level rather than under `apps/`, which is the Android app's tree
+  and otherwise reserved);
   `specs/` — this directory. Mainnet is the default target everywhere since
   2026-09-17; testnet stays selectable via config/env (`P2P_NETWORK=testnet`,
   `E2E_EXPLORER_URL`/`E2E_FAUCET_URL`).
@@ -42,6 +45,7 @@ specified.*
 | 4 | `specs/seller-dashboard.md` | seller/operator dashboard front-end: login, vault lane kanban, the meeting screen (counted-cash gate, handoff QR), pool view, dispute inbox, infra status; handoff sign/QR endpoints | **landed** (2026-09-17/18, M4; static vanilla JS/CSS app at `/dashboard/`, handoff sign + QR endpoints live, backend runnable via `./gradlew :backend:run`) |
 | 5 | `specs/android-app.md` | buyer-facing native Android app: modules, screens, chain interaction, handoff-record verification | **landed** (2026-09-18, M4): `apps/app` native Android buyer app (Compose, ZXing, WorkManager polling) — quote discovery, deal timeline, the meeting screen, claim path, recovery; 37 JVM unit tests + `assembleDebug` green. Native Android is the owner decision; the earlier PWA wording is superseded |
 | 6 | `specs/operator-backend.md` | Ktor operator backend: vault lane, collateral management, quotes, AML hook, dispute inbox, APIs | **landed M3-B** (2026-09-17, `backend/`, 93 tests green; M4 seller-meeting endpoints + static dashboard serving added; documented deviations in the spec's status note) |
+| 7 | `specs/tui-apps.md` | Terminal consoles for both sides: the operator kanban (`:tui:seller`, landed), the buyer console (`:tui:buyer`, stub), key custody, and what is *not* verified without a TTY | **landed** (2026-10-02): `:tui:common` (30 tests) + `:tui:seller` (18) + `:tui:buyer` (41); neither console has been run against a live backend — see the spec's §8 |
 | — | `specs/vault-contract-review.md` | Adversarial review of the shipped vault contracts: protocol-level findings (the post-timeout claim/reclaim race, the seller-chosen claim window), contract-surface findings (brickable box, false lazy-eval invariant, ERG conservation, the two-tree pin asymmetry), why the contract is split in two, and the suggested spec edits | **landed 2026-09-26**, second pass **2026-10-01** (§10: the Kotlin layer — its one finding, `VaultBoxTracker` blind to key-rotated payouts, is **fixed**; the contract-surface items it adds — second token kind escaping conservation, the unenforced record format, `oracle.es` not pinning its reproduction — are **open**). Findings open, not normative; no spec text and no `.es` file was changed by either pass. Read alongside `vault-contract.md` §3.3/§5/§9; §8 lists the doc edits it asks for |
 
 ## Invariants that keep the specs (and future code) consistent
@@ -167,3 +171,4 @@ composable tests).
 
 - Design docs: `onramp-insurance.md`, `onramp-ux.md`, `onramp-business-model.md`, `pillars.md`
 - Contract review (findings, open): `specs/vault-contract-review.md`
+- Terminal consoles: `specs/tui-apps.md` (both consoles landed; neither yet run against a live backend)

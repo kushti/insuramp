@@ -122,6 +122,7 @@
     val recordId = blake2b256(
       getVar[Coll[Byte]](1).get ++ getVar[Coll[Byte]](2).get ++
       getVar[Coll[Byte]](0).get)
+
     // Output: the PAYMENT_PROVEN box carrying everything, registers copied,
     // proofHeight = HEIGHT, record id in R8.
     val provenOutOk =

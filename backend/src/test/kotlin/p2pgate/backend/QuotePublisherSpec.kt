@@ -300,13 +300,37 @@ class QuotePublisherSpec {
     }
 
     @Test
-    fun `demo seeding against an empty pool rejects the seeds without failing`() {
+    fun `demo seeding against an empty pool still seeds placeholders`() {
+        // Demo mode runs with no funded vault, so mix-ready collateral is 0. The
+        // old behaviour -- reject the seeds -- meant `P2P_DEMO_QUOTES=true` seeded
+        // *nothing*, which is what the console smoke test ran into: an empty feed
+        // on every start. A seeded placeholder is the point of the flag, and with
+        // no collateral the capacity rule is vacuous rather than violated.
         val env = env(mixReady = 0L)
         val logs = mutableListOf<String>()
         p2pgate.backend.api.seedDemoQuotes(env.quotes, 0L) { logs += it }
-        assertTrue(env.quotes.active(java.time.Instant.now()).isEmpty())
+        val active = env.quotes.active(java.time.Instant.now())
+        assertEquals(4, active.size, "demo quotes should still seed with an empty pool")
+        assertEquals(listOf("USD", "KSH", "INR", "RUB"), active.map { it.fiatCurrency })
+        // Each falls back to the same fixed demo ceiling, so min <= max still holds.
+        assertTrue(
+            active.all { it.maxAmount > it.minAmount },
+            "the demo fallback max must exceed every seed's min: ${active.map { it.minAmount to it.maxAmount }}",
+        )
         assertEquals(4, logs.size)
-        assertTrue(logs.all { it.contains("not seeded") })
+        assertTrue(logs.all { it.startsWith("demo quote seeded") }, logs.toString())
+    }
+
+    @Test
+    fun `a real quote is still capacity-checked, whatever the demo seeds did`() {
+        // The demo bypass must not leak: an ordinary publish against an unfunded
+        // pool is still refused. "Max deal size = vault capacity is a hard
+        // constraint" is what stops the feed promising collateral the operator
+        // does not have, so this is the assertion that matters most here.
+        val env = env(mixReady = 0L)
+        p2pgate.backend.api.seedDemoQuotes(env.quotes, 0L) { }
+        val outcome = env.quotes.publish(50, 60, 1_000_000L, 5_000_000L, "USD", Fx.RATE_USD, T0)
+        assertInstanceOf(QuotePublisher.PublishOutcome.Rejected::class.java, outcome)
     }
 
     @Test
