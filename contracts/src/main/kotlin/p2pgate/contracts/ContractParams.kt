@@ -50,9 +50,6 @@ object ContractParams {
     const val ACTION_CLAIM_PAYOUT: Int = 0
     const val ACTION_CONTEST: Int = 1
 
-    /** Freshness bound on the handoff-record timestamp. [spec] */
-    const val HANDOFF_RECORD_MAX_AGE_MS: Long = 4L * 60 * 60 * 1000
-
     /** Ergo network prefix for script compilation: 0x00 mainnet, 0x10 testnet. */
     const val NETWORK_PREFIX_MAINNET: Byte = 0x00
     const val NETWORK_PREFIX_TESTNET: Byte = 0x10

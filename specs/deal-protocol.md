@@ -225,11 +225,13 @@ fiatCurrency  3 bytes
 timestamp     4 bytes   uint32 unix seconds
 ```
 
-52 bytes total; the timestamp sits at bytes 48..52 (path B's freshness check slices
-exactly those bytes). One Schnorr signature over the record under `sellerPubKey`,
+52 bytes total; the timestamp sits at bytes 48..52. It is **signed evidence only**:
+the in-script freshness window that used to slice those bytes was removed 2026-10-04
+(`specs/vault-contract.md` §8.8) — path B no longer reads the timestamp at all. The
+off-chain clock-skew sanity gate at the meeting (±10 min, below) is unaffected.
+One Schnorr signature over the record under `sellerPubKey`,
 verified in-script by vault path B against the vault's R5 (ergoforum.org/t/3407 variant,
-`specs/vault-contract.md` §5); the timestamp freshness bound is enforced in-script by
-path B against the claim tx timestamp. Signatures are never part of the message bytes.
+`specs/vault-contract.md` §5). Signatures are never part of the message bytes.
 **Sequencing rule:** the seller signs only after physically counting the cash; cash
 changes hands as the signature lands (the buyer app must have persisted the signed
 record before releasing the cash). The buyer obtains the signed record at the meeting as

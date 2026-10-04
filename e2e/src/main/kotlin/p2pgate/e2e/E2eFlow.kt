@@ -21,8 +21,10 @@ import java.math.BigInteger
 /**
  * The end-to-end gate (milestone M3-C): runs the full on-chain flow
  * against Ergo mainnet (the default target since 2026-09-17; testnet stays
- * selectable via `E2E_EXPLORER_URL`/`E2E_FAUCET_URL`) with fast contracts
- * ([ErgoContracts.compileFast]):
+ * selectable via `E2E_EXPLORER_URL`/`E2E_FAUCET_URL`) against the canonical
+ * contracts ([ErgoContracts.compile] — there is no fast variant since
+ * 2026-10-04; the only shortened timing is the funding-time reclaim timeout,
+ * `E2eConfig.reclaimTimeoutBlocks`):
  *
  *  1. preflight (explorer reachable) → exit 2 with manual instructions if not;
  *  2. per-run keypairs (operator/seller, buyer, oracle);
@@ -126,7 +128,7 @@ class E2eFlow(
 
         // ------------------------------------------------ 3. compile (dummy NFT first to measure dust)
         val dummyNft = ByteArray(32) { 7 }
-        val probeTrees = ErgoContracts.compileFast(oracleNftId = dummyNft)
+        val probeTrees = ErgoContracts.compile(oracleNftId = dummyNft)
         val probeOracle = DevOracle(keys.oracle.secret, dummyNft, networkPrefix, boxValueNanoErg = 1_000_000L)
         val autoFundedValue = maxOf(2_000_000L, probeTrees.fundedTree.bytes().size.toLong() * DUST_PER_BYTE)
         val fundedValue = if (config.fundedBoxValueNanoErg != E2eConfig.AUTO_FUNDED_VALUE) {
@@ -163,7 +165,7 @@ class E2eFlow(
         // Recompile against the REAL NFT id (the mint tx's first input box id).
         nftIdHex = setup.nftIdHex
         collateralTokenIdHex = setup.collateralTokenIdHex
-        val trees = ErgoContracts.compileFast(oracleNftId = Hex.decode(nftIdHex))
+        val trees = ErgoContracts.compile(oracleNftId = Hex.decode(nftIdHex))
         val devOracle = DevOracle(
             keys.oracle.secret, Hex.decode(nftIdHex), networkPrefix,
             boxValueNanoErg = setup.oracleBox.value,
@@ -397,7 +399,6 @@ class E2eFlow(
             a = sig.a,
             z = sig.z,
             currentHeight = buildHeight(),
-            txTimestampMs = record.timestamp * 1000L,
             changeAddress = p2pkAddress(keys.buyer),
             signer = proverSigner(keys.buyer.secret),
         )
@@ -579,7 +580,6 @@ class E2eFlow(
         ClaimTxBuilder(
             trees,
             minerFeeNanoErg = config.minerFeeNanoErg,
-            handoffRecordMaxAgeMs = ErgoContracts.Fast.HANDOFF_RECORD_MAX_AGE_MS,
         )
 
     private fun proverSigner(secret: BigInteger): p2pgate.ergo.DealTxSigner = p2pgate.ergo.DealTxSigner { tx ->

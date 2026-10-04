@@ -21,8 +21,8 @@
 //       paid in full to ANY seller-chosen address (key rotation: the signature
 //       authorizes the spend, so the payee is not pinned to the R5 key)
 //   B — open claim: the SELLER's Schnorr signature (R5 key) over the P2PH handoff
-//       record with freshness; spends into the PAYMENT_PROVEN box.
-//       No oracle input on this path
+//       record, bound to this deal by the record's dealId; spends into the
+//       PAYMENT_PROVEN box. No oracle input on this path
 //   C — release: the oracle singleton box as a DATA INPUT (NFT == R7) whose R4
 //       carries exactly the 32-byte dealId — the oracle's single per-deal signal
 //       that the seller's USDT transfer to the buyer is confirmed AND screened
@@ -63,7 +63,8 @@
 //   Path B (claim):    (1) Coll[Byte] handoff record msg (52 B, "P2PH")
 //                      (2) Coll[Byte] a_sig — Schnorr nonce point, 33 B
 //                      (3) Coll[Byte] z_sig — Schnorr response, 32 B
-//                      (4) Long        record timestamp in millis (msg bytes 48..52 * 1000)
+//                      (the record's timestamp is signed evidence only — the
+//                      in-script freshness window was removed 2026-10-04, §8.8)
 //   Paths A/C:         no further vars — the release attestation (the dealId
 //                      itself) rides in the oracle data input's R4
 //
@@ -90,9 +91,10 @@
 // need not be: choosing CLAIM is the only choice that helps the buyer, so no
 // party can be coerced into it by a third party.
 //
-// Everything else — the record's dealId binding, freshness, the PAYMENT_PROVEN
-// output shape — is checked in the branch body, which only evaluates when the
-// action matches. (SigmaProp || would evaluate every branch during proof
+// Everything else — the record's dealId binding, the Schnorr challenge, the
+// PAYMENT_PROVEN output shape — is checked in the branch body, which only
+// evaluates when the action matches. (SigmaProp || would evaluate every branch
+// during proof
 // reduction, hence the Boolean if.) An unrecognized action code is rejected
 // outright rather than falling through to the release branch.
 {
@@ -117,7 +119,7 @@
 
   if (action == 0) {
     // Path B — open claim on the SELLER-signed handoff record (the cash-received
-    // acknowledgment from the meeting); anyone may submit. Context vars 1..4.
+    // acknowledgment from the meeting); anyone may submit. Context vars 1..3.
     // NB: sigma-state 6 only typechecks byteArrayToBigInt when its
     // argument is a direct expression (no val references), so anything feeding
     // a conversion stays inline — the results themselves may be named vals.
@@ -126,14 +128,6 @@
     // record's dealId (bytes 5..37) must still bind THIS deal — checked here,
     // in the branch body.
     val recordDealOk = handoffRecord.slice(5, 37) == SELF.R4[Coll[Byte]].get
-    // Freshness is checked on a Long context var (record ts seconds * 1000), bound to
-    // the signed record bytes by Coll equality; byteArrayToBigInt cannot do ordering
-    // comparisons on a slice (sigma-state 6 assignType limitation).
-    val recordTimestampMs = getVar[Long](4).get
-    val freshOk =
-      longToByteArray(recordTimestampMs / 1000L).slice(4, 8) == handoffRecord.slice(48, 52) &&
-      recordTimestampMs <= CONTEXT.preHeader.timestamp &&
-      recordTimestampMs > CONTEXT.preHeader.timestamp - %%HANDOFF_RECORD_MAX_AGE_MS%%
     // The signature is the SELLER's Schnorr half, verified under R5's sellerKey —
     // the same key that proves the reclaim; the record is the buyer's dispute
     // evidence when the seller took cash but never sent the USDT.
@@ -170,7 +164,7 @@
       OUTPUTS(0).tokens(0)._1 == useTokenId &&
       OUTPUTS(0).tokens(0)._2 == collateral &&
       OUTPUTS(0).value == SELF.value
-    sigmaProp(recordDealOk && freshOk && sellerSigOk && provenOutOk)
+    sigmaProp(recordDealOk && sellerSigOk && provenOutOk)
   } else if (action == 1) {
     // Path A — reclaim after timeout; the seller discharges proveDlog(sellerKey).
     // The timeout is checked INSIDE the branch, not in the discriminator: a

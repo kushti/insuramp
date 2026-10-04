@@ -60,16 +60,13 @@ class VaultFixture(
     // reads the NFT id per-box from R9 (copied from the FUNDED box's R7).
     val provenTree: ErgoTree = ContractCompiler.compileResource(
         "vault_payment_proven.es",
-        mapOf(
-            "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${ContractParams.HANDOFF_RECORD_MAX_AGE_MS}L"),
-        ),
+        emptyMap(),
     )
 
     val fundedTree: ErgoTree = ContractCompiler.compileResource(
         "vault_funded.es",
         mapOf(
             "PAYMENT_PROVEN_SCRIPT" to ConstValue.Bytes(provenTree.bytes()),
-            "HANDOFF_RECORD_MAX_AGE_MS" to ConstValue.Raw("${ContractParams.HANDOFF_RECORD_MAX_AGE_MS}L"),
         ),
     )
 
@@ -223,29 +220,21 @@ class VaultFixture(
 
     // --- context variables ---
 
-    /** record bytes 48..52 as seconds since epoch, in millis (matches the contract's ts context var). */
-    fun msgTsMillis(msg: ByteArray): Long {
-        var sec = 0L
-        for (i in 0..3) sec = (sec shl 8) or (msg[48 + i].toLong() and 0xff)
-        return sec * 1000
-    }
-
     /**
      * Copies of an otherwise-honest message / response with one defect injected:
      * [flippedByte] flips one bit at [index] (default sits in the fiat-amount region,
-     * outside the dealId/timestamp fields the other checks bind to).
+     * outside the dealId field the deal binding checks).
      */
     fun flippedByte(msg: ByteArray, index: Int = 40): ByteArray =
         msg.copyOf().also { it[index] = (it[index].toInt() xor 0x01).toByte() }
 
     /**
      * Context vars for path B: the action byte at 0, then the 52-byte record at 1,
-     * the seller's Schnorr signature at 2..3, the record timestamp in millis at 4.
-     * Pass [sig] (e.g. from a SignedRecord) to keep the carried (a, z) pair
+     * the seller's Schnorr signature at 2..3. Pass [sig] (e.g. from a
+     * SignedRecord) to keep the carried (a, z) pair
      * identical to the one an id was computed from; by default the signature is
      * produced here under [signer]. [aOverride]/[zOverride] let a test pair honest
-     * signature material with tampered context-var bytes; [tsMsOverride] decouples
-     * the Long var from the timestamp embedded in [record] to probe the slice binding.
+     * signature material with tampered context-var bytes.
      */
     fun handoffVars(
         record: ByteArray,
@@ -254,7 +243,6 @@ class VaultFixture(
         sig: Schnorr.Signature? = null,
         aOverride: ByteArray? = null,
         zOverride: ByteArray? = null,
-        tsMsOverride: Long? = null,
     ): Map<Int, EvaluatedValue<out SType>> {
         val s = sig ?: Schnorr.sign(signer.w(), record, pub)
         return actionVars(ContractParams.ACTION_CLAIM).plus(
@@ -262,7 +250,6 @@ class VaultFixture(
                 1 to bytesC(record),
                 2 to bytesC(aOverride ?: s.a),
                 3 to bytesC(zOverride ?: s.z),
-                4 to SigmaBridge.longVal(tsMsOverride ?: msgTsMillis(record)) as EvaluatedValue<out SType>,
             ),
         )
     }

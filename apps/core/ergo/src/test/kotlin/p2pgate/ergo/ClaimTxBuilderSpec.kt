@@ -47,7 +47,6 @@ class ClaimTxBuilderSpec {
             a = sig.a,
             z = sig.z,
             currentHeight = currentHeight,
-            txTimestampMs = tsSec * 1000,
             changeAddress = f.dealKeysAddress,
             signer = signer,
         )
@@ -65,10 +64,6 @@ class ClaimTxBuilderSpec {
     private fun contextVarByte(tx: UnsignedTransaction, id: Int): Byte =
         (rawExtension(tx).apply(id.toByte()).value() as java.lang.Byte).toByte()
 
-    private fun contextVarLong(tx: UnsignedTransaction, id: Int): Long {
-        return (rawExtension(tx).apply(id.toByte()).value() as java.lang.Long).toLong()
-    }
-
     private fun outBytes(out: OutBoxImpl, r: Int): ByteArray =
         JavaHelpers.collToByteArray(out.registers[r - 4].value as sigma.Coll<Any>)
 
@@ -78,13 +73,12 @@ class ClaimTxBuilderSpec {
     // ---------------------------------------------------------------- claim-open (path B)
 
     @Test
-    fun `claim-open names ACTION_CLAIM in var 0 and carries the record as vars 1-4`() {
+    fun `claim-open names ACTION_CLAIM in var 0 and carries the record as vars 1-3`() {
         val (tx, record, sig) = openTx()
         assertEquals(ContractParams.ACTION_CLAIM.toByte(), contextVarByte(tx, 0))
         assertTrue(contextVarBytes(tx, 1).contentEquals(record.encode()))
         assertTrue(contextVarBytes(tx, 2).contentEquals(sig.a))
         assertTrue(contextVarBytes(tx, 3).contentEquals(sig.z))
-        assertEquals(record.timestamp * 1000, contextVarLong(tx, 4))
     }
 
     @Test
@@ -146,7 +140,6 @@ class ClaimTxBuilderSpec {
             a = sig.a,
             z = sig.z,
             currentHeight = 1500,
-            txTimestampMs = record.timestamp * 1000,
             changeAddress = f.dealKeysAddress,
             signer = ErgoTestFixtures.ProverSigner(f.dealKeys.secret),
         )
@@ -166,7 +159,7 @@ class ClaimTxBuilderSpec {
                 fundedBox = f.provenChainBox(terms),
                 feeInputs = listOf(f.feeChainBox()),
                 record = record, a = sig.a, z = sig.z,
-                currentHeight = 1500, txTimestampMs = record.timestamp * 1000,
+                currentHeight = 1500,
                 changeAddress = f.dealKeysAddress,
                 signer = ErgoTestFixtures.ProverSigner(f.dealKeys.secret),
             )
@@ -188,47 +181,15 @@ class ClaimTxBuilderSpec {
                 fundedBox = f.fundedChainBox(terms),
                 feeInputs = listOf(f.feeChainBox()),
                 record = foreignRecord, a = sig.a, z = sig.z,
-                currentHeight = 1500, txTimestampMs = foreignRecord.timestamp * 1000,
+                currentHeight = 1500,
                 changeAddress = f.dealKeysAddress,
                 signer = ErgoTestFixtures.ProverSigner(f.dealKeys.secret),
             )
         }
     }
 
-    @Test
-    fun `claim-open rejects a stale record timestamp`() {
-        val terms = f.dealTerms()
-        val record = f.handoffRecord(terms, tsSec = 1_700_000_000L)
-        val sig = f.sellerSign(record)
-        val txTs = (1_700_000_000L + ContractParams.HANDOFF_RECORD_MAX_AGE_MS / 1000 + 60) * 1000
-        assertFailsWith<IllegalArgumentException> {
-            builder.buildClaimOpen(
-                fundedBox = f.fundedChainBox(terms),
-                feeInputs = listOf(f.feeChainBox()),
-                record = record, a = sig.a, z = sig.z,
-                currentHeight = 1500, txTimestampMs = txTs,
-                changeAddress = f.dealKeysAddress,
-                signer = ErgoTestFixtures.ProverSigner(f.dealKeys.secret),
-            )
-        }
-    }
-
-    @Test
-    fun `claim-open rejects a future record timestamp`() {
-        val terms = f.dealTerms()
-        val record = f.handoffRecord(terms, tsSec = 1_700_000_000L)
-        val sig = f.sellerSign(record)
-        assertFailsWith<IllegalArgumentException> {
-            builder.buildClaimOpen(
-                fundedBox = f.fundedChainBox(terms),
-                feeInputs = listOf(f.feeChainBox()),
-                record = record, a = sig.a, z = sig.z,
-                currentHeight = 1500, txTimestampMs = record.timestamp * 1000 - 60_000,
-                changeAddress = f.dealKeysAddress,
-                signer = ErgoTestFixtures.ProverSigner(f.dealKeys.secret),
-            )
-        }
-    }
+    // The stale/future record-timestamp pre-check tests were removed 2026-10-04
+    // with the freshness window (path B no longer reads the record timestamp).
 
     // ---------------------------------------------------------------- claim payout (path D)
 

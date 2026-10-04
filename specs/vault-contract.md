@@ -67,9 +67,14 @@ All other docs and code reference these names; the numbers live only here.
 |---|---|---|
 | `RECLAIM_TIMEOUT` | 24h ≈ 720 Ergo blocks [approx] | deal window; quote expiry on the buyer side |
 | `CLAIM_MATURATION` | 12h ≈ 360 blocks [approx] | gives the seller time to counter a claim with the oracle's attestation (path C′) |
-| `HANDOFF_RECORD_MAX_AGE` | 4h [spec] | freshness bound on the handoff-record timestamp (renamed from `DELIVERY_MSG_MAX_AGE` in v2 — same value and role) |
 | `BTC_DEADLINE` | ~6h ≈ 180 blocks [approx] | BTC leg only (§8.1) |
 | Hash function | `blake2b256` | ErgoTree has `blake2b256`/`sha256` only — no Keccak-256 |
+
+The handoff-record freshness bound (`HANDOFF_RECORD_MAX_AGE`, 4h) was **removed on
+2026-10-04** (owner decision, §8.8): it is no longer a parameter and no longer appears
+in either script; the record's timestamp is signed evidence only. The off-chain
+`HANDOFF_CLOCK_SKEW` (±10 min meeting-gate sanity, `specs/deal-protocol.md` §3.2) is
+unaffected.
 
 The in-contract protocol fee (`PROTOCOL_FEE_BPS`, 25 bps, a compile-time
 constant since 2026-09-17) was **removed on 2026-09-18** (owner decision,
@@ -231,11 +236,12 @@ Conditions checked in-script:
   seller-side attestation that cash was collected. This is the **only** signature
   verified on the claim path (v2): the buyer obtains it at the meeting as the dispute
   artifact; no artifact, no claim;
-- record `timestamp` within `HANDOFF_RECORD_MAX_AGE` of `CONTEXT.preHeader.timestamp`
-  (freshness — a stale record cannot be replayed into a later dispute);
 - output 0 is a PAYMENT_PROVEN box carrying **all** tokens and ERG, with registers copied
   plus `proofHeight = HEIGHT` and the handoff record's identifying bytes for the
   dashboard's evidence view.
+
+(The record's timestamp is **not** read in-script: the freshness window was removed
+2026-10-04, §8.8 — the timestamp stays in the signed bytes as evidence.)
 
 The record is signed under the same R5 key that reclaims the collateral, so a seller
 opening a claim on its own vault is self-defeating: the claim pays the *buyer* the
@@ -331,7 +337,7 @@ signer and contract agree; the signer grinds the nonce until `z` fits 254 bits s
 encoding is always positive (see `contracts/src/test/kotlin/p2pgate/contracts/Schnorr.kt`).
 
 **Path B verifies this scheme once:** against `sellerPubKey` (R5), over the
-handoff record, freshness-bounded as below. One signature opens the claim — there is no
+handoff record. One signature opens the claim — there is no
 second half (v2). The release paths (C/C′) verify no Schnorr signature at all: the
 NFT-carrying data input plus the `dealId` equality check (`dataInput.R4 == SELF.R4`) are
 the whole gate.
@@ -346,15 +352,14 @@ Context variables:
 | 1 | `Coll[Byte]` | handoff record msg, 52 B |
 | 2 | `Coll[Byte]` | `a_sig` — nonce point, 33 B compressed |
 | 3 | `Coll[Byte]` | `z_sig` — response, 32 B big-endian |
-| 4 | `Long` | record timestamp in millis (msg bytes 48..52 as seconds × 1000) |
 | **Paths A/C (FUNDED)** | | |
 | — | — | no further vars: the timeout is a register comparison (R8) and the attested `dealId` rides in the oracle data input's R4 (2026-09-17 data-input rework) |
 | **All PAYMENT_PROVEN spends** | | |
 | 0 | `Byte` | action code — `ACTION_CLAIM_PAYOUT` 0 (D) / `ACTION_CONTEST` 1 (C′); mandatory, hardcoded in the source (2026-10-03, §8.6 — before, D vs C′ was inferred from `dataInputs.size`) |
 
-**Freshness** (path B only — the release paths carry no signed message and no freshness
-check in v2) is checked against `CONTEXT.preHeader.timestamp` on the `Long` context var,
-and the var is bound to the *signed* record bytes by `longToByteArray(tsMs / 1000L).slice(4, 8) == msg.slice(48, 52)`, so a submitter cannot pair a fresh timestamp with a stale signed record. (`byteArrayToBigInt` cannot do ordering comparisons on a slice — sigma 6's typer rejects `assignType` on it — hence the `Long` context var instead of converting `msg` bytes in-script.)
+(Path B used to take a fourth var — a `Long` record timestamp bound to the signed bytes
+48..52 by slice equality — feeding the freshness window; both were removed 2026-10-04,
+§8.8.)
 
 **sigma-state 6 typing constraints** (hard-won, apply to any edit of the contracts):
 
@@ -455,11 +460,13 @@ action literals introduce: it reads the `.es` source and asserts the codes agree
 6. Honest seller half paired with a tampered record byte in every field region (magic,
    version, dealId, amount, currency, timestamp) — fails (the in-script
    challenge binds the carried record bytes).
-7. Open claim with a stale record timestamp (> `HANDOFF_RECORD_MAX_AGE`) — fails.
-8. Open claim with a future record timestamp — fails.
-9. Fresh `tsMs` var bound to a stale record (window passes, slice binding must not) —
-   fails.
-10. In-window record paired with a stale `tsMs` var (reverse of 9) — fails.
+7. ~~Open claim with a stale record timestamp (> `HANDOFF_RECORD_MAX_AGE`) — fails.~~
+   **REMOVED 2026-10-04** (the freshness window is gone, §8.8).
+8. ~~Open claim with a future record timestamp — fails.~~ **REMOVED 2026-10-04** (§8.8).
+9. ~~Fresh `tsMs` var bound to a stale record (window passes, slice binding must not) —
+   fails.~~ **REMOVED 2026-10-04** (§8.8; the `tsMs` var itself is gone).
+10. ~~In-window record paired with a stale `tsMs` var (reverse of 9) — fails.~~
+    **REMOVED 2026-10-04** (§8.8).
 11. Open claim with a record bound to a different `dealId` — fails.
 12. Open claim draining tokens to a non-PAYMENT_PROVEN output — fails.
 13. Open claim with an oracle box as a **full input** fails (path B involves no oracle:
@@ -688,9 +695,9 @@ The owner's simplified design landed in the `.es` sources on disk; the §7 matri
 it. The changes, and why:
 
 1. **Path B verifies ONE Schnorr signature** — the seller half under `sellerPubKey`
-   (R5) over the 52-byte `P2PH` record, with the existing freshness binding
-   (`longToByteArray(tsMs/1000).slice(4,8) == msg.slice(48,52)` + the 4h window vs
-   `CONTEXT.preHeader.timestamp`). The buyer-half verification is dropped: the buyer
+   (R5) over the 52-byte `P2PH` record (it also carried a freshness binding —
+   `longToByteArray(tsMs/1000).slice(4,8) == msg.slice(48,52)` + a 4h window vs
+   `CONTEXT.preHeader.timestamp` — **removed 2026-10-04**, §8.8). The buyer-half verification is dropped: the buyer
    obtains the seller's signature at the meeting as the dispute artifact; no meeting, no
    artifact, no claim. Output-0 PAYMENT_PROVEN construction is unchanged (registers
    copied, `proofHeight`, R8 = `blake2b256(a_sig | z_sig | record)`). No oracle
@@ -880,6 +887,39 @@ on the deployment's oracle at all — `ErgoContracts.compile`'s `oracleNftId` is
 a deployment descriptor (what `OperatorTxBuilder.buildFund` writes into R7 and what
 `VaultBoxTracker` recognizes the attestation box by), and the buyer-side consoles no
 longer need `P2P_ORACLE_NFT_ID` just to compile trees that accept a real vault box.
+
+### 8.8 2026-10-04: the handoff-record freshness window is removed
+
+Path B no longer reads the record's timestamp: `freshOk`, the `Long` `tsMs` context var
+(var 4), and the `%%HANDOFF_RECORD_MAX_AGE_MS%%` substitution are gone from both scripts
+(the proven tree's was dead — the review had already flagged it). Path B's context vars
+shrink to 1..3 (record, `a_sig`, `z_sig`).
+
+**Why (owner decision).** The sequencing rule — the seller signs only after counting the
+cash — is flow discipline enforced at the meeting, which no contract can verify anyway;
+`dealId` uniqueness (the R4 binding) already kills cross-deal replay; and against an
+R5-key compromise freshness added nothing, because the same key reclaims the collateral
+directly after the timeout with no record at all. What freshness actually covered was
+within-deal staleness hygiene and pre-signed-record stockpiling, both dominated by that
+key-compromise scenario, and the residual race it never fully closed (a late meeting's
+claim vs the timeout reclaim) is inherent and stays open either way (test 49).
+
+**What is kept.** The 52-byte record format, timestamp field included — it is signed
+evidence for the dispute inbox and dashboard, and the wire format is unchanged. The
+off-chain `HANDOFF_CLOCK_SKEW` meeting gate (±10 min — reject an absurd signer clock
+before cash changes hands) stays in the verifiers and the state machine; only the 4h
+max-age gates died (contract, both `HandoffRecordVerifier`s, the TUI's capture-age
+check).
+
+**Knock-on simplifications.** Review findings P2 (freshness safety margin) and P3
+(miner-clock freshness) evaporate with the check. `compileFast` is gone entirely — its
+10-minute freshness override was the last remaining fast-compile parameter (the
+maturation had already become a hardcoded literal, §8.6), so the e2e gate now compiles
+the canonical trees and its only shortened timing is the funding-time reclaim timeout
+(`E2eConfig.reclaimTimeoutBlocks`, which lives in the box's R8, never in the scripts).
+
+**Breaking change** to the FUNDED spend interface (path B vars 1..4 → 1..3) and both
+script hashes — safe on the usual grounds: no vault has ever been funded on mainnet.
 
 ## 9. Trust model (stated honestly)
 

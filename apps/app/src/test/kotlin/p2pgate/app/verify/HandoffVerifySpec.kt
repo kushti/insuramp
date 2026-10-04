@@ -101,13 +101,6 @@ class HandoffVerifySpec {
     }
 
     @Test
-    fun `expired record fails freshness`() {
-        val r = record(ts = recordTs - 5L * 60 * 60) // 5h old > 4h max age
-        val sig = RefSchnorr.sign(seller.secret, r.encode(), seller.pubKeyCompressed)
-        assertFalse(gate(r, sig.a, sig.z))
-    }
-
-    @Test
     fun `future record beyond clock skew fails`() {
         val r = record(ts = recordTs + 20L * 60) // +20 min > ±10 min skew
         val sig = RefSchnorr.sign(seller.secret, r.encode(), seller.pubKeyCompressed)

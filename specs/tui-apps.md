@@ -144,8 +144,9 @@ functions so the rules below are asserted without a chain.
 The buyer's key lives in **one file, encrypted under a passphrase**, written only on
 explicit user action and read only when a transaction actually needs signing. Design:
 
-- The file holds the buyer's secp256k1 secret (the R5 deal key, per
-  `deal-protocol.md` §4 key management) and the deal terms the key is bound to.
+- The file holds the buyer's secp256k1 secret (the **R6** deal key, per
+  `deal-protocol.md` §4 key management — R5 is the seller's key) and the deal
+  terms the key is bound to.
 - Encryption is AES-GCM with a random salt and a random IV per write; the key is derived
   with PBKDF2-HMAC-SHA512 (BouncyCastle is already a dependency). The plaintext key is
   never written, never logged, and never held in a field of any state object that gets
@@ -190,10 +191,10 @@ The buyer console is the surface where that gap is closed:
   transaction offline (which is what proves the build satisfies the compiled vault
   scripts), signs it, and submits it through a `TxSubmitter` seam.
 - The chain reader follows `TuiConfig.network` (mainnet by default; `P2P_NETWORK=testnet`
-  to switch). The compiled trees use the **canonical** parameters — not
-  `compileFast`, whose shortened handoff-record freshness is the test/dev override
-  (the 3-block maturation override is gone since 2026-10-03: the maturation is a
-  hardcoded literal in the contract). The deployed oracle NFT id comes from
+  to switch). The compiled trees are the single canonical parameter set — there is no
+  `compileFast` anymore (its freshness override died with the in-script freshness
+  window on 2026-10-04; the maturation had already become a hardcoded literal). The
+  deployed oracle NFT id comes from
   `P2P_ORACLE_NFT_ID`; since 2026-10-03 it is no longer compiled into the trees (both
   boxes pin it per-box: FUNDED R7, PROVEN R9), so an unset variable no longer makes the
   console refuse a real vault box — it only degrades spend classification (a release can
@@ -268,9 +269,10 @@ tests failed. Stable under `runBlocking` over repeated runs.
 
 Mosaic needs a TTY, which a pipe does not provide — but a **synthesized** one does.
 `script -qec CMD /dev/null` and Python's `pty.spawn` both make `System.console()`
-non-null, which is all Mosaic checks. That makes a scripted smoke test possible
-(`/tmp/opencode/pty_drive.py` during the session; worth promoting into the repo as
-`scripts/pty-smoke.sh`):
+non-null, which is all Mosaic checks. That makes a scripted smoke test possible, and the
+harness has since been promoted into the repo: `scripts/pty_drive.py` (PTY driver: key
+schedule, wait-for-output, ANSI-stripped final screen) with `scripts/pty-smoke.md` as its
+reference, and the canonical runbook is `specs/tui-demo-run.md`:
 
 ```bash
 P2P_OPERATOR_KEY=demo P2P_DEMO_QUOTES=true ./gradlew :backend:run &
@@ -345,12 +347,12 @@ existing at all.
 
 1. **Field drift** — a backend field the hand-mirrored DTO names differently. The demo
    backend's shapes all decoded correctly, but that is one server's current output.
-2. **The compiled trees vs the deployed vault** — `P2P_ORACLE_NFT_ID` must match the
-   operator's, and no test can catch a mismatch; it surfaces as "input box is not a
-   FUNDED vault box of this contract" at claim time. **No claim transaction has been built
-   or broadcast from either console** — demo mode cannot fund a vault (the `mix-ready = 0`
-   root cause behind (3)), so the claim paths are still proven only by the contract suite
-   and `:core:ergo`'s own builder tests.
+2. **The claim paths live** — **no claim transaction has been built
+   or broadcast from either console**: demo mode's NoOp tx submitter never puts a vault
+   on-chain, so the claim paths are still proven only by the contract suite
+   and `:core:ergo`'s own builder tests. (The `P2P_ORACLE_NFT_ID` mismatch sub-point is
+   stale since 2026-10-03: the trees no longer embed the NFT — a mismatch now only
+   degrades spend classification, it cannot break a claim build.)
 3. **The meeting QR on a real terminal** — the rendering is verified by decoding it back
    through ZXing, not by a phone scanning a laptop screen in a bright room.
 4. **WebSocket reconnect** — the seller board's live updates come from `/v1/events`;

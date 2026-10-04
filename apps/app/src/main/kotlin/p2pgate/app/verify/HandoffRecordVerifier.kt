@@ -18,10 +18,10 @@ import java.time.Instant
  *     operator-issued deal id, which IS `blake2b256(terms)`, so the check is
  *     the same bytes);
  *  3. fiat amount and currency match the deal;
- *  4. the record timestamp is fresh: within [ProtocolConstants.HANDOFF_RECORD_MAX_AGE]
- *     of [now] (it must still pass path B's in-script freshness window when the
- *     claim lands) and within [ProtocolConstants.HANDOFF_CLOCK_SKEW] of [now]
- *     (an "absurd" signer clock is rejected before cash changes hands, §3.2);
+ *  4. the record timestamp is within [ProtocolConstants.HANDOFF_CLOCK_SKEW] of
+ *     [now] (an "absurd" signer clock is rejected before cash changes hands,
+ *     §3.2 — the 4h max-age gate is gone: the in-script freshness window was
+ *     removed 2026-10-04, owner decision);
  *  5. [SchnorrVerifier] over the raw record bytes under [sellerPubKey].
  *
  * The seller key arrives with the deal record (vault R5's key, pinned in the
@@ -50,7 +50,6 @@ object HandoffRecordVerifier {
 
         val ts = Instant.ofEpochSecond(record.timestamp)
         val age = Duration.between(ts, now)
-        if (age > ProtocolConstants.HANDOFF_RECORD_MAX_AGE) return false
         if (age.abs() > ProtocolConstants.HANDOFF_CLOCK_SKEW) return false
 
         return SchnorrVerifier.verify(recordBytes, a, z, sellerPubKey)

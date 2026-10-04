@@ -45,13 +45,14 @@ specified.*
 | 4 | `specs/seller-dashboard.md` | seller/operator dashboard front-end: login, vault lane kanban, the meeting screen (counted-cash gate, handoff QR), pool view, dispute inbox, infra status; handoff sign/QR endpoints | **landed** (2026-09-17/18, M4; static vanilla JS/CSS app at `/dashboard/`, handoff sign + QR endpoints live, backend runnable via `./gradlew :backend:run`) |
 | 5 | `specs/android-app.md` | buyer-facing native Android app: modules, screens, chain interaction, handoff-record verification | **landed** (2026-09-18, M4): `apps/app` native Android buyer app (Compose, ZXing, WorkManager polling) — quote discovery, deal timeline, the meeting screen, claim path, recovery; 37 JVM unit tests + `assembleDebug` green. Native Android is the owner decision; the earlier PWA wording is superseded |
 | 6 | `specs/operator-backend.md` | Ktor operator backend: vault lane, collateral management, quotes, AML hook, dispute inbox, APIs | **landed M3-B** (2026-09-17, `backend/`, 93 tests green; M4 seller-meeting endpoints + static dashboard serving added; documented deviations in the spec's status note) |
-| 7 | `specs/tui-apps.md` | Terminal consoles for both sides: the operator kanban (`:tui:seller`, landed), the buyer console (`:tui:buyer`, stub), key custody, and what is *not* verified without a TTY | **landed** (2026-10-02): `:tui:common` (30 tests) + `:tui:seller` (18) + `:tui:buyer` (41); neither console has been run against a live backend — see the spec's §8 |
+| 7 | `specs/tui-apps.md` | Terminal consoles for both sides: the operator kanban (`:tui:seller`), the buyer console (`:tui:buyer`), key custody, and what is *not* verified without a TTY | **landed** (2026-10-02): `:tui:common` (30 tests) + `:tui:seller` (24) + `:tui:buyer` (41); both consoles have been run against a live demo backend via a synthesized PTY (`scripts/pty_drive.py`) — see the spec's §8 |
+| 8 | `specs/tui-demo-run.md` | Runbook: the TUI demo end-to-end on one machine — demo backend, both consoles via the installed launchers or the PTY shim, env vars, scripted smoke, troubleshooting | **landed** (2026-10-04) |
 | — | `specs/vault-contract-review.md` | Adversarial review of the shipped vault contracts: protocol-level findings (the post-timeout claim/reclaim race, the seller-chosen claim window), contract-surface findings (brickable box, false lazy-eval invariant, ERG conservation, the two-tree pin asymmetry), why the contract is split in two, and the suggested spec edits | **landed 2026-09-26**, second pass **2026-10-01** (§10: the Kotlin layer — its one finding, `VaultBoxTracker` blind to key-rotated payouts, is **fixed**; the contract-surface items it adds — second token kind escaping conservation, the unenforced record format, `oracle.es` not pinning its reproduction — are **open**). Findings open, not normative; no spec text and no `.es` file was changed by either pass. Read alongside `vault-contract.md` §3.3/§5/§9; §8 lists the doc edits it asks for |
 
 ## Invariants that keep the specs (and future code) consistent
 
 1. **Constants live in one place.** `RECLAIM_TIMEOUT` (24h), `CLAIM_MATURATION` (12h),
-   `HANDOFF_RECORD_MAX_AGE`, `HANDOFF_CLOCK_SKEW`, and `BTC_DEADLINE` (~6h) are
+   `HANDOFF_CLOCK_SKEW`, and `BTC_DEADLINE` (~6h) are
    defined only in
    `vault-contract.md` §2. Everything else references the names. Changing a constant means
    editing that table and checking every spec — same rule as the design docs'
@@ -171,4 +172,5 @@ composable tests).
 
 - Design docs: `onramp-insurance.md`, `onramp-ux.md`, `onramp-business-model.md`, `pillars.md`
 - Contract review (findings, open): `specs/vault-contract-review.md`
-- Terminal consoles: `specs/tui-apps.md` (both consoles landed; neither yet run against a live backend)
+- Terminal consoles: `specs/tui-apps.md` (both consoles landed and PTY-run against a live
+  demo backend); runbook: `specs/tui-demo-run.md`

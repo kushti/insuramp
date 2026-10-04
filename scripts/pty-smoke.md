@@ -1,5 +1,7 @@
 # Running a console against a live backend
 
+Canonical runbook: `specs/tui-demo-run.md`. This file is the `pty_drive.py` reference.
+
 Mosaic needs a real TTY: `System.console()` must be non-null, or it refuses to
 start. That is why `./gradlew :tui:seller:run` and IDE run-configs do not work —
 and it is *not* a reason a console cannot be smoke-tested from a pipe. A

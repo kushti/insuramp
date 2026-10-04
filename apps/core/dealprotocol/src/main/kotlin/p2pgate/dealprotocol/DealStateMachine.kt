@@ -72,8 +72,8 @@ data class DealStateMachine(
         // The meeting happened: cash collected, seller-signed handoff record
         // complete (the buyer holds it as the dispute artifact). The box is
         // unchanged (still FUNDED); the seller is now obligated to send the USDT.
-        // Freshness: the signer's device timestamp must be sane — the buyer never
-        // hands cash over a record whose clock is absurd.
+        // Clock sanity: the signer's device timestamp must be sane — the buyer
+        // never hands cash over a record whose clock is absurd.
         is DealEvent.CashCollected -> {
             val skew = Duration.between(event.recordTimestamp, event.confirmedAt).abs()
             when {

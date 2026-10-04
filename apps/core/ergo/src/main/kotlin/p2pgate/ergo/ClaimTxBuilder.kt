@@ -22,7 +22,7 @@ fun interface DealTxSigner {
  *
  *  - [buildClaimOpen] — vault path B: spends the FUNDED box naming the path in
  *    context var 0 (`ACTION_CLAIM`) and carrying the SELLER-signed handoff
- *    record in vars 1–4, output 0 the PAYMENT_PROVEN box (R4–R6 copied, R7 the
+ *    record in vars 1–3, output 0 the PAYMENT_PROVEN box (R4–R6 copied, R7 the
  *    plain `Long` `proofHeight`, R8 = `blake2b256(a ‖ z ‖ record)`);
  *  - [buildClaimPayout] — vault path D: spends the PAYMENT_PROVEN box after
  *    maturation, paying the full collateral to the buyer's payout address.
@@ -40,14 +40,6 @@ class ClaimTxBuilder(
     private val minerFeeNanoErg: Long = 1_000_000L,
     /** Change below this is rejected (dust protection); exact-zero change is allowed. */
     private val minChangeNanoErg: Long = 1_000_000L,
-    /**
-     * Handoff-record freshness pre-check override — must equal the
-     * `HANDOFF_RECORD_MAX_AGE_MS` constant the [trees] were compiled with.
-     * Defaults to the canonical value; [ErgoContracts.compileFast] sets 600 000.
-     * (The claim maturation has no override: it is a hardcoded literal in
-     * `vault_payment_proven.es`, mirrored by [ContractParams.CLAIM_MATURATION_BLOCKS].)
-     */
-    private val handoffRecordMaxAgeMs: Long = ContractParams.HANDOFF_RECORD_MAX_AGE_MS,
 ) {
     private val networkType: NetworkType = trees.networkType
 
@@ -61,8 +53,9 @@ class ClaimTxBuilder(
      * Claim-open (path B). [record]/[a]/[z] are the verified seller-signed
      * handoff record (see [HandoffRecordVerifier]); [currentHeight] is the
      * chain height the tx is built against (becomes the PAYMENT_PROVEN
-     * box's `proofHeight`); [txTimestampMs] the tx timestamp the freshness
-     * check runs against.
+     * box's `proofHeight`). The record's timestamp is not checked — the
+     * in-script freshness window was removed 2026-10-04 (owner decision:
+     * dealId uniqueness + the sign-after-counting sequencing rule carry it).
      */
     fun buildClaimOpen(
         fundedBox: ChainBox,
@@ -71,7 +64,6 @@ class ClaimTxBuilder(
         a: ByteArray,
         z: ByteArray,
         currentHeight: Int,
-        txTimestampMs: Long,
         changeAddress: String,
         signer: DealTxSigner,
     ): SignedTransaction {
@@ -88,14 +80,6 @@ class ClaimTxBuilder(
         val buyerPk = fundedBox.registerBytes(6) ?: throw IllegalArgumentException("FUNDED box has no R6 buyerPubKey")
         val oracleNftId = fundedBox.registerBytes(7) ?: throw IllegalArgumentException("FUNDED box has no R7 oracleNftId")
         require(fundedBox.tokens.isNotEmpty()) { "FUNDED box carries no collateral tokens" }
-
-        // Pre-check the freshness window the contract enforces in-script against
-        // CONTEXT.preHeader.timestamp, so the app fails before broadcasting.
-        val tsMs = record.timestamp * 1000L
-        require(tsMs <= txTimestampMs) { "record timestamp is in the future" }
-        require(tsMs > txTimestampMs - handoffRecordMaxAgeMs) {
-            "record is stale: timestamp outside HANDOFF_RECORD_MAX_AGE"
-        }
 
         val recordId = SchnorrVerifier.blake2b256(a, z, recordBytes)
 
@@ -120,13 +104,12 @@ class ClaimTxBuilder(
 
         // Context vars: var 0 names the spending path (mandatory since 2026-10-04
         // — the contract reads it with `.get`, so a FUNDED-box claim-open without
-        // it cannot validate), vars 1..4 carry the seller-signed handoff record.
+        // it cannot validate), vars 1..3 carry the seller-signed handoff record.
         val contextVars = mapOf(
             ContractParams.ACTION_VAR_INDEX to ErgoValues.byteConstant(ContractParams.ACTION_CLAIM),
             1 to ErgoValues.collBytesConstant(recordBytes),
             2 to ErgoValues.collBytesConstant(a),
             3 to ErgoValues.collBytesConstant(z),
-            4 to ErgoValues.longConstant(tsMs),
         )
 
         val inputs = listOf(TxAssembly.toErgoBox(fundedBox, trees.fundedTree)) + feeInputs.map { TxAssembly.toErgoBox(it, TxAssembly.decodeTree(it)) }
@@ -138,7 +121,7 @@ class ClaimTxBuilder(
             minerFeeNanoErg = minerFeeNanoErg,
             minChangeNanoErg = minChangeNanoErg,
             currentHeight = currentHeight,
-            txTimestampMs = txTimestampMs,
+            txTimestampMs = null,
             changeAddress = changeAddress,
             networkType = networkType,
             signer = signer,

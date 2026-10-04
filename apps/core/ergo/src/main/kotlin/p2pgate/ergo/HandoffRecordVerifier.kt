@@ -18,10 +18,10 @@ import java.time.Instant
  *  1. the record decodes as a 52-byte P2PH message (magic/version/fields);
  *  2. `record.dealId == dealTerms.dealId` — the deal binding (§3.2);
  *  3. fiat amount and currency match the terms;
- *  4. the record timestamp is fresh: within [ProtocolConstants.HANDOFF_RECORD_MAX_AGE]
- *     of [now] (it must still pass path B's in-script freshness window when the
- *     claim lands) and within [ProtocolConstants.HANDOFF_CLOCK_SKEW] of [now]
- *     (an "absurd" signer clock is rejected before cash changes hands, §3.2);
+ *  4. the record timestamp is within [ProtocolConstants.HANDOFF_CLOCK_SKEW] of
+ *     [now] (an "absurd" signer clock is rejected before cash changes hands,
+ *     §3.2 — the 4h max-age gate is gone: the in-script freshness window was
+ *     removed 2026-10-04, owner decision);
  *  5. [SchnorrVerifier] over the raw record bytes under [sellerPubKey].
  *
  * Callers pass the pinned key — `dealTerms.sellerPubKey` (or the key extracted
@@ -48,7 +48,6 @@ object HandoffRecordVerifier {
 
         val ts = Instant.ofEpochSecond(record.timestamp)
         val age = Duration.between(ts, now)
-        if (age > ProtocolConstants.HANDOFF_RECORD_MAX_AGE) return false
         if (age.abs() > ProtocolConstants.HANDOFF_CLOCK_SKEW) return false
 
         return SchnorrVerifier.verify(recordBytes, a, z, sellerPubKey)

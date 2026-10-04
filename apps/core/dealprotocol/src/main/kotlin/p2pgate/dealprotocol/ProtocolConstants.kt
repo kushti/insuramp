@@ -24,11 +24,6 @@ object ProtocolConstants {
      */
     val CLAIM_MATURATION: Duration = Duration.ofHours(12)
 
-    /** Contract freshness bound on the handoff-record timestamp, enforced
-     * in-script by vault path B against the claim tx timestamp — not by the
-     * state machine. */
-    val HANDOFF_RECORD_MAX_AGE: Duration = Duration.ofHours(4)
-
     /**
      * Pre-sign sanity bound on the signer's device clock skew when the handoff
      * confirmation arrives ([spec] ±10 min, `specs/deal-protocol.md` §3.2). The

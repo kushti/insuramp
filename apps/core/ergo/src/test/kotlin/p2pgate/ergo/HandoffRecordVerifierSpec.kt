@@ -7,8 +7,8 @@ import kotlin.test.assertTrue
 
 /**
  * The meeting-time "safe to leave" gate (`specs/android-app.md` §3.3 step 4):
- * record decode, deal binding (dealId/amount/currency), timestamp freshness
- * (HANDOFF_RECORD_MAX_AGE) and signer clock sanity (HANDOFF_CLOCK_SKEW),
+ * record decode, deal binding (dealId/amount/currency), signer clock sanity
+ * (HANDOFF_CLOCK_SKEW — the 4h freshness gate is gone since 2026-10-04),
  * then the Schnorr signature under the seller key. All defects return `false`.
  */
 class HandoffRecordVerifierSpec {
@@ -65,16 +65,6 @@ class HandoffRecordVerifierSpec {
         val sig = ErgoTestFixtures.sellerSign(foreignRecord)
         assertFalse(
             HandoffRecordVerifier.verify(foreignRecord.encode(), sig.a, sig.z, terms.sellerPubKey, terms, now),
-        )
-    }
-
-    @Test
-    fun `stale record fails freshness`() {
-        val terms = ErgoTestFixtures.dealTerms()
-        val record = ErgoTestFixtures.handoffRecord(terms, tsSec = recordTs - 5L * 60 * 60) // 5h old
-        val sig = ErgoTestFixtures.sellerSign(record)
-        assertFalse(
-            HandoffRecordVerifier.verify(record.encode(), sig.a, sig.z, terms.sellerPubKey, terms, now),
         )
     }
 

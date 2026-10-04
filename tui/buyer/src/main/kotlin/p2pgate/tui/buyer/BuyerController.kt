@@ -282,11 +282,6 @@ class BuyerController(
             say("signature does not verify against the vault's seller key — do not leave with the cash")
             return
         }
-        val fresh = stored.capturedAtEpochMs.let { it == 0L || System.currentTimeMillis() - it <= FRESHNESS_MS }
-        if (!fresh) {
-            say("that record was captured over ${FRESHNESS_MS / 3_600_000}h ago — ask the seller for a fresh one")
-            return
-        }
         handoffs.write(stored)
         _state.update {
             it.copy(handoff = stored, status = "handoff record verified — it is safe to leave")
@@ -352,7 +347,6 @@ class BuyerController(
                 a = stored.signatureA.hexToBytes(),
                 z = stored.signatureZ.hexToBytes(),
                 currentHeight = height,
-                txTimestampMs = System.currentTimeMillis(),
                 changeAddress = changeAddress,
                 signer = signer,
             )
@@ -593,14 +587,6 @@ class BuyerController(
     private object CancellationMarker : RuntimeException(null, null, false, false)
 
     private companion object {
-        /**
-         * How long a captured handoff record stays usable. Mirrors the contract's
-         * own `HANDOFF_RECORD_MAX_AGE` freshness window — a record older than this
-         * would fail the in-script check in [ClaimTxBuilder.buildClaimOpen], so
-         * catching it here saves a doomed broadcast.
-         */
-        const val FRESHNESS_MS = 10 * 60 * 1000L
-
         /** How often the console re-reads the backend view and the chain. */
         const val POLL_MS = 5_000L
     }

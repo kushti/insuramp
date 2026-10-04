@@ -121,10 +121,10 @@ class VaultContractSpec {
         // One flipped bit per field region of the 52-byte record (magic, version,
         // dealId, amount, currency, timestamp), honest seller half otherwise.
         // Rejection comes from the in-script challenge binding the carried
-        // record bytes (and from the freshness binding for the timestamp region;
-        // the dealId flip fails the in-branch record-dealId binding — the action
-        // byte names path B but says nothing about the record, so a flipped
-        // dealId still enters path B and is rejected there).
+        // record bytes (the dealId flip additionally fails the in-branch
+        // record-dealId binding — the action byte names path B but says nothing
+        // about the record, so a flipped dealId still enters path B and is
+        // rejected there).
         val fx = VaultFixture()
         val sr = SignedRecord(fx, fx.handoffRecord())
         for (index in listOf(0, 4, 10, 40, 46, 50)) {
@@ -141,74 +141,9 @@ class VaultContractSpec {
         }
     }
 
-    @Test
-    fun `7 open claim with stale record timestamp fails`() {
-        val fx = VaultFixture()
-        val staleSec = VaultFixture.NOW_MS / 1000 - 5 * 3600 // 5h old, bound is 4h
-        val sr = SignedRecord(fx, fx.handoffRecord(tsSec = staleSec))
-        assertFalse(
-            fx.verifySpend(
-                fx.fundedTree, fx.fundedBox,
-                inputs = listOf(fx.fundedBox),
-                outputs = listOf(fx.provenOut(proofHeight, sr.id)),
-                height = proofHeight,
-                vars = sr.vars(),
-            ),
-        )
-    }
-
-    @Test
-    fun `8 open claim with future record timestamp fails`() {
-        val fx = VaultFixture()
-        val futureSec = VaultFixture.NOW_MS / 1000 + 3600
-        val sr = SignedRecord(fx, fx.handoffRecord(tsSec = futureSec))
-        assertFalse(
-            fx.verifySpend(
-                fx.fundedTree, fx.fundedBox,
-                inputs = listOf(fx.fundedBox),
-                outputs = listOf(fx.provenOut(proofHeight, sr.id)),
-                height = proofHeight,
-                vars = sr.vars(),
-            ),
-        )
-    }
-
-    @Test
-    fun `9 fresh tsMs var bound to a stale record fails`() {
-        // The 5h-old record alone is blocked by the 4h window (test 7); here the Long
-        // timestamp var says NOW, so the window passes and rejection must come from the
-        // binding longToByteArray(tsMs/1000).slice(4,8) == msg.slice(48,52) instead.
-        val fx = VaultFixture()
-        val staleSec = VaultFixture.NOW_MS / 1000 - 5 * 3600
-        val sr = SignedRecord(fx, fx.handoffRecord(tsSec = staleSec))
-        assertFalse(
-            fx.verifySpend(
-                fx.fundedTree, fx.fundedBox,
-                inputs = listOf(fx.fundedBox),
-                outputs = listOf(fx.provenOut(proofHeight, sr.id)),
-                height = proofHeight,
-                vars = sr.vars() + (4 to SigmaBridge.longVal(VaultFixture.NOW_MS) as sigma.ast.EvaluatedValue<out sigma.ast.SType>),
-            ),
-        )
-    }
-
-    @Test
-    fun `10 in-window record paired with a stale tsMs var fails`() {
-        // Reverse of test 9: the record bytes carry an in-window timestamp, but the
-        // Long var claims the record is 5h old — the window check rejects it, and the
-        // slice binding (var vs msg bytes 48..52) fails too.
-        val fx = VaultFixture()
-        val sr = SignedRecord(fx, fx.handoffRecord())
-        assertFalse(
-            fx.verifySpend(
-                fx.fundedTree, fx.fundedBox,
-                inputs = listOf(fx.fundedBox),
-                outputs = listOf(fx.provenOut(proofHeight, sr.id)),
-                height = proofHeight,
-                vars = sr.vars() + (4 to SigmaBridge.longVal(VaultFixture.NOW_MS - 5 * 3600_000) as sigma.ast.EvaluatedValue<out sigma.ast.SType>),
-            ),
-        )
-    }
+    // Tests 7–10 (stale/future record timestamps, tsMs var binding probes) were
+    // removed 2026-10-04 with the in-script freshness window (owner decision:
+    // dealId uniqueness + the sign-after-counting sequencing rule carry it).
 
     @Test
     fun `11 open claim with a record bound to a different deal fails`() {

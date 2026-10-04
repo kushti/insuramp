@@ -152,7 +152,7 @@ class BuyerScreenSpec {
             client = client,
             chain = chain,
             submitter = TxSubmitter { it.id },
-            txBuilder = ClaimTxBuilder(trees = ErgoContracts.compileFast()),
+            txBuilder = ClaimTxBuilder(trees = ErgoContracts.compile()),
             keyFile = File(dir, "buyer.p2pkey"),
             handoffFile = File(dir, "handoff.json"),
             networkType = NetworkType.MAINNET,

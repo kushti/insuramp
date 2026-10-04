@@ -334,7 +334,6 @@ class OperatorTxBuilderSpec {
             a = sig.a,
             z = sig.z,
             currentHeight = 1500,
-            txTimestampMs = record.timestamp * 1000,
             changeAddress = f.dealKeysAddress,
             signer = ErgoTestFixtures.ProverSigner(f.dealKeys.secret),
         )

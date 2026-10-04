@@ -41,8 +41,8 @@ ERG value, and two spec sentences that misdescribe the script.
 | # | Finding | Severity | Kind |
 |---|---|---|---|
 | P1 | Post-timeout, claim-open and reclaim are both valid spends of the same box — the buyer's remedy is a race the seller can win | **high** | design / docs |
-| P2 | The seller picks the claim window's far end (record timestamp); the app checks *age*, not *remaining validity* | **high** (cheap fix) | design gap, app-layer |
-| P3 | Claim freshness is judged against the **miner's** block timestamp | low | inherent |
+| P2 | The seller picks the claim window's far end (record timestamp); the app checks *age*, not *remaining validity* | **high** (cheap fix) | **resolved 2026-10-04** (the freshness window is gone; the late-meeting core lives on under P1) |
+| P3 | Claim freshness is judged against the **miner's** block timestamp | low | **resolved 2026-10-04** (moot — the check is gone) |
 | P4 | The claim-open is free and permissionless — it can force a routine release into a contest | medium | design |
 | C1 | The stated reason for the branch structure is false: sigma `val`s are lazy | medium (doc) | docs |
 | C2 | A malformed R5 bricks the vault permanently; nothing validates the curve point at funding | medium | code |
@@ -109,6 +109,12 @@ Options, in the order I would take them:
 
 ### P2 — The seller picks how long the claim window lasts [solid]
 
+> **Resolved 2026-10-04.** The freshness window (and the `tsMs` var, and the app-side
+> max-age gate) is gone entirely — `vault-contract.md` §8.8. There is no expiry for the
+> seller to steer anymore. The deeper exposure this finding pointed at — a seller holding
+> the meeting until just before `timeoutHeight` — survives unchanged and is P1's
+> territory: the record's timestamp is now signed evidence only.
+
 Path B's freshness is `tsMs > CONTEXT.preHeader.timestamp - %%HANDOFF_RECORD_MAX_AGE_MS%%`
 (`vault_funded.es:85-88`), and the record's timestamp lives at bytes 48..52 of the message the
 seller signs. So the *seller* chooses when the record expires.
@@ -135,6 +141,9 @@ signs a *fresh* record one minute before `timeoutHeight` has the same problem, a
 option 1 closes that.
 
 ### P3 — Freshness is judged against the miner's clock [solid]
+
+> **Resolved 2026-10-04.** Moot — the freshness check no longer exists (§8.8), so no
+> claim validity depends on `CONTEXT.preHeader.timestamp`.
 
 The same claim transaction, same height, same context variables, flips from valid to invalid when
 only the including block's timestamp moves past the 4h boundary — the check reads
@@ -367,10 +376,11 @@ implicitly, and the C4/C5 costs look like oversights rather than consequences.
 - **Production compilation matches the tested scripts** — `ErgoContracts.compile` compiles the
   proven tree first and embeds its bytes into the funded tree, exactly as the fixture does, so
   the §7 matrix covers what actually deploys.
-- Dead substitution worth deleting: `%%HANDOFF_RECORD_MAX_AGE_MS%%` is injected into
+- ~~Dead substitution worth deleting: `%%HANDOFF_RECORD_MAX_AGE_MS%%` is injected into
   `vault_payment_proven.es` by both `ErgoContracts.compile` and `VaultFixture` but is never used
-  by that script — harmless today, and an invitation to a future editor who assumes the proven
-  tree freshness-checks something.
+  by that script~~ — **done 2026-10-04**: the freshness window was removed entirely (§8.8 of
+  the spec), so the substitution is gone from both scripts, both compile maps, and
+  `ContractParams`.
 
 ## 7. Suggested fix order
 
@@ -412,9 +422,10 @@ This review changed no spec text. The edits it believes are needed, with targets
    (C3).
 7. `specs/vault-contract.md` §4 — one paragraph on why the contract is split in two (§5 here), so
    C4/C5 read as consequences rather than oversights.
-8. `specs/deal-protocol.md` §3.2 — note that the claim must be broadcast promptly: the effective
+8. ~~`specs/deal-protocol.md` §3.2 — note that the claim must be broadcast promptly: the effective
    on-chain window is `[record ts, min(record ts + HANDOFF_RECORD_MAX_AGE, timeoutHeight)]`, and
-   the record's timestamp is the seller's to choose (P2).
+   the record's timestamp is the seller's to choose (P2).~~ — **moot 2026-10-04**: there is no
+   record-expiry window anymore (§8.8); the only deadline is the box's `timeoutHeight` itself.
 9. `specs/seller-dashboard.md` — the P4 emergency-contest rule.
 
 ## 9. Cross-references

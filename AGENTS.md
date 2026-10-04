@@ -21,7 +21,8 @@ multi-URL failover — selected in the backend via `P2P_CHAIN_SOURCE=node` + `P2
 (attestation-box builder; release paths reference the oracle box as a **data input** carrying
 the bare 32-byte `dealId` attestation, so
 there is no oracle signature in buyer/seller txs — the `OracleSigner` co-signing seam is
-deleted), `ErgoContracts` incl. `compileFast` variants. Every built tx is
+deleted), `ErgoContracts` (a single canonical parameter set — `compileFast` died with the
+handoff-record freshness window on 2026-10-04). Every built tx is
 prover-verified against the compiled vault scripts. Pure Kotlin/JVM on ergo-appkit 6.0.1;
 Android-injectable via interfaces.
 `backend/` is live since 2026-09-17 (milestone M3-B, M4 seller-meeting additions): the
@@ -106,8 +107,8 @@ pitch deck), but it lives outside this repo.
 - **Kotlin everywhere** — native Android buyer app, Ktor operator backend,
   ErgoScript contracts compiled/tested via JVM tooling (ergo-appkit + sigmastate).
 - **Mainnet-first network defaults** — since 2026-09-17 every runnable module targets
-  Ergo mainnet by default (`ExplorerChainSource` default base URL, `ErgoContracts.compile`/
-  `compileFast` default prefix, backend `network = "mainnet"`, e2e explorer/faucet
+  Ergo mainnet by default (`ExplorerChainSource` default base URL, `ErgoContracts.compile`
+  default prefix, backend `network = "mainnet"`, e2e explorer/faucet
   defaults); testnet remains fully selectable via config/env (`P2P_NETWORK=testnet`,
   `E2E_EXPLORER_URL`, `E2E_FAUCET_URL`). No testnet capability was removed.
 - **First asset leg:** cash→USDT on-ramp (USE collateral; the seller acts
@@ -138,7 +139,7 @@ period, on the release path. The broader vision is Ergo as pillar 3 of
 | `onramp-insurance.md` | **Core design doc — read this first.** Vault contract skeleton, per-asset designs (USDT oracle-verified, BTC trustless via Bitcoin relay, XMR oracle-verified via tx-key reveal), trust-model comparison, limitations, sources. |
 | `onramp-ux.md` | Product design for the two sides of the marketplace — buyer app (native Android app) and seller meeting flow — plus the operator dashboard. Flow timings must stay consistent with the contract design (24h timeout, 12h claim maturation, ~6h BTC deadline). |
 | `onramp-business-model.md` | Protocol-layer economics: fee model (the in-contract protocol fee was removed 2026-09-18; protocol revenue is undefined/deferred [spec]), capital dynamics (protocol TVL ≈ outstanding deal volume; collateral availability is the binding constraint), volume scenarios, risks, bootstrapping sequence. |
-| `specs/tui-apps.md` | The two terminal consoles (`tui/`): the operator kanban console and the buyer console (both landed), key custody, and what a headless test cannot verify. |
+| `specs/tui-apps.md` | The two terminal consoles (`tui/`): the operator kanban console and the buyer console (both landed), key custody, and what a headless test cannot verify. `specs/tui-demo-run.md` is the runbook for running them against a local demo backend (PTY shim included). |
 | `specs/` | Implementation specs (index: `specs/README.md`): vault contract, deal protocol, oracle integration, seller dashboard, buyer app, operator backend. Canonical constants live in `specs/vault-contract.md` §2; canonical state names in `specs/deal-protocol.md` §1. `specs/vault-contract-review.md` is a 2026-09-26 adversarial review of the shipped vault contracts — **findings open, not normative**; its §8 lists the spec edits it asks for (not applied). |
 
 The docs form a strict reading order: `pillars.md` (why) → `onramp-insurance.md` (contracts
@@ -193,14 +194,15 @@ post-maturation contests (C′) stay reachable. A 2026-10-04 pass replaced the F
 CLAIM / RECLAIM / RELEASE, `ContractParams.ACTION_*` — the Basis reserve contract's shape):
 every path is now positively identified, the branch-ordering hazard is structurally gone,
 and an unknown code is rejected instead of falling through to release. The codes are
-  **hardcoded literals** in the `.es` (structural, not deployment parameters — nothing
-  varies them between a mainnet and a fast e2e compile; `CLAIM_MATURATION_BLOCKS`
+  **hardcoded literals** in the `.es` (structural, not deployment parameters — there is no
+  fast e2e compile anymore; `CLAIM_MATURATION_BLOCKS`
   went the same way on 2026-10-03, hardcoded as `360L` in `vault_payment_proven.es`
   with `ContractParams.CLAIM_MATURATION_BLOCKS` mirroring it for the off-chain code);
   `ContractParams.ACTION_*` mirrors them for the builders and `FundedActionSpec` asserts the
   pair never drifts, since a drifted code fails quietly as an unspendable vault rather than
   loudly. It is a **breaking change to the FUNDED spend interface** (the var is mandatory;
-  path B's material moved from vars 0–3 to 1–4) — safe only because no FUNDED box has ever
+  path B's material moved from vars 0–3 to 1–4, and to **1–3** on 2026-10-04) — safe only
+  because no FUNDED box has ever
   been funded on mainnet. One semantic change came with it: a post-timeout release tx is now
   checked against the attestation rather than being spent as an attestation-free reclaim (the
   seller's recourse is unchanged — he builds a RECLAIM). On 2026-10-03 (owner decision)
@@ -210,6 +212,15 @@ D vs C′ from `dataInputs.size` — which path D keeps as a hygiene check — a
 `%%CLAIM_MATURATION_BLOCKS%%` substitution became the hardcoded literal `360L`, mirrored by
 `ContractParams.CLAIM_MATURATION_BLOCKS` for the off-chain code (`FundedActionSpec` guards
 both pairs against drift; consequence: a live e2e flow B waits the real ~12h of maturation).
+On 2026-10-04 (owner decision: "record should not be pre-signed, dealId must be unique")
+the **handoff-record freshness window was removed entirely** — path B no longer reads the
+record's timestamp, `%%HANDOFF_RECORD_MAX_AGE_MS%%` /
+`ContractParams.HANDOFF_RECORD_MAX_AGE_MS` are gone from both scripts (the proven tree's
+substitution was dead), and with them went `compileFast` (its 10-minute freshness override
+was the last fast-compile parameter — the e2e gate now compiles the canonical trees and
+only shortens the funding-time reclaim timeout, `E2eConfig.reclaimTimeoutBlocks`). The
+record stays 52 bytes with the timestamp as signed evidence; the off-chain ±10 min
+`HANDOFF_CLOCK_SKEW` meeting gate is unaffected.
 The two-box split remains load-bearing (a script cannot delete one of its own spending
 paths — `specs/vault-contract-review.md` §5.2). On 2026-09-21 (pre-launch, owner decision) the attestation payload was
 simplified to the bare 32-byte `dealId`: the oracle box's R4 carries only the dealId
@@ -236,24 +247,27 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   `~/.local/opt/jdk-17.0.20.1+1`, so run:
   `export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1 && ./gradlew :contracts:test`
   (optionally `--tests 'p2pgate.contracts.VaultContractSpec'`). Expected test counts:
-  `VaultContractSpec` 56 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
+  `VaultContractSpec` 52 (1 `@Disabled`: phase-2 GuardSign readiness, test 45;
   the 2026-09-18 fee removal deleted the old 35a–35e fee tests; the 2026-09-21
   dealId-only payload removed tests 22, 23, 25, 29; the 2026-09-24 payout-freedom
   change added tests 46–48 and inverted test 21; the 2026-09-26
   branch-discriminator fix added tests 49–52; the 2026-10-04 action-var refactor
   added tests 53–56 and split test 51 into with/without-attestation; the
-  2026-10-03 PAYMENT_PROVEN action-byte change added tests 57–59, and the
-  same day's per-box NFT pin (R9) added tests 60–61) plus
+  2026-10-03 PAYMENT_PROVEN action-byte change added tests 57–59, the
+  same day's per-box NFT pin (R9) added tests 60–61, and the 2026-10-04
+  freshness removal deleted tests 7–10) plus
   `OracleContractSpec` 8 + `FundedActionSpec` 6 (the drift guard for the hardcoded
   action literals vs `ContractParams.ACTION_*` in both vault scripts, plus the
   hardcoded `360L` maturation vs `ContractParams.CLAIM_MATURATION_BLOCKS`) →
-  contracts 70;
+  contracts 66;
   dealprotocol module: DealStateMachine 44,
   Messages 10, QrPayload 11, DealTerms 22, Blake2b256 7, plus (2026-09-27)
   TronAddress 8 + FiatAmounts 10 → 113; ergo module:
-  ClaimTxBuilder 14, HandoffRecordVerifier 9, ExplorerChainSource 12, SchnorrVerifier 9,
+  ClaimTxBuilder 12, HandoffRecordVerifier 8, ExplorerChainSource 12, SchnorrVerifier 9,
   VaultBoxTracker 24; plus (M3-A/C): OperatorTxBuilder 15,
-  DevOracle 6, FastContracts 4; plus (2026-09-17): NodeChainSource 13 → ergo 106
+  DevOracle 6; plus (2026-09-17): NodeChainSource 13; plus ErgoContracts 1
+  (2026-10-04: `FastContractsSpec` died with `compileFast`; the prefix test
+  retargeted `compile()`) → ergo 100
   (the 2026-09-21 payload simplification deleted `PaymentAttestation` and its
   9-test suite, and collapsed the five per-field release-tamper tests into one;
   the 2026-10-01 tracker fix re-derived payout classification from collateral
@@ -263,17 +277,17 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   seeding bug — `P2P_DEMO_QUOTES=true` seeded nothing because `maxAmount` was
   derived from an empty pool, and the existing test asserted the broken
   behaviour); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 420; plus the Android buyer app
+  E2eConfig 2, SchnorrPort 3) → JVM modules 410; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
   multi-quote currency-filtered list, offer-cash flow 2026-09-20, and the
   2026-09-27 pass: USDT-leg offer math with a rate-derived cash leg, TRON
   address validation, meeting reachable at FUNDED, handoff deep links, deal list
-  + delete-all, recovery link, reconnecting sockets): 95 JVM
+  + delete-all, recovery link, reconnecting sockets): 94 JVM
   unit tests (`:app:testDebugUnitTest`); plus the terminal consoles
   (`tui/`, `specs/tui-apps.md`): `:tui:common` 30 (KtorBackendClient 16, Format,
   TuiConfig) + `:tui:seller` 24 (lanes, screen snapshot, terminal QR, status line) +
-  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 515;
-  plus the Android app's 95 → **610 total**.
+  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 505;
+  plus the Android app's 94 → **599 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :tui:common:test :tui:seller:test :tui:buyer:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

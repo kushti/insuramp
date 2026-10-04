@@ -603,8 +603,9 @@ private fun ApplicationCall.dealId(): String =
 /**
  * Builds the P2PH record for the meeting from the deal terms
  * (`specs/deal-protocol.md` §3.2) with the server clock. The sign endpoint's
- * timestamp doubles as the `CashCollected` record timestamp, so the server
- * clock must be sane — the same freshness rule the buyer app applies.
+ * timestamp doubles as the `CashCollected` record timestamp — signed evidence
+ * for the dispute views (the in-script freshness window was removed
+ * 2026-10-04, so the server clock gates nothing on-chain).
  */
 private fun freshHandoffRecord(deal: DealRecord): HandoffRecord = HandoffRecord(
     dealId = deal.terms().dealId,

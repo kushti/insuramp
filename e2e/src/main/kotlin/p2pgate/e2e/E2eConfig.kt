@@ -29,7 +29,7 @@ class E2eConfig(
     /** 0 = auto: dust-derived from the compiled FUNDED tree size. */
     val fundedBoxValueNanoErg: Long = System.getenv("E2E_FUNDED_BOX_NANO_ERG")?.toLongOrNull() ?: 0L,
     val reclaimTimeoutBlocks: Int = System.getenv("E2E_RECLAIM_TIMEOUT_BLOCKS")?.toIntOrNull()
-        ?: p2pgate.ergo.ErgoContracts.Fast.RECLAIM_TIMEOUT_BLOCKS,
+        ?: DEFAULT_RECLAIM_TIMEOUT_BLOCKS,
     val fundingTimeoutMs: Long = System.getenv("E2E_FUNDING_TIMEOUT_MS")?.toLongOrNull() ?: 300_000L,
     val stepTimeoutMs: Long = System.getenv("E2E_STEP_TIMEOUT_MS")?.toLongOrNull() ?: 1_800_000L,
     val preflightTimeoutSeconds: Long = System.getenv("E2E_PREFLIGHT_TIMEOUT_S")?.toLongOrNull() ?: 15L,
@@ -37,5 +37,14 @@ class E2eConfig(
 ) {
     companion object {
         const val AUTO_FUNDED_VALUE: Long = 0L
+
+        /**
+         * Fast reclaim timeout for the gate: funding-time `timeoutHeight`
+         * offset in blocks (lives in the FUNDED box's R8, not in the scripts).
+         * Moved here from `ErgoContracts.Fast` when the fast compile died with
+         * the freshness window (2026-10-04) — it was the last fast-compile
+         * parameter, so the e2e trees are the canonical ones now.
+         */
+        const val DEFAULT_RECLAIM_TIMEOUT_BLOCKS: Int = 6
     }
 }

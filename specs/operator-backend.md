@@ -91,7 +91,7 @@ The dashboard's primary view is a kanban mapping one-to-one onto the canonical s
 |---|---|---|---|
 | `QUOTED` | Buyer selected a quote and shared their USDT receive address; vault funding in progress or awaiting confirmation | quoted amount, quote expiry, receive-address fingerprint | cancel/expire before funding (`QuoteExpired`; no on-chain footprint) |
 | `FUNDED` | Vault box on-chain, USE locked, awaiting the meeting | locked collateral, timeout countdown (`RECLAIM_TIMEOUT` from funding height) | timeout reclaim — auto-job, but only while no handoff record exists (§1) |
-| `PAYMENT_PENDING` | Cash collected (seller-signed handoff record on file); the seller must send the USDT | record timestamp, freshness countdown, meeting status | **none** — reclaim from here is a theft path and is rejected; the buyer's answer is the claim |
+| `PAYMENT_PENDING` | Cash collected (seller-signed handoff record on file); the seller must send the USDT | record timestamp, meeting status | **none** — reclaim from here is a theft path and is rejected; the buyer's answer is the claim |
 | `PAYMENT_CONFIRMED` | Oracle confirmed the seller's USDT transfer to the buyer (off-chain); release pending — no buyer action is required or awaited | attested `dealId` reference, timeout countdown | release on the oracle's attestation alone's attestation with the seller co-signing the payout (preferred, automatic), else timeout reclaim (attested but unreleased) |
 | `RELEASED` | Vault spent via the release path | release tx id, cycle duration (feeds utilization stats) | terminal — collateral returns to the pool in full |
 | `RECLAIMED` | Vault spent via the timeout path (buyer no-show, or attested-but-unreleased fallback) | idle time regained | terminal |
