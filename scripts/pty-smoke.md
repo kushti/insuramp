@@ -16,6 +16,10 @@ python3 -c 'import pty; pty.spawn(["CMD"])'   # stdlib
 sends a schedule of keys, waits for specific output before each key, and prints the
 final screen with ANSI escapes stripped.
 
+Note: the installed launchers are shell scripts that resolve `java` via
+`JAVA_HOME`/`PATH` — export the JDK 17 `JAVA_HOME` when **running** them too, or a
+system Java 8 fails with `UnsupportedClassVersionError`.
+
 ## The whole smoke run
 
 ```bash

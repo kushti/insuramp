@@ -44,6 +44,8 @@ data class SellerState(
     val busy: Boolean = false,
     /** The handoff QR to show at the meeting, right after signing. */
     val meetingQr: MeetingQr? = null,
+    /** The quote-ad panel (the operator's live quotes + the new-ad form), `q` toggles it. */
+    val quotePanel: QuotePanel? = null,
 ) {
     val column: LaneColumn? get() = columns.getOrNull(selectedColumn)
 
@@ -70,6 +72,63 @@ data class MeetingQr(
     /** The `p2pgate://handoff?m=…` payload the backend returned. */
     val payload: String,
 )
+
+/**
+ * The quote-ad panel: the operator's live quotes (from the same refresh as the
+ * board) with a cursor, and optionally the new-ad form. Same pattern as
+ * [MeetingQr] — a section of the board, not a separate screen.
+ */
+data class QuotePanel(
+    /** Cursor over the live quotes. */
+    val selected: Int = 0,
+    /** The new-ad form when it is open; the list stays visible behind it. */
+    val form: QuoteForm? = null,
+)
+
+/**
+ * The new-ad form, as plain editable strings — Mosaic has no text-field widget,
+ * so the controller captures characters per focused field and converts on
+ * submit (`rate`/`minUsdt`/`maxUsdt` are whole-unit decimals the operator
+ * types, converted to micros/base units for the wire). Field order is
+ * [FIELDS]; [focus] indexes into it.
+ */
+data class QuoteForm(
+    val currency: String = "",
+    val rate: String = "",
+    val minUsdt: String = "",
+    val maxUsdt: String = "",
+    val etaMinutes: String = "30",
+    val spreadBps: String = "",
+    val lat: String = "",
+    val lon: String = "",
+    val focus: Int = 0,
+) {
+    fun value(field: Int): String = when (FIELDS[field]) {
+        "currency" -> currency
+        "rate" -> rate
+        "min USDT" -> minUsdt
+        "max USDT" -> maxUsdt
+        "ETA min" -> etaMinutes
+        "spread bps" -> spreadBps
+        "lat" -> lat
+        else -> lon
+    }
+
+    fun withValue(field: Int, v: String): QuoteForm = when (FIELDS[field]) {
+        "currency" -> copy(currency = v)
+        "rate" -> copy(rate = v)
+        "min USDT" -> copy(minUsdt = v)
+        "max USDT" -> copy(maxUsdt = v)
+        "ETA min" -> copy(etaMinutes = v)
+        "spread bps" -> copy(spreadBps = v)
+        "lat" -> copy(lat = v)
+        else -> copy(lon = v)
+    }
+
+    companion object {
+        val FIELDS: List<String> = listOf("currency", "rate", "min USDT", "max USDT", "ETA min", "spread bps", "lat", "lon")
+    }
+}
 
 /**
  * One kanban column. [state] is the canonical `DealState` name; [title] is the

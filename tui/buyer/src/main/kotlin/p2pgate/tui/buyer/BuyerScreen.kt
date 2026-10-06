@@ -43,6 +43,9 @@ fun BuyerScreen(controller: BuyerController) {
 
     Column(
         modifier = Modifier.padding(horizontal = 0).onKeyEvent { event ->
+            // Modifier combos are not actions (Mosaic delivers ctrl+c as key
+            // "c" with ctrl set — see SellerScreen for the same guard).
+            if (event.ctrl || event.alt) return@onKeyEvent false
             // Digits pick a quote, Enter takes it. These were on screen before
             // they were bound here -- the console advertised an affordance it did
             // not have, which is worse than not showing it.

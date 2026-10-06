@@ -20,6 +20,7 @@ import p2pgate.tui.common.Format
 import p2pgate.tui.common.wire.InfraDto
 import p2pgate.tui.common.wire.LaneCardDto
 import p2pgate.tui.common.wire.PoolDto
+import p2pgate.tui.common.wire.QuoteDto
 import java.time.Duration
 import java.time.Instant
 
@@ -41,10 +42,21 @@ fun SellerScreen(controller: SellerController) {
 
     Column(
         modifier = Modifier.onKeyEvent { event ->
+            // Modifier combos are not actions: Mosaic delivers ctrl+c as
+            // key "c" with ctrl set, and without this guard an operator's
+            // quit attempt would CONTEST the selected claim — or ctrl+a
+            // accept an offer and fund a vault.
+            if (event.ctrl || event.alt) return@onKeyEvent false
             when {
                 // Any key clears the meeting QR first: the buyer has scanned it
                 // (or given up), so the board comes back.
                 state.meetingQr != null -> { controller.dismissMeetingQr(); true }
+                // The new-ad form owns the keyboard while it is open: typing
+                // must not fall through to board keys.
+                state.quotePanel?.form != null -> quoteFormKey(controller, scope, event.key)
+                // The quote panel's own keys, while it is open.
+                state.quotePanel != null -> quotePanelKey(controller, scope, event.key)
+                event.key == "q" -> { controller.toggleQuotePanel(); true }
                 event.key == "Left" || event.key == "h" -> { controller.moveColumn(-1); true }
                 event.key == "Right" || event.key == "l" -> { controller.moveColumn(1); true }
                 event.key == "Up" || event.key == "k" -> { controller.moveRow(-1); true }
@@ -61,11 +73,78 @@ fun SellerScreen(controller: SellerController) {
         Title(state)
         StatusStrip(state.pool, state.infra, state.quotes.size)
         state.meetingQr?.let { MeetingPanel(it) }
+        state.quotePanel?.let { QuotePanelSection(it, state.quotes) }
         LaneBoard(state)
         Disputes(state)
         LiveEvents(state)
         StatusLine(state)
         Keys(state)
+    }
+}
+
+/** Keys while the quote panel is open (no form): navigation, new, withdraw, close. */
+private fun quotePanelKey(controller: SellerController, scope: kotlinx.coroutines.CoroutineScope, key: String): Boolean =
+    when (key) {
+        "q", "Escape" -> { controller.toggleQuotePanel(); true }
+        "n" -> { controller.openQuoteForm(); true }
+        "x" -> { scope.launch { controller.withdrawSelectedQuote() }; true }
+        "Up", "k" -> { controller.moveQuoteCursor(-1); true }
+        "Down", "j" -> { controller.moveQuoteCursor(1); true }
+        else -> false
+    }
+
+/** Keys while the new-ad form is open: it owns the whole keyboard. */
+private fun quoteFormKey(controller: SellerController, scope: kotlinx.coroutines.CoroutineScope, key: String): Boolean =
+    when (key) {
+        "Escape" -> { controller.cancelQuoteForm(); true }
+        "Enter" -> { scope.launch { controller.submitQuoteForm() }; true }
+        "Tab", "Down" -> { controller.formFocus(1); true }
+        "Up" -> { controller.formFocus(-1); true }
+        "Backspace" -> { controller.formBackspace(); true }
+        else -> {
+            if (key.length == 1) {
+                controller.formType(key)
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+/**
+ * The quote-ad panel: the operator's live quotes with a cursor (withdraw under
+ * it), and the new-ad form when open. A section of the board, not a screen —
+ * the lane keeps painting behind it.
+ */
+@Composable
+private fun QuotePanelSection(panel: QuotePanel, quotes: List<QuoteDto>) {
+    Text("QUOTES", textStyle = TextStyle.Bold)
+    if (quotes.isEmpty()) Text("  none live — press n to publish one", color = Color(0x88, 0x88, 0x88))
+    for ((index, quote) in quotes.withIndex()) {
+        val cursor = index == panel.selected && panel.form == null
+        val ttl = Format.countdown(java.time.Instant.ofEpochMilli(quote.expiresAtEpochMs))
+        Text(
+            value = "${if (cursor) "›" else " "}${Format.rate(quote.fiatPerUsdtMicros, quote.fiatCurrency)} " +
+                "· ${Format.usdt(quote.minAmount)}–${Format.usdt(quote.maxAmount)} " +
+                "· eta ${quote.etaMinutes}m · $ttl left" +
+                (if (quote.lat != null) " · loc" else ""),
+            textStyle = if (cursor) TextStyle.Bold else TextStyle.Empty,
+        )
+    }
+    val form = panel.form
+    if (form != null) {
+        Text("  new ad:", textStyle = TextStyle.Bold)
+        for ((index, name) in QuoteForm.FIELDS.withIndex()) {
+            val focused = index == form.focus
+            val value = form.value(index)
+            Text(
+                value = "  ${if (focused) "›" else " "}$name: ${if (value.isEmpty()) "·" else value}",
+                textStyle = if (focused) TextStyle.Bold else TextStyle.Empty,
+            )
+        }
+        Text("  tab/↑↓ fields · type to edit · enter publish · esc cancel", color = Color(0x88, 0x88, 0x88))
+    } else {
+        Text("  n new ad · x withdraw selected · j/k move · q close", color = Color(0x88, 0x88, 0x88))
     }
 }
 
@@ -227,5 +306,5 @@ private const val STALE_AFTER_SECONDS = 30L
 private fun Keys(state: SellerState) {
     val available = SellerController.actionsFor(state.column?.state)
         .joinToString("  ") { "${it.key}=${it.label}" }
-    Text("←→ columns  ↑↓ cards  $available", color = Color(0x88, 0x88, 0x88))
+    Text("←→ columns  ↑↓ cards  $available  q=quotes", color = Color(0x88, 0x88, 0x88))
 }

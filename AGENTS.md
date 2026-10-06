@@ -63,7 +63,10 @@ with Mosaic 0.18.0 (Compose for the terminal) in their own top-level tree — `a
 the Android app's. `:tui:common` holds the shared `BackendClient` (a Ktor client behind
 an interface, so tests run on `MockEngine`) plus the hand-mirrored wire DTOs; `:tui:seller`
 is the operator console (a nine-column kanban of live deals, states as columns, with the
-handoff QR drawn in the terminal by `TerminalQr` — ZXing plus half-block glyphs); the
+handoff QR drawn in the terminal by `TerminalQr` — ZXing plus half-block glyphs — and,
+since 2026-10-05, the quote-ad panel on `q`: publish/withdraw via a typed form; both
+consoles ignore `ctrl`/`alt` key events after the PTY harness caught ctrl+c dispatching
+a phantom CONTEST); the
 seller console **holds no keys**, every seller-signed tx is built by the backend's
 `VaultSigner`. `:tui:buyer` is the buyer console: key custody in one passphrase-encrypted
 file (`KeyVault` — AES-256-GCM, PBKDF2-HMAC-SHA512 210k, header authenticated as AAD,
@@ -285,9 +288,10 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   + delete-all, recovery link, reconnecting sockets): 94 JVM
   unit tests (`:app:testDebugUnitTest`); plus the terminal consoles
   (`tui/`, `specs/tui-apps.md`): `:tui:common` 30 (KtorBackendClient 16, Format,
-  TuiConfig) + `:tui:seller` 24 (lanes, screen snapshot, terminal QR, status line) +
-  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 505;
-  plus the Android app's 94 → **599 total**.
+  TuiConfig) + `:tui:seller` 34 (lanes, screen snapshot, terminal QR, status line,
+  the quote-ad panel — 2026-10-05) +
+  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 515;
+  plus the Android app's 94 → **609 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :tui:common:test :tui:seller:test :tui:buyer:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

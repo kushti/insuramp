@@ -99,6 +99,7 @@ OFFERED    FUNDED     CASH IN          PAID?               CLAIM         CLAIMAB
 | `PAYMENT_PENDING`, `PAYMENT_CONFIRMED` | — |
 | `CLAIM_OPENED`, `CLAIMABLE` | `c` contest with the attestation · `i` mark under investigation · `v` accept the claim (record the loss) |
 | `RELEASED`, `RECLAIMED`, `CLAIMED` | — (read only) |
+| anywhere | `q` the quote-ad panel (publish / withdraw — §4.3) |
 
 `PAYMENT_PENDING` and `PAYMENT_CONFIRMED` deliberately offer **no** actions — waiting is
 not an operator action, and a key that does nothing teaches the operator the board is
@@ -132,6 +133,27 @@ text decodes back to the original payload through ZXing's reader.
 
 The buyer's app must hold a **verified** seller-signed record before they leave with the
 cash (`onramp-ux.md` §2.3), which is why the panel stays up until dismissed.
+
+### 4.3 Quote ads from the console (2026-10-05)
+
+The operator's ads are managed from the console too — `q` toggles the quote panel (a
+board section, like the meeting QR): the live quotes with cursor (`j`/`k`), `x` withdraws
+the selected one, and `n` opens the new-ad form. The form fields are currency, rate
+(fiat per 1 USDT), min/max USDT, ETA minutes, spread bps, and lat/lon (a pair or
+neither). Mosaic has no text-field widget, so the controller captures typed characters
+per focused field (`tab`/`↑`/`↓` to move, `enter` to publish, `esc` to cancel); the typed
+whole-unit decimals become wire units on submit — rate → micros of fiat per USDT,
+amounts → 6-decimal base units, exactly (BigDecimal, never Double). Local validation
+saves the round trip (3-letter currency, positive numbers, min ≤ max, lat/lon as a
+pair); the backend re-checks everything, capacity included, and its refusal reason is
+shown verbatim in the status line — the capacity rule ("max deal size … exceeds free
+collateral") is a feature of the demo, not an error. `spreadBps` stays metadata: the cash
+leg is re-derived from the rate, per the owner decision recorded in `AGENTS.md`.
+
+**Modifier combos are not actions.** Both consoles ignore `ctrl`/`alt` key events:
+Mosaic delivers ctrl+c as key `"c"` with ctrl set, and without the guard an operator's
+quit attempt would CONTEST the selected claim — or ctrl+a accept an offer and fund a
+vault (found via the PTY harness, §8.3 item 9).
 
 ## 5. The buyer console (`:tui:buyer`) — landed
 
@@ -251,7 +273,7 @@ build if any dashboard path has no `BackendClient` counterpart. That catches cov
 | Module | Tests | What is covered |
 |---|---|---|
 | `:tui:common` | 30 | `KtorBackendClient` against Ktor's `MockEngine` (16: URL shapes, auth headers, error wording, DTO decoding), `Format`, `TuiConfig.resolve` precedence |
-| `:tui:seller` | 24 | `SellerState`/`actionsFor` per state, the screen rendered headlessly through `mosaic-testing`, the terminal QR, the status line (§8.3) |
+| `:tui:seller` | 34 | `SellerState`/`actionsFor` per state, the screen rendered headlessly through `mosaic-testing`, the terminal QR, the status line (§8.3), the quote-ad panel (`SellerQuotePanelSpec` 10: cursor, withdraw, form typing, validation, wire-unit conversion, rejection surfacing) |
 | `:tui:buyer` | 41 | `KeyVault` (17: round-trip, wrong passphrase, tampering, cross-file splice, permissions, every failure mode), `BuyerFlow` (15: which key each path needs, when a claim may be opened, the maturation countdown), the screen rendered headlessly |
 
 Gate: `./gradlew :tui:common:test :tui:seller:test :tui:buyer:test` (also in the full
@@ -275,6 +297,7 @@ schedule, wait-for-output, ANSI-stripped final screen) with `scripts/pty-smoke.m
 reference, and the canonical runbook is `specs/tui-demo-run.md`:
 
 ```bash
+export JAVA_HOME=$HOME/.local/opt/jdk-17.0.20.1+1   # the launchers need it at RUN time too
 P2P_OPERATOR_KEY=demo P2P_DEMO_QUOTES=true ./gradlew :backend:run &
 ./gradlew :tui:seller:installDist :tui:buyer:installDist
 script -qec "P2P_OPERATOR_KEY=demo tui/seller/build/install/seller/bin/seller" /dev/null
@@ -342,6 +365,12 @@ existing at all.
 8. **Misleading error text.** "write a key file first — press k" was shown when the key
    file *existed* and only the passphrase had not been supplied. Errors now name the
    actual missing thing.
+9. **Ctrl combos dispatched actions.** Found while rehearsing the quote panel (§4.3):
+   the PTY harness's closing ctrl+c reached the action dispatch as key `"c"` — a phantom
+   CONTEST ("nothing selected" in the status). On a selected CLAIM card that would have
+   contested it, and ctrl+a would have *accepted an offer and funded a vault*. Mosaic
+   delivers modifiers on `KeyEvent` (`ctrl`/`alt`/`shift`); both consoles now ignore
+   modified key events entirely.
 
 ### 8.4 Still not verified
 

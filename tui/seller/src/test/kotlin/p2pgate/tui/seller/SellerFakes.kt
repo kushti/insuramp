@@ -39,10 +39,18 @@ import p2pgate.tui.common.wire.ReclaimResponse
 internal class FakeClient(
     private val lanes: Map<String, List<LaneCardDto>> = emptyMap(),
     private val disputeRows: List<DisputeRowDto> = emptyList(),
+    private val quoteList: List<p2pgate.tui.common.wire.QuoteDto> = emptyList(),
 ) : BackendClient {
 
     /** Every call the console made, in order — what the specs assert against. */
     val calls = mutableListOf<String>()
+
+    /** Quotes the console published / withdrew, in order. */
+    val published = mutableListOf<PutQuoteRequest>()
+    val withdrawn = mutableListOf<String>()
+
+    /** When set, publish answers with this rejection instead of `published=true`. */
+    var publishRejection: String? = null
 
     /** When set, every endpoint throws this. Set to exercise the failure path. */
     var failWith: String? = null
@@ -76,10 +84,22 @@ internal class FakeClient(
     override suspend fun reclaim(dealId: String) =
         answer(ReclaimResponse(true, "tx9")).also { calls += "reclaim" }
 
-    override suspend fun publishQuote(request: PutQuoteRequest) = PublishQuoteResponse(true, null, null)
-    override suspend fun withdrawQuote(quoteId: String) = MessageDto("ok")
+    override suspend fun publishQuote(request: PutQuoteRequest): PublishQuoteResponse {
+        published += request
+        calls += "publishQuote"
+        val rejection = publishRejection
+        return if (rejection != null) PublishQuoteResponse(false, null, rejection)
+        else PublishQuoteResponse(true, null, null)
+    }
+
+    override suspend fun withdrawQuote(quoteId: String): MessageDto {
+        withdrawn += quoteId
+        calls += "withdrawQuote"
+        return MessageDto("ok")
+    }
+
     override suspend fun amlCheck(address: String, chainId: Int) = AmlCheckResponse("PASS", "s", 0)
-    override suspend fun quotes() = answer(QuoteFeedDto(emptyList())).also { calls += "quotes" }
+    override suspend fun quotes() = answer(QuoteFeedDto(quoteList)).also { calls += "quotes" }
 
     // The buyer half of the surface: the operator console never calls these, but
     // the interface requires them, so they answer canned shapes.
@@ -118,3 +138,22 @@ internal fun laneCard(
     vaultBoxId = box,
     exitPath = "release",
 ).let { it }
+/** A live quote with plausible timings — 95.00 RUB/USDT, 3–15 000 USDT, an hour to live. */
+internal fun quoteDto(
+    id: String = "q1",
+    currency: String = "RUB",
+    rateMicros: Long = 95_000_000L,
+) = p2pgate.tui.common.wire.QuoteDto(
+    id = id,
+    version = 1,
+    spreadBps = 0,
+    etaMinutes = 30,
+    minAmount = 3_000_000,
+    maxAmount = 15_000_000_000,
+    fiatCurrency = currency,
+    fiatPerUsdtMicros = rateMicros,
+    createdAtEpochMs = 0,
+    expiresAtEpochMs = 1_700_000_000_000 + 3_600_000,
+    lat = null,
+    lon = null,
+)

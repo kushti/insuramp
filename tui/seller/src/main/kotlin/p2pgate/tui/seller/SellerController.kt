@@ -14,6 +14,7 @@ import p2pgate.dealprotocol.DealState
 import p2pgate.tui.common.BackendClient
 import p2pgate.tui.common.Format
 import p2pgate.tui.common.wire.LaneCardDto
+import p2pgate.tui.common.wire.PutQuoteRequest
 import java.time.Instant
 
 /**
@@ -222,6 +223,153 @@ class SellerController(
     /** Clears the meeting QR panel (any key dismisses it). */
     fun dismissMeetingQr() = _state.update { it.copy(meetingQr = null) }
 
+    // ---------------------------------------------------------------- quote ads
+
+    /** `q` toggles the quote-ad panel. Opening it lands the cursor on the first quote. */
+    fun toggleQuotePanel() = _state.update { current ->
+        if (current.quotePanel == null) current.copy(quotePanel = QuotePanel())
+        else current.copy(quotePanel = null)
+    }
+
+    /** j/k over the live quotes (while no form is open). */
+    fun moveQuoteCursor(delta: Int) = _state.update { current ->
+        val panel = current.quotePanel ?: return@update current
+        current.copy(
+            quotePanel = panel.copy(
+                selected = (panel.selected + delta).coerceIn(0, (current.quotes.size - 1).coerceAtLeast(0)),
+            ),
+        )
+    }
+
+    /** `n` opens the new-ad form over the panel. */
+    fun openQuoteForm() = _state.update { current ->
+        val panel = current.quotePanel ?: return@update current
+        current.copy(quotePanel = panel.copy(form = QuoteForm()))
+    }
+
+    /** Esc cancels the form (the panel stays). */
+    fun cancelQuoteForm() = _state.update { current ->
+        val panel = current.quotePanel ?: return@update current
+        current.copy(quotePanel = panel.copy(form = null))
+    }
+
+    /** Tab/↑/↓ moves between the form's fields. */
+    fun formFocus(delta: Int) = _state.update { current ->
+        val panel = current.quotePanel ?: return@update current
+        val form = panel.form ?: return@update current
+        val last = QuoteForm.FIELDS.lastIndex
+        current.copy(quotePanel = panel.copy(form = form.copy(focus = (form.focus + delta).coerceIn(0, last))))
+    }
+
+    /**
+     * One typed character into the focused field. The currency field takes
+     * letters only (uppercased, 3 max); everything numeric takes digits and one
+     * dot. Anything else is inert.
+     */
+    fun formType(char: String) = _state.update { current ->
+        val panel = current.quotePanel ?: return@update current
+        val form = panel.form ?: return@update current
+        if (char.length != 1) return@update current
+        val name = QuoteForm.FIELDS[form.focus]
+        val next = if (name == "currency") {
+            if (!char[0].isLetter()) return@update current
+            (form.value(form.focus) + char).uppercase().take(3)
+        } else {
+            if (!char[0].isDigit() && char != ".") return@update current
+            val v = form.value(form.focus) + char
+            if (v.count { it == '.' } > 1) return@update current
+            v
+        }
+        current.copy(quotePanel = panel.copy(form = form.withValue(form.focus, next)))
+    }
+
+    fun formBackspace() = _state.update { current ->
+        val panel = current.quotePanel ?: return@update current
+        val form = panel.form ?: return@update current
+        current.copy(
+            quotePanel = panel.copy(
+                form = form.withValue(form.focus, form.value(form.focus).dropLast(1)),
+            ),
+        )
+    }
+
+    /**
+     * Validates the form and publishes it (`PUT /v1/dashboard/quotes` — the
+     * backend re-checks everything, capacity included; the console's own
+     * validation is only there to save the round trip). The typed whole-unit
+     * decimals become wire units here: rate → micros of fiat per USDT,
+     * amounts → 6-decimal base units.
+     */
+    suspend fun submitQuoteForm() {
+        val form = _state.value.quotePanel?.form ?: return
+        val bad = validateQuoteForm(form)
+        if (bad != null) {
+            say("quote not published: $bad")
+            return
+        }
+        val request = PutQuoteRequest(
+            spreadBps = form.spreadBps.toIntOrNull() ?: 0,
+            etaMinutes = form.etaMinutes.toInt(),
+            minAmount = wholeToUnits(form.minUsdt),
+            maxAmount = wholeToUnits(form.maxUsdt),
+            fiatCurrency = form.currency,
+            fiatPerUsdtMicros = wholeToUnits(form.rate),
+            lat = form.lat.ifBlank { null }?.toDouble(),
+            lon = form.lon.ifBlank { null }?.toDouble(),
+        )
+        try {
+            val outcome = client.publishQuote(request)
+            if (outcome.published) {
+                say("quote published — ${Format.rate(request.fiatPerUsdtMicros, request.fiatCurrency)} " +
+                    "${Format.usdt(request.minAmount)}–${Format.usdt(request.maxAmount)}")
+                cancelQuoteForm()
+                refresh()
+            } else {
+                say("quote refused: ${outcome.reason ?: "no reason given"}")
+            }
+        } catch (e: Exception) {
+            say("quote refused: ${e.message}")
+        }
+    }
+
+    /** `x` withdraws the quote under the panel cursor. */
+    suspend fun withdrawSelectedQuote() {
+        val panel = _state.value.quotePanel ?: return
+        if (panel.form != null) return
+        val quote = _state.value.quotes.getOrNull(panel.selected)
+        if (quote == null) {
+            say("no quote selected")
+            return
+        }
+        try {
+            client.withdrawQuote(quote.id)
+            say("withdrew the ${Format.rate(quote.fiatPerUsdtMicros, quote.fiatCurrency)} quote")
+            refresh()
+        } catch (e: Exception) {
+            say("withdraw refused: ${e.message}")
+        }
+    }
+
+    /** Local form validation — returns the problem, or null when the form is publishable. */
+    private fun validateQuoteForm(form: QuoteForm): String? {
+        if (!form.currency.matches(Regex("[A-Z]{3}"))) return "currency must be a 3-letter code"
+        if ((form.rate.toDoubleOrNull() ?: 0.0) <= 0.0) return "rate must be a positive number"
+        val min = form.minUsdt.toDoubleOrNull()
+        val max = form.maxUsdt.toDoubleOrNull()
+        if (min == null || min <= 0.0) return "min amount must be a positive number"
+        if (max == null || max <= 0.0) return "max amount must be a positive number"
+        if (min > max) return "min amount is above max"
+        if ((form.etaMinutes.toIntOrNull() ?: 0) <= 0) return "ETA must be whole minutes"
+        if (form.spreadBps.isNotBlank() && form.spreadBps.toIntOrNull() == null) return "spread must be whole bps"
+        val latSet = form.lat.isNotBlank()
+        val lonSet = form.lon.isNotBlank()
+        if (latSet != lonSet) return "lat and lon come as a pair (or neither)"
+        if (latSet && (form.lat.toDoubleOrNull() == null || form.lon.toDoubleOrNull() == null)) {
+            return "lat/lon must be numbers"
+        }
+        return null
+    }
+
     /**
      * Writes the status line. Everything here is an *action* outcome, so the line
      * is pinned against the refresh tick for [ACTION_STATUS_MS].
@@ -243,6 +391,15 @@ class SellerController(
 
         /** How long an action's status message survives the refresh tick. */
         const val ACTION_STATUS_MS = 8_000L
+
+        /**
+         * Whole-unit decimal → 6-decimal wire units, exactly (`"95.00"` →
+         * 95 000 000). BigDecimal, never Double — a rate like 0.1 must not
+         * pick up binary dust on its way into a quote.
+         */
+        fun wholeToUnits(whole: String): Long =
+            java.math.BigDecimal(whole).movePointRight(Format.USDT_DECIMALS)
+                .setScale(0, java.math.RoundingMode.DOWN).longValueExact()
 
 
         /**
