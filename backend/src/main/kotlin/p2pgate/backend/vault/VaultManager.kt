@@ -112,6 +112,13 @@ class EmbeddedVaultSigner(
         fundingBoxes += box
     }
 
+    /** Fee boxes, unlike funding boxes, are never consumed by a build. */
+    private val feeBoxPool = java.util.concurrent.CopyOnWriteArrayList(feeBoxes)
+
+    fun addFeeBox(box: ChainBox) {
+        feeBoxPool += box
+    }
+
     override fun fundingInputs(collateralTokenIdHex: String, minAmount: Long): List<ChainBox> {
         val selected = fundingBoxes.filter { it.tokenAmount(collateralTokenIdHex) > 0 }
         return if (selected.sumOf { it.tokenAmount(collateralTokenIdHex) } >= minAmount) {
@@ -122,7 +129,7 @@ class EmbeddedVaultSigner(
         }
     }
 
-    override fun feeInputs(): List<ChainBox> = feeBoxes.toList()
+    override fun feeInputs(): List<ChainBox> = feeBoxPool.toList()
 
     override fun signer(): DealTxSigner = DealTxSigner { tx ->
         org.ergoplatform.appkit.ColdErgoClient(networkType, DevOracleCold.parameters(networkType))

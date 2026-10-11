@@ -6,6 +6,8 @@ import io.ktor.http.ContentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.application.log
 import io.ktor.server.config.tryGetString
@@ -13,9 +15,12 @@ import io.ktor.server.http.content.staticResources
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.header
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
+import io.ktor.server.response.header
+import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -34,6 +39,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import p2pgate.backend.bus.BackendEvent
 import p2pgate.backend.bus.EventBus
+import p2pgate.backend.bus.TxKind
 import p2pgate.backend.disputes.DisputeInbox
 import p2pgate.backend.disputes.WebhookEscalation
 import p2pgate.backend.engine.DealEngine
@@ -45,6 +51,7 @@ import p2pgate.backend.store.DealRecord
 import p2pgate.backend.store.InMemoryDealStore
 import p2pgate.backend.util.Hex
 import p2pgate.backend.util.QrCodes
+import p2pgate.backend.util.Secp256k1
 import p2pgate.backend.util.SigmaTrees
 import p2pgate.backend.vault.CollateralPool
 import p2pgate.backend.vault.EmbeddedVaultSigner
@@ -60,6 +67,8 @@ import p2pgate.dealprotocol.QrPayload
 import p2pgate.dealprotocol.TronAddress
 import p2pgate.ergo.ChainBox
 import p2pgate.ergo.ChainRegister
+import p2pgate.ergo.ChainSpend
+import p2pgate.ergo.ChainToken
 import p2pgate.ergo.DevOracle
 import p2pgate.ergo.ErgoContracts
 import p2pgate.ergo.ExplorerChainSource
@@ -149,6 +158,14 @@ private enum class HandoffApply { APPLIED, DUPLICATE, REJECTED }
 fun Application.module(app: BackendApp) {
     install(ContentNegotiation) { json(json) }
     install(WebSockets)
+    // The dashboard shell must never be served from a stale browser cache —
+    // an old index.html referencing a deleted app.js renders as a blank page.
+    // no-cache = always revalidate, so edits appear on a plain reload.
+    intercept(ApplicationCallPipeline.Plugins) {
+        if (call.request.path().startsWith("/dashboard")) {
+            call.response.header(HttpHeaders.CacheControl, "no-cache")
+        }
+    }
     install(StatusPages) {
         exception<IllegalArgumentException> { call, e ->
             call.respond(HttpStatusCode.BadRequest, ErrorDto(e.message ?: "bad request"))
@@ -177,9 +194,13 @@ fun Application.module(app: BackendApp) {
         // every API route below stays operator-token-gated as before. No SPA
         // fallback: an unknown subpath must 404, so the index is served by
         // explicit routes rather than staticResources' default() (which would
-        // answer any missing file with index.html).
+        // answer any missing file with index.html). `/dashboard` (no slash)
+        // redirects to `/dashboard/`: the shell's asset URLs are relative, and
+        // served at the slash-less path the browser resolves them against the
+        // server root (app.js → /app.js → 404 → both views stay hidden, the
+        // classic blank dashboard).
         staticResources("/dashboard", "dashboard")
-        get("/dashboard") { serveDashboardIndex(call) }
+        get("/dashboard") { call.respondRedirect("/dashboard/") }
         get("/dashboard/") { serveDashboardIndex(call) }
         route("/v1") {
             // ---------------------------------------------------------- buyer
@@ -638,13 +659,16 @@ private fun BackendApp.vaultManagerBox(dealId: String): ChainBox? =
 
 /**
  * Builds the M3 dev composition: in-memory store, DevOracle, explorer chain
- * source, config-driven AML stub, embedded vault signer. Funding boxes are
- * empty until the operator loads them — vault funding then fails loudly with
- * "no funding inputs", which is the honest dev-mode behavior.
+ * source, config-driven AML stub, embedded vault signer. Outside demo mode
+ * funding boxes are empty until the operator loads them — vault funding then
+ * fails loudly with "no funding inputs", which is the honest dev-mode
+ * behavior. Demo mode (`P2P_DEMO_QUOTES=true`) seeds synthetic funding boxes
+ * (see [seedDemoFunding]) so the whole flow is walkable.
  */
 fun Application.module() {
     val backend = environment.config.config("backend")
     fun env(name: String): String? = System.getenv(name)
+    val demoQuotes = env("P2P_DEMO_QUOTES") == "true"
 
     val networkPrefix: Byte = env("P2P_NETWORK")?.let { if (it == "testnet") 0x10.toByte() else 0x00.toByte() }
         ?: backend.tryGetString("network")?.let { if (it == "testnet") 0x10.toByte() else 0x00.toByte() }
@@ -676,7 +700,7 @@ fun Application.module() {
             env("P2P_NODE_URL") ?: p2pgate.ergo.NodeChainSource.DEFAULT_BASE_URLS,
         )
         else -> ExplorerChainSource(explorerUrl)
-    }
+    }.let { if (demoQuotes) DemoChainSource(it) else it }
 
     val vaultSecret = env("P2P_VAULT_SECRET")?.let { BigInteger(it, 16) } ?: BigInteger.valueOf(0x1111)
     val vaultSigner = EmbeddedVaultSigner(
@@ -691,7 +715,11 @@ fun Application.module() {
         mixReadyCollateral = env("P2P_MIX_READY")?.toLongOrNull()
             ?: backend.tryGetString("mix-ready")?.toLongOrNull() ?: 0,
         collateralTokenIdHex = env("P2P_COLLATERAL_TOKEN_ID")
-            ?: backend.tryGetString("collateral-token-id") ?: "",
+            // `application.conf` ships an empty placeholder — treat blank as unset.
+            ?: backend.tryGetString("collateral-token-id")?.takeIf { it.isNotEmpty() }
+            // Demo mode funds from synthetic boxes (seeded below); they need a
+            // token id to carry, so default one when the operator sets none.
+            ?: (if (demoQuotes) Hex.encode(ByteArray(32) { 0x42 }) else ""),
         pollDelayMs = env("P2P_POLL_DELAY_MS")?.toLongOrNull()
             ?: backend.tryGetString("poll-delay-ms")?.toLongOrNull() ?: 30_000,
     )
@@ -715,6 +743,23 @@ fun Application.module() {
         riskScorer = riskScorer,
         reclaimTimeoutBlocks = config.reclaimTimeoutBlocks,
     )
+
+    // Demo funding (P2P_DEMO_QUOTES=true): synthetic operator boxes so the
+    // accept path can build and prover-verify a real fund tx (NoOpTxSubmitter
+    // still keeps it off-chain). A fund consumes every collateral box the
+    // signer holds (fundingInputs selects the whole pool), so the bus
+    // subscription replenishes the pool after each FUND; fee boxes are never
+    // consumed.
+    if (demoQuotes) {
+        val seedFunding = {
+            seedDemoFunding(vaultSigner, vaultSecret, networkType, config.collateralTokenIdHex) { log.info(it) }
+        }
+        seedFunding()
+        bus.subscribe { event ->
+            if (event is BackendEvent.TxSubmitted && event.kind == TxKind.FUND) seedFunding()
+        }
+    }
+
     val watcher = ChainWatcher(chain, trees, engine, store)
     val quotes = QuotePublisher(
         store = store,
@@ -723,7 +768,7 @@ fun Application.module() {
         bus = bus,
         costFloorBps = config.costFloorBps,
         ttl = config.quoteTtl,
-        demoReseed = if (env("P2P_DEMO_QUOTES") == "true") {
+        demoReseed = if (demoQuotes) {
             { q -> seedDemoQuotes(q, config.mixReadyCollateral) { log.info(it) } }
         } else {
             null
@@ -755,7 +800,6 @@ fun Application.module() {
     // seeding re-runs at startup AND whenever the feed drains (TTL lapses,
     // pause withdrawal) while infra is healthy — a demo should never sit on
     // an empty feed.
-    val demoQuotes = env("P2P_DEMO_QUOTES") == "true"
     if (demoQuotes) {
         seedDemoQuotes(quotes, config.mixReadyCollateral) { log.info(it) }
     }
@@ -836,6 +880,84 @@ internal fun seedDemoQuotes(quotes: QuotePublisher, mixReadyCollateral: Long, lo
                 log("demo quote ${seed.city} not seeded: ${outcome.reason}")
         }
     }
+}
+
+/**
+ * Demo-mode funding seed (`P2P_DEMO_QUOTES=true`): loads synthetic P2PK boxes
+ * (spendable by the embedded vault secret) into the signer so the offer-accept
+ * path can fund vaults. Mirrors `TestSupport.p2pkBox` in the test source set.
+ * Closes the "demo mode cannot fund" gap the open backlog in `specs/README.md`
+ * used to record — both apps are now walkable end to end in demo mode.
+ * Called at startup and re-called after every FUND (a fund consumes the whole
+ * collateral pool the signer holds; fee boxes are never consumed).
+ */
+internal fun seedDemoFunding(
+    signer: EmbeddedVaultSigner,
+    secret: BigInteger,
+    networkType: org.ergoplatform.appkit.NetworkType,
+    collateralTokenIdHex: String,
+    log: (String) -> Unit,
+) {
+    val pk = Secp256k1.publicKeyCompressed(secret)
+    val treeHex = SigmaTrees.p2pkTreeHex(pk)
+    val address = SigmaTrees.p2pkAddress(pk, networkType)
+    fun box(value: Long, tokens: List<ChainToken>, idByte: Int) = ChainBox(
+        boxId = idByte.toString(16).padStart(2, '0').repeat(32),
+        transactionId = "d0".repeat(32),
+        index = 0,
+        value = value,
+        creationHeight = 1000,
+        ergoTreeHex = treeHex,
+        address = address,
+        tokens = tokens,
+        registers = List(6) { null },
+    )
+
+    // 0.1 ERG covers the FUNDED box value, the miner fee, and change; the
+    // token amount (1,000,000 USDT at 6 decimals) covers any single seeded deal.
+    repeat(DEMO_FUNDING_BOXES) {
+        signer.addFundingBox(
+            box(100_000_000L, listOf(ChainToken(collateralTokenIdHex, 1_000_000_000_000L)), 0x30 + it),
+        )
+    }
+    repeat(DEMO_FEE_BOXES) {
+        signer.addFeeBox(box(100_000_000L, emptyList(), 0x60 + it))
+    }
+    log("demo funding seeded: $DEMO_FUNDING_BOXES collateral boxes (1,000,000 USDT each) + $DEMO_FEE_BOXES fee boxes")
+}
+
+private const val DEMO_FUNDING_BOXES = 3
+private const val DEMO_FEE_BOXES = 2
+
+/**
+ * Demo-mode chain decorator (`P2P_DEMO_QUOTES=true`): the public explorer is
+ * best-effort from many networks (slow, flaky, sometimes unreachable), and a
+ * demo should not hang on its mood — the accept path needs a height for the
+ * reclaim timeout. Only [getCurrentHeight] is cushioned: one immediate retry,
+ * then the last-known height. Box/spend reads still fail loudly, and with no
+ * height ever seen the failure propagates unchanged.
+ */
+internal class DemoChainSource(private val inner: p2pgate.ergo.ChainSource) : p2pgate.ergo.ChainSource {
+
+    @Volatile
+    private var lastHeight = 0
+
+    override fun getCurrentHeight(): Int =
+        try {
+            inner.getCurrentHeight().also { lastHeight = it }
+        } catch (first: Exception) {
+            try {
+                inner.getCurrentHeight().also { lastHeight = it }
+            } catch (second: Exception) {
+                if (lastHeight > 0) lastHeight else throw second
+            }
+        }
+
+    override fun getBox(boxId: String): ChainBox? = inner.getBox(boxId)
+
+    override fun getSpendingTransaction(boxId: String): ChainSpend? = inner.getSpendingTransaction(boxId)
+
+    override fun getUnspentBoxes(address: String): List<ChainBox> = inner.getUnspentBoxes(address)
 }
 
 /**

@@ -160,9 +160,15 @@ in-scope ones inline with `[not built — backlog]`.
   scheduler's reclaimable states while the state machine rejects that transition as
   a theft path, so every stuck deal appends a false `VIOLATION` event every 30 s
   and floods the dashboard event stream.
-- Demo mode cannot fund: `EmbeddedVaultSigner` is built with no funding boxes and
-  `addFundingBox` is never called, and `mix-ready = 0` capacity-rejects every seeded
-  quote. This blocks manual end-to-end testing of *both* apps.
+- ~~**Demo mode cannot fund**~~ **— RESOLVED (2026-10-09).** Demo mode seeds
+  synthetic funding boxes into the `EmbeddedVaultSigner` (`seedDemoFunding` in
+  `Server.kt`, replenished on every `TxSubmitted(FUND)`), so the offer-accept
+  path builds a real prover-verified fund tx and both apps are walkable end to
+  end. The collateral token id falls back to a dummy 32-byte id in demo mode
+  (`application.conf`'s empty placeholder is treated as unset), and the chain
+  source is wrapped in `DemoChainSource` (retry + last-known-height cache) so
+  a flaky public explorer cannot hang the fund path. Claim paths still stop at
+  offline tx construction — the NoOp submitter puts nothing on-chain.
 
 **Cross-module:** `e2e/` never exercises the dashboard HTTP surface, and the
 buyer app has no test above the pure-function layer (no ViewModel, client-store or

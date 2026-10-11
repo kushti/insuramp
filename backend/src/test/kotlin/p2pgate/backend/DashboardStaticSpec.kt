@@ -3,6 +3,7 @@ package p2pgate.backend
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
@@ -30,19 +31,25 @@ class DashboardStaticSpec {
     fun `dashboard app shell is served at the dashboard root`() = testApplication {
         val env = env()
         setup(env)
-        val client = createClient { }
+        val client = createClient { followRedirects = false }
         val root = client.get("/dashboard/")
         assertEquals(HttpStatusCode.OK, root.status)
         assertEquals(ContentType.Text.Html, root.contentType()?.withoutParameters())
+        // no-cache: a stale cached shell is exactly how the dashboard renders
+        // blank in a browser (old index referencing a deleted app.js).
+        assertEquals("no-cache", root.headers[HttpHeaders.CacheControl])
         val markup = root.bodyAsText()
         assertTrue(markup.contains("login-form"), "app markup: login gate")
         assertTrue(markup.contains("meeting-view"), "app markup: meeting screen")
         assertTrue(markup.contains("app.js"), "app markup loads app.js")
 
-        // `/dashboard` (no trailing slash) and `/dashboard/index.html` serve the same shell.
+        // `/dashboard` (no trailing slash) redirects rather than serving the
+        // shell: the shell's asset URLs are relative, and at the slash-less
+        // path the browser resolves them against the server root
+        // (app.js → /app.js → 404 → both views stay hidden, a blank page).
         val bare = client.get("/dashboard")
-        assertEquals(HttpStatusCode.OK, bare.status)
-        assertEquals(markup, bare.bodyAsText())
+        assertEquals(HttpStatusCode.Found, bare.status)
+        assertEquals("/dashboard/", bare.headers[HttpHeaders.Location])
         val index = client.get("/dashboard/index.html")
         assertEquals(HttpStatusCode.OK, index.status)
         assertEquals(markup, index.bodyAsText())
@@ -62,6 +69,8 @@ class DashboardStaticSpec {
         assertEquals(HttpStatusCode.OK, css.status)
         assertEquals(ContentType.Text.CSS, css.contentType()?.withoutParameters())
         assertTrue(css.bodyAsText().contains("meeting-card"), "styles cover the meeting screen")
+        assertEquals("no-cache", js.headers[HttpHeaders.CacheControl])
+        assertEquals("no-cache", css.headers[HttpHeaders.CacheControl])
     }
 
     @Test

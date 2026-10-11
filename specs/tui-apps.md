@@ -272,7 +272,7 @@ build if any dashboard path has no `BackendClient` counterpart. That catches cov
 
 | Module | Tests | What is covered |
 |---|---|---|
-| `:tui:common` | 30 | `KtorBackendClient` against Ktor's `MockEngine` (16: URL shapes, auth headers, error wording, DTO decoding), `Format`, `TuiConfig.resolve` precedence |
+| `:tui:common` | 30 | `KtorBackendClient` against Ktor's `MockEngine` (15: URL shapes, auth headers, error wording, DTO decoding), `Format`, `TuiConfig.resolve` precedence |
 | `:tui:seller` | 34 | `SellerState`/`actionsFor` per state, the screen rendered headlessly through `mosaic-testing`, the terminal QR, the status line (§8.3), the quote-ad panel (`SellerQuotePanelSpec` 10: cursor, withdraw, form typing, validation, wire-unit conversion, rejection surfacing) |
 | `:tui:buyer` | 41 | `KeyVault` (17: round-trip, wrong passphrase, tampering, cross-file splice, permissions, every failure mode), `BuyerFlow` (15: which key each path needs, when a claim may be opened, the maturation countdown), the screen rendered headlessly |
 
@@ -315,7 +315,14 @@ consoles run against a live backend.**
   from the rate (`you pay 92 INR`), event ticker updating;
 - auth rejection works: a bad `P2P_OPERATOR_KEY` returns `{"error":"invalid operator key"}`;
 - the key file and its sidecar are written `-rw-------`;
-- the keyless fallback (no key file, no prompt answered) still starts and can open a claim.
+- the keyless fallback (no key file, no prompt answered) still starts and can open a claim;
+- since demo mode learned to fund (2026-10-09, synthetic funding boxes +
+  `DemoChainSource`): the seller's `a` accepts an offer — the backend builds a
+  real prover-verified fund tx, the deal moves OFFERED → FUNDED with the
+  collateral shown as locked — and `s` signs the handoff record, rendering the
+  meeting QR in the terminal while the deal moves to CASH IN
+  (PAYMENT_PENDING, record on file). The claim paths remain unexercised
+  (below).
 
 ### 8.3 Bugs that only running could find
 

@@ -40,7 +40,15 @@ class ExplorerChainSource(
 
         /** Default JDK transport; may be replaced (Tor, caching, test stubs). */
         fun defaultTransport(requestTimeoutSeconds: Long = 30): (String) -> String {
-            val client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()
+            // HTTP/1.1, not the HttpClient default h2: several networks path-
+            // dependently hang Java's HTTP/2 handshake to Cloudflare-fronted
+            // APIs (observed 2026-10: every h2 request to the explorer timed
+            // out while HTTP/1.1 answered in ~1s). This client sends plain
+            // sequential GETs, so h2 buys nothing anyway.
+            val client = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build()
             return { path ->
                 val req = HttpRequest.newBuilder()
                     .uri(URI.create(path))

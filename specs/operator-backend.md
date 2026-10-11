@@ -276,11 +276,22 @@ GET  /dashboard ; /dashboard/app.js ; /dashboard/styles.css
 then `./gradlew :backend:run` — in-memory `DealStore`, `NoOpTxSubmitter`, in-process
 `DevOracle`, mainnet chain-source defaults; `P2P_NETWORK=testnet` for testnet;
 `P2P_CHAIN_SOURCE=node` + `P2P_NODE_URL=…` to poll a node with the extra indexer instead
-of the explorer. Dashboard auth: set `P2P_OPERATOR_KEY` (bearer token for every dashboard
+of the explorer (the transport pins HTTP/1.1: Java's HTTP/2 to Cloudflare-fronted
+APIs hangs on some networks — observed 2026-10 — while HTTP/1.1 answers normally).
+Dashboard auth: set `P2P_OPERATOR_KEY` (bearer token for every dashboard
 endpoint and the `/v1/events` socket); **when it is unset the dashboard API is
 unauthenticated — demo-open mode, never deploy it so.** Explorer outages only degrade the
 `EXPLORER_SYNC` infra signal; the server keeps serving. Dashboard at
 `http://localhost:8080/dashboard`.
+
+**Demo funding (2026-10-09):** with `P2P_DEMO_QUOTES=true` the dev wiring seeds
+synthetic funding/fee boxes (P2PK of the embedded vault secret, carrying a dummy
+collateral token id when none is configured) so the offer-accept path can build
+and sign a real fund tx; the pool is replenished after every FUND, and the chain
+source falls back to the last-known height after two failed explorer reads
+(`DemoChainSource`). Without demo mode, funding boxes stay empty and an accept
+fails loudly with "no funding inputs", which remains the honest dev-mode
+behavior.
 
 ## 10. Open questions
 

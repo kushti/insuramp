@@ -21,9 +21,12 @@ lazily), and wrap the run in a synthesized PTY when stdin is not a terminal, so 
 same command works interactively and from a pipe/CI.
 
 Demo mode (`P2P_DEMO_QUOTES=true`) means: in-memory deal store, seeded located example
-quotes, a dev oracle, and a **NoOp tx submitter** — nothing ever reaches a blockchain.
-The consoles exercise the full UI and the real wire formats, but no vault exists on-chain,
-so the claim paths are exercised only up to (offline, prover-verified) transaction
+quotes, a dev oracle, a **NoOp tx submitter** — nothing ever reaches a blockchain —
+and synthetic funding boxes so the operator's offer-accept really builds and signs
+the fund tx (prover-verified, then discarded). The consoles exercise the full UI
+and the real wire formats: a deal walks QUOTED → FUNDED (accept) → PAYMENT_PENDING
+(handoff sign, QR in the terminal). Since no vault exists on-chain, the claim
+paths are exercised only up to (offline, prover-verified) transaction
 construction. That limitation is recorded in `specs/tui-apps.md` §8.4.
 
 ## 1. Prerequisites
@@ -99,6 +102,11 @@ seller-signed action is performed by the backend (`specs/tui-apps.md` §4.1). Ke
 | `CLAIM*` columns | `c` / `i` / `v` | contest with the attestation / investigate / accept the loss |
 | anywhere | `q` | the quote-ad panel: live quotes, `n` new ad (typed form, `enter` publishes), `x` withdraw selected |
 | anywhere | cursor keys, `q` | move, quit |
+
+On the first load the cursor lands on the **first lane that has work in it** —
+when exactly one deal is live, it is already selected and the action hints in
+the status strip describe its column. Don't press `l`/`h` "to find" the deal;
+that moves the cursor *off* it ("nothing selected" is the status you'd get).
 
 ## 5. The buyer console
 

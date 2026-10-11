@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>p2pgate — operator dashboard</title>
-  <link rel="stylesheet" href="styles.css">
+  <!-- Cache-busted: a stale cached app.js leaves #login-view hidden forever —
+    the classic "blank dashboard" report. -->
+  <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
 
@@ -93,6 +95,6 @@
     </div>
   </section>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

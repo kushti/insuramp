@@ -37,7 +37,16 @@ dispute inbox, AML `RiskScorer` hook, infra monitor + auto-pause. In-memory `Dea
 behind a JDBC-shaped interface (PostgreSQL impl is the documented follow-up);
 `TxSubmitter` seam for broadcast. (The in-contract protocol fee was removed
 2026-09-18: `QuotePublisher` has no `protocolFeeBps` and there is no
-`P2P_TREASURY_SECRET` wiring.) The buyer-authed `POST /v1/deals/{id}/handoff` uploads
+`P2P_TREASURY_SECRET` wiring.) Since 2026-10-09 demo mode (`P2P_DEMO_QUOTES=true`)
+can fund: `seedDemoFunding` (Server.kt) loads synthetic P2PK funding/fee boxes
+(P2PK of the embedded vault secret; dummy 32-byte collateral token id when none
+is configured — `application.conf`'s empty placeholder counts as unset),
+replenished on every `TxSubmitted(FUND)`, and the chain source is wrapped in
+`DemoChainSource` (one retry, then the last-known height) so a flaky public
+explorer cannot hang the fund path; outside demo mode an accept still fails
+loudly with "no funding inputs". The same day's `ExplorerChainSource` transport
+pins HTTP/1.1 — Java's HTTP/2 to Cloudflare-fronted APIs hangs on some networks
+while HTTP/1.1 answers normally.) The buyer-authed `POST /v1/deals/{id}/handoff` uploads
 the seller-signed handoff record; the dashboard-authed
 `POST /v1/dashboard/deals/{id}/handoff/sign` Schnorr-signs it server-side with the vault
 R5 key and drives `CashCollected` FUNDED → PAYMENT_PENDING, with
@@ -276,22 +285,23 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   the 2026-10-01 tracker fix re-derived payout classification from collateral
   conservation + spend shape instead of the payout tree, so it also added the
   key-rotated-payee and conservation cases — see `specs/android-app.md` §4.2);
-  backend 121 (11 suites; the 2026-10-03 live-console run fixed the demo-quote
+  backend 129 (12 suites; the 2026-10-03 live-console run fixed the demo-quote
   seeding bug — `P2P_DEMO_QUOTES=true` seeded nothing because `maxAmount` was
   derived from an empty pool, and the existing test asserted the broken
-  behaviour); e2e 10 (E2eFlow 5,
-  E2eConfig 2, SchnorrPort 3) → JVM modules 410; plus the Android buyer app
+  behaviour; the 2026-10-09 demo-funding pass added `DemoFundingSpec` 4 +
+  `DemoChainSourceSpec` 4 so demo mode stays fundable end to end); e2e 10 (E2eFlow 5,
+  E2eConfig 2, SchnorrPort 3) → JVM modules 418; plus the Android buyer app
   (`apps/app`, M4; + map view, localization hi/sw/ar/ru, in-app locale switcher,
   multi-quote currency-filtered list, offer-cash flow 2026-09-20, and the
   2026-09-27 pass: USDT-leg offer math with a rate-derived cash leg, TRON
   address validation, meeting reachable at FUNDED, handoff deep links, deal list
   + delete-all, recovery link, reconnecting sockets): 94 JVM
   unit tests (`:app:testDebugUnitTest`); plus the terminal consoles
-  (`tui/`, `specs/tui-apps.md`): `:tui:common` 30 (KtorBackendClient 16, Format,
+  (`tui/`, `specs/tui-apps.md`): `:tui:common` 30 (KtorBackendClient 15, Format,
   TuiConfig) + `:tui:seller` 34 (lanes, screen snapshot, terminal QR, status line,
   the quote-ad panel — 2026-10-05) +
-  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 515;
-  plus the Android app's 94 → **609 total**.
+  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 523;
+  plus the Android app's 94 → **617 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :tui:common:test :tui:seller:test :tui:buyer:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).
