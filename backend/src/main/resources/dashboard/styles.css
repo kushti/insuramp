@@ -20,6 +20,11 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute must always win: any display rule (e.g. .login-view's
+   flex) would otherwise override the UA's [hidden] rule and keep a "hidden"
+   view on screen. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

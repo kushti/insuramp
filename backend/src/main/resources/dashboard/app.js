@@ -16,8 +16,16 @@ const TERMINAL_STATES = ["RELEASED", "RECLAIMED", "CLAIMED"];
 const DISPUTE_ACTIONS = ["contest", "accept", "investigate"];
 
 // --------------------------------------------------------------------- state
+// Storage may be blocked outright (privacy-hardened browsers) — the dashboard
+// still works, it just forgets the token on reload. A raw access would throw:
+// getItem at script top level kills the whole script (blank page), setItem in
+// login() escapes the catch and fails the click silently.
+function storeGet(key) { try { return sessionStorage.getItem(key); } catch (e) { return null; } }
+function storeSet(key, value) { try { sessionStorage.setItem(key, value); } catch (e) { /* blocked */ } }
+function storeDel(key) { try { sessionStorage.removeItem(key); } catch (e) { /* blocked */ } }
+
 const state = {
-  token: sessionStorage.getItem(TOKEN_KEY),
+  token: storeGet(TOKEN_KEY),
   tab: "lane",
   lanes: {},          // canonical state -> [LaneCardDto]
   disputes: [],
@@ -108,12 +116,12 @@ async function login(token) {
     el.hidden = false;
     return;
   }
-  sessionStorage.setItem(TOKEN_KEY, token);
+  storeSet(TOKEN_KEY, token);
   showApp();
 }
 
 function logout() {
-  sessionStorage.removeItem(TOKEN_KEY);
+  storeDel(TOKEN_KEY);
   state.token = null;
   if (state.socket) { state.socket.close(); state.socket = null; }
   clearInterval(state.pollTimer);

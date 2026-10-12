@@ -25,6 +25,17 @@ seller UI is the operator dashboard front-end (`onramp-ux.md` §3). Shape:
 - **Static vanilla JS/CSS app**, no framework and no build step, served by the Ktor
   backend itself (same deployable). A pure consumer of the dashboard JSON API plus the
   `/events` WebSocket — it holds no keys, builds no transactions, invents no state.
+  Three serving rules learned the hard way (2026-10-11/12, all three surfaced as
+  "the dashboard is blank/dead" in Firefox): `/dashboard` (no trailing slash)
+  **redirects** to `/dashboard/` — the shell's asset URLs are relative, and at the
+  slash-less path the browser resolves them against the server root (app.js →
+  `/app.js` → 404 → no JS → every view stays `hidden` → blank page); all
+  `/dashboard` responses carry `Cache-Control: no-cache`; and styles.css starts with
+  `[hidden] { display: none !important; }` — any `display` rule on a view (the login
+  card's flex) otherwise overrides the UA `[hidden]` rule and the view never hides.
+  Storage is optional: `sessionStorage` access is wrapped (`storeGet`/`storeSet`/
+  `storeDel`) — privacy-hardened browsers that block DOM storage would otherwise get
+  a silent login failure (the `setItem` throw escapes the login error handler).
 - **Server-side QR rendering.** The meeting QR is a server-rendered PNG (§4); the
   front-end embeds no JS QR library — the phone at the meeting shows a plain `<img>`.
 - **Live by WebSocket, not polling-first.** Cards, lane moves, and infra status update
