@@ -363,7 +363,11 @@ existing at all.
    deal with "receiveAddress is not a valid TRON address". Two keys on two chains: the
    Ergo key authorises the claim *spend*, the TRON address receives the *USDT*. Now a
    separate `P2P_PAYOUT_ADDRESS`, validated with `TronAddress` and shown next to the
-   quote list so the two cannot be confused again.
+   quote list so the two cannot be confused again. Since 2026-10-12 the env var is
+   only a startup default: `a` opens a one-field form in the console itself (type or
+   paste, enter validates with `TronAddress` and sets it for the session, esc
+   cancels) — the first-run flow no longer fails before the console can explain
+   itself.
 7. **A restarted console did not know its own address.** The address lives inside the
    encrypted payload, so a console restarted after a crash had a key it could not name
    and could not deal. `KeyVault` now writes a `.pub` sidecar (address + fingerprint,

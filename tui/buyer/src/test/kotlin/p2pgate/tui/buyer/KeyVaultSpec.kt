@@ -205,6 +205,29 @@ class KeyVaultSpec {
     }
 
     @Test
+    fun `a fresh key directory is created owner-only and traversable`() {
+        // Regression: restrictToOwner once set rw------- on the directory too —
+        // a directory without the execute bit permits listing but blocks
+        // creating entries inside it, so the very first key write died with
+        // Permission denied. Directories need rwx------.
+        val dir = File(System.getProperty("java.io.tmpdir"), "p2pgate-test-dir-${System.nanoTime()}")
+        try {
+            val file = File(dir, "key.p2pkey")
+            KeyVault.write(file, "pass".toCharArray(), secret, address, iterations = 2_000)
+            assertTrue(file.isFile, "write into a fresh directory succeeded")
+            val perms = runCatching {
+                java.nio.file.attribute.PosixFilePermissions.toString(
+                    java.nio.file.Files.getPosixFilePermissions(dir.toPath()),
+                )
+            }.getOrNull()
+            // Non-POSIX filesystems cannot express this; there assert nothing.
+            if (perms != null) assertEquals("rwx------", perms, "key directory permissions are $perms")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `exists reports presence without reading the file`() {
         val file = written()
         assertTrue(KeyVault.exists(file))

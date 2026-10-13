@@ -46,6 +46,16 @@ fun BuyerScreen(controller: BuyerController) {
             // Modifier combos are not actions (Mosaic delivers ctrl+c as key
             // "c" with ctrl set — see SellerScreen for the same guard).
             if (event.ctrl || event.alt) return@onKeyEvent false
+            // The payout-address form owns the keyboard while it is open —
+            // the seller console's quote form does the same.
+            if (state.payoutDraft != null) {
+                return@onKeyEvent when (event.key) {
+                    "Escape" -> { controller.cancelPayoutForm(); true }
+                    "Enter" -> { controller.submitPayoutForm(); true }
+                    "Backspace" -> { controller.payoutFormBackspace(); true }
+                    else -> { controller.payoutFormType(event.key); true }
+                }
+            }
             // Digits pick a quote, Enter takes it. These were on screen before
             // they were bound here -- the console advertised an affordance it did
             // not have, which is worse than not showing it.
@@ -59,6 +69,7 @@ fun BuyerScreen(controller: BuyerController) {
                 // 'r' refreshes both the backend view and the chain facts.
                 "r" -> { scope.launch { controller.refreshAll() }; true }
                 "k" -> { controller.createKeyInteractively(); true }
+                "a" -> { controller.openPayoutForm(); true }
                 "f" -> { controller.forgetDeal(); true }
                 "x" -> { controller.forgetHandoff(); true }
                 "Enter" -> {
@@ -115,17 +126,19 @@ private fun Quotes(state: BuyerState) {
     // The USDT address is a TRON address and is not the Ergo key -- showing both
     // side by side is the cheapest way to stop the two being confused again.
     val payout = state.payoutAddress
-    Text(
-        when {
-            payout == null -> "  USDT goes to: NOT SET — set P2P_PAYOUT_ADDRESS (a TRON 'T…' address)"
-            !p2pgate.dealprotocol.TronAddress.isValid(payout) -> "  USDT goes to: $payout  (not a valid TRON address)"
-            else -> "  USDT goes to: $payout"
-        },
-        color = when {
-            payout == null || !p2pgate.dealprotocol.TronAddress.isValid(payout) -> WARN
-            else -> DIM
-        },
-    )
+    val draft = state.payoutDraft
+    when {
+        draft != null -> {
+            Text("  USDT goes to > $draft█")
+            Text("  enter sets · esc cancels", color = DIM)
+        }
+        payout == null ->
+            Text("  USDT goes to: NOT SET — press a to set a TRON (T…) address", color = WARN)
+        !p2pgate.dealprotocol.TronAddress.isValid(payout) ->
+            Text("  USDT goes to: $payout  (not a valid TRON address — press a to fix)", color = WARN)
+        else ->
+            Text("  USDT goes to: $payout", color = DIM)
+    }
     if (state.quotes.isEmpty()) {
         Text("  (no quotes published — press r to refresh)", color = DIM)
         return
@@ -255,6 +268,7 @@ private fun Keys(state: BuyerState, draft: HandoffDraft) {
         }
         Text(" r refresh", color = DIM)
         Text(" k key", color = DIM)
+        Text(" a address", color = DIM)
         Text(" o open claim", color = DIM)
         Text(" p payout", color = DIM)
         Text(" f forget deal", color = DIM)
@@ -262,6 +276,7 @@ private fun Keys(state: BuyerState, draft: HandoffDraft) {
         Text(" q quit", color = DIM)
     }
     if (draft.payload.isNotBlank()) Text(" paste mode: type the payload, a and z · enter submits", color = DIM)
+    if (state.payoutDraft != null) Text(" address form: type or paste · enter sets · esc cancels", color = DIM)
 }
 
 // ------------------------------------------------------------------ helpers

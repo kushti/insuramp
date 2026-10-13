@@ -307,7 +307,12 @@ object KeyVault {
     private fun restrictToOwner(file: File) {
         runCatching {
             val path = file.toPath()
-            val perms = java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")
+            // Directories need the execute bit: rw------- on a directory permits
+            // listing but blocks creating entries inside it (the first key write
+            // then dies with Permission denied).
+            val perms = java.nio.file.attribute.PosixFilePermissions.fromString(
+                if (file.isDirectory) "rwx------" else "rw-------",
+            )
             java.nio.file.Files.setPosixFilePermissions(path, perms)
         }
     }

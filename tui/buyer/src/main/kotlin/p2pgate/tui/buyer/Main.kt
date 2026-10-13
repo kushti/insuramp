@@ -33,7 +33,8 @@ import p2pgate.tui.common.TuiConfig
  * Configuration (`P2P_*` env or flags): `P2P_BASE_URL`, `P2P_NETWORK` (`mainnet`
  * default), `P2P_EXPLORER_URL`, `P2P_NODE_URL`, plus `P2P_KEY_FILE`,
  * `P2P_HANDOFF_FILE`, `P2P_ORACLE_NFT_ID`, `P2P_PAYOUT_ADDRESS` (the buyer's TRON USDT address —
- * not the Ergo key) and `P2P_KEY_PASSPHRASE`. The last is for
+ * not the Ergo key; a startup default only, `a` in the console sets or replaces
+ * it for the session) and `P2P_KEY_PASSPHRASE`. The last is for
  * automation only — anything that can read the process environment can read the
  * passphrase.
  */

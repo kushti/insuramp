@@ -280,4 +280,48 @@ class BuyerScreenSpec {
         assertFalse(available.contains("p"), "a keyless buyer was offered the payout: $available")
         assertEquals(1, available.count { it == "k" }, "no way to create the key: $available")
     }
+
+    @Test
+    fun `the payout address can be set from the console, not only the env`() = runTest {
+        // The form flow end to end at controller level: open, type, submit — the
+        // same calls the key bindings make.
+        val c = controller(FakeClient(quotes = listOf(quote())))
+        assertEquals(null, c.state.value.payoutAddress)
+        c.openPayoutForm()
+        assertEquals("", c.state.value.payoutDraft)
+        // A valid TRON address (from TronAddressSpec's known-good list).
+        "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb".forEach { c.payoutFormType(it.toString()) }
+        c.submitPayoutForm()
+        assertEquals("TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb", c.state.value.payoutAddress)
+        assertEquals(null, c.state.value.payoutDraft, "the form stayed open after a valid submit")
+        assertTrue(c.state.value.status.contains("USDT goes to"), c.state.value.status)
+    }
+
+    @Test
+    fun `an invalid address keeps the form open and says why`() = runTest {
+        val c = controller(FakeClient(quotes = listOf(quote())))
+        c.openPayoutForm()
+        "Tnotavalidaddress".forEach { c.payoutFormType(it.toString()) }
+        c.payoutFormBackspace() // drop the trailing 's' — backspace works
+        assertEquals("Tnotavalidaddres", c.state.value.payoutDraft)
+        c.submitPayoutForm()
+        assertEquals(null, c.state.value.payoutAddress, "an invalid address was accepted")
+        assertEquals("Tnotavalidaddres", c.state.value.payoutDraft, "the form was closed on an invalid submit")
+        assertTrue(c.state.value.status.contains("not a TRON address"), c.state.value.status)
+        c.cancelPayoutForm()
+        assertEquals(null, c.state.value.payoutDraft, "esc did not close the form")
+    }
+
+    @Test
+    fun `the open address form is rendered with its keys`() = runTest {
+        val c = controller(FakeClient(quotes = listOf(quote())))
+        c.openPayoutForm()
+        "TWd4WrZ9".forEach { c.payoutFormType(it.toString()) }
+        runMosaicTest {
+            state.size.value = Terminal.Size(120, 40)
+            val out = setContentAndSnapshot { BuyerScreen(c) }
+            assertTrue(out.contains("USDT goes to > TWd4WrZ9"), out)
+            assertTrue(out.contains("enter sets · esc cancels"), out)
+        }
+    }
 }

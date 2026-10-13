@@ -47,6 +47,12 @@ data class BuyerState(
      * address receives the *USDT*.
      */
     val payoutAddress: String? = null,
+    /**
+     * The open payout-address form's buffer, or `null` when the form is closed
+     * (`a` opens it, esc cancels, enter submits). A single field, so a bare
+     * string suffices where the seller console needed a form record.
+     */
+    val payoutDraft: String? = null,
     /** The captured handoff record, if the buyer has one. */
     val handoff: StoredHandoff? = null,
     /** Live events from the backend, newest first. */

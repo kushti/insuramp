@@ -27,7 +27,7 @@ if ! curl -s -m 2 -o /dev/null "$P2P_BASE_URL/v1/quotes"; then
     echo "WARNING: no backend answers on $P2P_BASE_URL — start it with scripts/run-seller.sh" >&2
 fi
 if [ -z "${P2P_PAYOUT_ADDRESS:-}" ]; then
-    echo "NOTE: P2P_PAYOUT_ADDRESS is not set — taking a quote needs a TRON (T…) address." >&2
+    echo "NOTE: P2P_PAYOUT_ADDRESS is not set — you can also press a in the console to set the TRON (T…) address." >&2
 fi
 
 if [ -t 0 ] && [ -t 1 ]; then

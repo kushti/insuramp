@@ -65,7 +65,8 @@ class BuyerController(
      * file at rest stays encrypted either way.
      */
     private val sessionSecret: ByteArray? = null,
-    /** The buyer's TRON USDT address (`P2P_PAYOUT_ADDRESS`), or `null` if unset. */
+    /** The buyer's TRON USDT address (`P2P_PAYOUT_ADDRESS`), or `null` if unset.
+     *  A startup default only — `a` in the console sets or replaces it. */
     private val payoutAddress: String? = null,
 ) {
 
@@ -95,9 +96,9 @@ class BuyerController(
                 payoutAddress = payoutAddress,
                 status = when {
                     payoutAddress == null ->
-                        "no USDT payout address — set P2P_PAYOUT_ADDRESS (a TRON 'T…' address)"
+                        "no USDT payout address — press a to set one (a TRON 'T…' address)"
                     !TronAddress.isValid(payoutAddress) ->
-                        "P2P_PAYOUT_ADDRESS is not a valid TRON address"
+                        "P2P_PAYOUT_ADDRESS is not a valid TRON address — press a to set one"
                     else -> "ready — pick a quote, or press r to refresh"
                 },
             )
@@ -499,6 +500,46 @@ class BuyerController(
         if (it.quotes.isEmpty()) it else it.copy(selectedQuote = index.coerceIn(0, it.quotes.lastIndex))
     }
 
+    // ------------------------------------------------- payout-address form
+    //
+    // The USDT leg needs a TRON address, and requiring an env var for it made
+    // the first-run flow fail before the console could explain itself. `a`
+    // opens a one-field form (the seller console's quote-ad form is the
+    // multi-field version of the same pattern).
+
+    /** `a` opens the form, prefilled with the current address if one is set. */
+    fun openPayoutForm() = _state.update { it.copy(payoutDraft = it.payoutAddress ?: "") }
+
+    /** Esc closes the form without changing anything. */
+    fun cancelPayoutForm() = _state.update { it.copy(payoutDraft = null) }
+
+    /**
+     * One typed character into the buffer. Base58 is alphanumerics minus
+     * 0OIl — the alphabet filter belongs to [TronAddress], which validates on
+     * submit; here anything alphanumeric is kept so paste-by-keystrokes works.
+     */
+    fun payoutFormType(char: String) = _state.update { current ->
+        val draft = current.payoutDraft ?: return@update current
+        if (char.length != 1 || !char[0].isLetterOrDigit()) return@update current
+        // TRON addresses are exactly 34 chars; longer input is a paste error.
+        current.copy(payoutDraft = (draft + char).take(TRON_ADDRESS_LENGTH))
+    }
+
+    fun payoutFormBackspace() = _state.update { current ->
+        current.copy(payoutDraft = current.payoutDraft?.dropLast(1))
+    }
+
+    /** Enter: validate and set. An invalid address keeps the form open and says why. */
+    fun submitPayoutForm() {
+        val draft = _state.value.payoutDraft?.trim() ?: return
+        if (!TronAddress.isValid(draft)) {
+            say("not a TRON address (T…, base58check) — fix it, or esc to cancel")
+            return
+        }
+        _state.update { it.copy(payoutAddress = draft, payoutDraft = null) }
+        say("USDT goes to $draft")
+    }
+
     /** Writes a key file, prompting for the passphrase. */
     fun createKeyInteractively(overwrite: Boolean = false) {
         val passphrase = runCatching { readPassphrase("Passphrase for the new key file: ") }
@@ -540,9 +581,9 @@ class BuyerController(
         // The USDT leg is paid to a TRON address. The Ergo key is a different key on
         // a different chain; sending it here is what this console got wrong first.
         val payout = state.payoutAddress
-            ?: return say("no USDT payout address — set P2P_PAYOUT_ADDRESS (a TRON 'T…' address)")
+            ?: return say("no USDT payout address — press a to set one (a TRON 'T…' address)")
         if (!TronAddress.isValid(payout)) {
-            return say("P2P_PAYOUT_ADDRESS is not a valid TRON address")
+            return say("the payout address is not a valid TRON address — press a to fix it")
         }
         if (state.key.address == null) return say("no key file — press k to create one")
         createDeal(quote.id, quote.minAmount, payout)
@@ -589,6 +630,9 @@ class BuyerController(
     private companion object {
         /** How often the console re-reads the backend view and the chain. */
         const val POLL_MS = 5_000L
+
+        /** A TRON base58check address is exactly 34 characters. */
+        const val TRON_ADDRESS_LENGTH = 34
     }
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }

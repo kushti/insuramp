@@ -300,8 +300,12 @@ suite is the on-ramp matrix in `specs/vault-contract.md` §7.
   (`tui/`, `specs/tui-apps.md`): `:tui:common` 30 (KtorBackendClient 15, Format,
   TuiConfig) + `:tui:seller` 34 (lanes, screen snapshot, terminal QR, status line,
   the quote-ad panel — 2026-10-05) +
-  `:tui:buyer` 41 (KeyVault 17, BuyerFlow 15, screen snapshot) → JVM modules 523;
-  plus the Android app's 94 → **617 total**.
+  `:tui:buyer` 45 (KeyVault 18 — 2026-10-12: the fresh key directory needs the
+  execute bit, `rw-------` on a directory blocks the very first key write —,
+  BuyerFlow 15, screen snapshot 12 — 2026-10-12: the payout address is settable
+  in-console with `a`, a one-field form over the seller console's pattern;
+  `P2P_PAYOUT_ADDRESS` is now only a startup default) → JVM modules 527;
+  plus the Android app's 94 → **621 total**.
   Full gate:
   `./gradlew :contracts:test :apps:core:dealprotocol:test :apps:core:ergo:test :backend:test :e2e:test :tui:common:test :tui:seller:test :tui:buyer:test :app:testDebugUnitTest :app:assembleDebug`
   (headless SDK at `~/.local/opt/android-sdk`; root `local.properties` sets sdk.dir).

@@ -115,7 +115,9 @@ P2P_KEY_PASSPHRASE=hunter2 P2P_PAYOUT_ADDRESS=T... scripts/tui-buyer.sh
 ```
 
 (`T...` = any real base58check TRON address — do NOT invent one, the checksum must
-match. `P2P_KEY_PASSPHRASE` set = no interactive prompt; omit it to be prompted.)
+match. `P2P_KEY_PASSPHRASE` set = no interactive prompt; omit it to be prompted.
+`P2P_PAYOUT_ADDRESS` may also be omitted entirely — press `a` inside the console
+and type/paste the address there.)
 The manual equivalent:
 
 ```bash
@@ -136,7 +138,7 @@ Env vars the buyer console reads (`tui/buyer/.../Main.kt`):
 | `P2P_BASE_URL` | no (default `http://127.0.0.1:8080`) | the backend |
 | `P2P_KEY_FILE` / `P2P_HANDOFF_FILE` | no | where the encrypted key file / captured handoff record live |
 | `P2P_KEY_PASSPHRASE` | no | unlocks the key file without prompting — the automation path; omit it for the interactive prompt |
-| `P2P_PAYOUT_ADDRESS` | **yes, to deal** | the buyer's **TRON** USDT address — *not* the Ergo key (the Ergo key authorizes the claim spend; the TRON address receives the USDT). Validated with `TronAddress`; a bad checksum fails the deal |
+| `P2P_PAYOUT_ADDRESS` | **yes, to deal** | the buyer's **TRON** USDT address — *not* the Ergo key (the Ergo key authorizes the claim spend; the TRON address receives the USDT). Validated with `TronAddress`; a bad checksum fails the deal. A startup default only — `a` in the console sets or replaces it for the session (2026-10-12), so a run without the var is no longer dead on arrival |
 | `P2P_ORACLE_NFT_ID` | no | the deployed oracle NFT (64 hex). Unset only degrades spend classification (a release can be misread as a reclaim) — the trees no longer embed the NFT, so claims build either way (2026-10-03) |
 | `P2P_NETWORK`, `P2P_EXPLORER_URL`, `P2P_NODE_URL` | no | chain-source selection (`TuiConfig`; mainnet default) |
 
@@ -171,7 +173,7 @@ This harness exists because the headless suite passed while eight real bugs ship
 | `UnsupportedClassVersionError` from a launcher | `JAVA_HOME` not exported at run time — the launcher picked up a system Java 8; export the JDK 17 path (§1) |
 | console exits immediately / refuses to start | no TTY — run via `script -qec … /dev/null` or `pty_drive.py` |
 | `{"error":"invalid operator key"}` | `P2P_OPERATOR_KEY` mismatch with the backend's |
-| "receiveAddress is not a valid TRON address" | `P2P_PAYOUT_ADDRESS` is missing, malformed, or an *Ergo* address (wrong chain) |
+| "receiveAddress is not a valid TRON address" | the payout address is missing, malformed, or an *Ergo* address (wrong chain) — set it with `a` in the console or `P2P_PAYOUT_ADDRESS` |
 | buyer console: "no backend answers" / empty quotes | backend not up, or `P2P_BASE_URL` wrong |
 | board stuck at "connecting…" | backend down or `/v1/events` unreachable — the status strip shows the board's age |
 
